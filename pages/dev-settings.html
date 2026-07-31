@@ -1,0 +1,148 @@
+<!-- TSW Hud [v0.1.0] [dev] [dev] -->
+<!-- Last modified: 2025-07-31 -->
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dev Settings - TSW Hud</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/pages/style.css">
+  <style>
+    .registry-container {
+      font-family: var(--mono);
+      background: var(--panel);
+      border: 1px solid var(--hairline);
+      border-radius: 4px;
+      padding: 16px;
+      margin: 16px 0;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+
+    .registry-entry {
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--hairline);
+    }
+
+    .registry-entry:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .registry-key {
+      color: var(--accent-bright);
+      font-weight: 600;
+      display: inline-block;
+      min-width: 120px;
+    }
+
+    .registry-value {
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .registry-bool-true {
+      color: var(--status-green);
+    }
+
+    .registry-bool-false {
+      color: var(--status-red);
+    }
+
+    .registry-string {
+      color: #a3d966;
+    }
+
+    .registry-number {
+      color: #6ba3ff;
+    }
+
+    .registry-entry-header {
+      color: var(--text-dim);
+      font-size: 0.85em;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .auto-refresh-notice {
+      color: var(--status-green);
+      font-size: 0.9em;
+      margin-top: 16px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><strong>TSW HUD</strong><br>DEV SETTINGS</div>
+    <div class="nav" id="navContainer"></div>
+    <button class="exit-btn" onclick="fetch('/api/shutdown',{method:'POST'})">Exit</button>
+  </div>
+  <main>
+    <div class="panel">
+      <h2>Registry Contents</h2>
+      <div id="registryDisplay" class="registry-container"></div>
+      <div class="auto-refresh-notice">✓ Auto-refreshes every 5 seconds</div>
+    </div>
+  </main>
+
+  <script src="/pages/nav.js"></script>
+  <script>
+    async function loadRegistry() {
+      try {
+        const res = await fetch('/api/pages');
+        const data = await res.json();
+        displayRegistry(data);
+      } catch (err) {
+        document.getElementById('registryDisplay').innerHTML = `<p style="color: var(--status-red);">Error loading registry: ${err.message}</p>`;
+      }
+    }
+
+    function formatValue(value) {
+      if (typeof value === 'boolean') {
+        const cls = value ? 'registry-bool-true' : 'registry-bool-false';
+        return `<span class="${cls}">${value}</span>`;
+      } else if (typeof value === 'string') {
+        return `<span class="registry-string">"${value}"</span>`;
+      } else if (typeof value === 'number') {
+        return `<span class="registry-number">${value}</span>`;
+      }
+      return value;
+    }
+
+    function displayRegistry(data) {
+      if (!Array.isArray(data)) {
+        document.getElementById('registryDisplay').innerHTML = '<p style="color: var(--status-amber);">Registry is not an array</p>';
+        return;
+      }
+
+      let html = '';
+      data.forEach((entry, idx) => {
+        html += `<div class="registry-entry">`;
+        html += `<div class="registry-entry-header">Entry ${idx}</div>`;
+        for (const key in entry) {
+          const value = entry[key];
+          html += `<div>`;
+          html += `<span class="registry-key">${key}:</span>`;
+          html += `<span class="registry-value">${formatValue(value)}</span>`;
+          html += `</div>`;
+        }
+        html += `</div>`;
+      });
+
+      document.getElementById('registryDisplay').innerHTML = html;
+    }
+
+    // Initial load
+    loadRegistry();
+
+    // Auto-refresh every 5 seconds
+    setInterval(loadRegistry, 5000);
+  </script>
+</body>
+</html>
