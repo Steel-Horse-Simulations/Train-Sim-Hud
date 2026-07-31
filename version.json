@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0",
+  "major": 0,
+  "minor": 1,
+  "patch": 0,
+  "release_date": "2025-01-31",
+  "git_tag": "v0.1.0",
+  "main_branch": true,
+  "dev_notes": "Initial settings page with API key detection and navigation management"
+}

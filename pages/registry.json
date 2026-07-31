@@ -1,0 +1,10 @@
+[
+  {
+    "id": "settings",
+    "name": "Settings",
+    "url": "/",
+    "show_in_nav": true,
+    "dev_only": false,
+    "order": 0
+  }
+]
