@@ -121,7 +121,7 @@
           <input type="text" id="f-trainClass" placeholder="e.g. Class 170">
           
           <label>Operator</label>
-          <div style="display: flex; gap: 8px;">
+          <div style="display: flex; gap: 8px; margin-bottom: 14px;">
             <select id="f-operator" style="flex: 1; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px;"></select>
             <button class="btn primary" style="flex-shrink: 0; padding: 8px 14px;" onclick="goToOperatorPage()">Manage</button>
           </div>
@@ -141,12 +141,12 @@
         <div class="panel" style="margin-top:16px;">
           <h2>Grouping</h2>
           <label>Group</label>
-          <div style="display: flex; gap: 8px;">
-            <select id="f-group" style="flex: 1;"><option value="">(none)</option></select>
+          <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+            <select id="f-group" style="flex: 1; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px;"><option value="">(none)</option></select>
             <button class="btn primary" style="flex-shrink: 0; padding: 8px 14px;" onclick="goToGroupPage()">Manage</button>
           </div>
           <label>Subclass (shares the group's HUD panels, can have its own speeds)</label>
-          <select id="f-subclass"><option value="">(none)</option></select>
+          <select id="f-subclass" style="background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; width: 100%; margin-bottom: 0;"></select>
         </div>
 
         <div class="panel" style="margin-top:16px;">
@@ -274,7 +274,8 @@ async function load() {
   }
 
   populateGroupDropdown();
-  await onGroupChange(true); // true = preserve the train's actual saved subclass_id on initial load
+  await onGroupChange(true);
+  await populateOperatorDropdown();
 
   refreshPower();
   refreshCompletion();
@@ -285,6 +286,62 @@ function populateGroupDropdown() {
   sel.innerHTML = '<option value="">(none)</option>' +
     allGroups.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
   sel.value = trainClass.group_id || '';
+}
+
+async function populateOperatorDropdown() {
+  try {
+    const res = await fetch('/api/operators');
+    const data = await res.json();
+    const sel = document.getElementById('f-operator');
+    sel.innerHTML = '<option value="">(none)</option>' + 
+      (data.operators || []).map(op => `<option value="${op.id}">${op.name}</option>`).join('');
+    sel.value = trainClass.livery_id || '';
+    sel.addEventListener('change', () => { populateLiveryDropdown(); updateOperatorLogo(); });
+    await populateLiveryDropdown();
+    updateOperatorLogo();
+  } catch (e) {
+    console.log('Operators not available');
+  }
+}
+
+async function populateLiveryDropdown() {
+  const operatorId = document.getElementById('f-operator').value;
+  const sel = document.getElementById('f-livery');
+  if (!operatorId) {
+    sel.innerHTML = '<option value="">(none)</option>';
+    sel.disabled = true;
+    return;
+  }
+  try {
+    const res = await fetch(`/api/operators/${operatorId}/liveries`);
+    const data = await res.json();
+    sel.innerHTML = (data.liveries || []).map(liv => `<option value="${liv.code}">${liv.name}</option>`).join('');
+    sel.value = trainClass.livery_name || '';
+    sel.disabled = false;
+  } catch (e) {
+    sel.innerHTML = '<option value="">(none)</option>';
+    sel.disabled = true;
+  }
+}
+
+async function updateOperatorLogo() {
+  const operatorId = document.getElementById('f-operator').value;
+  const logoDiv = document.getElementById('operatorLogo');
+  if (!operatorId) {
+    logoDiv.innerHTML = '<div style="font-size: 10px; color: var(--text-dim);">—</div>';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/operators/${operatorId}`);
+    const data = await res.json();
+    if (data.logo_path) {
+      logoDiv.innerHTML = `<img src="${data.logo_path}" alt="${data.name}" style="width: 100%; height: 100%; object-fit: contain; padding: 2px;">`;
+    } else {
+      logoDiv.innerHTML = `<div style="font-size: 9px; color: var(--text-dim); text-align: center; word-wrap: break-word;">${data.name.substring(0, 3).toUpperCase()}</div>`;
+    }
+  } catch (e) {
+    logoDiv.innerHTML = '<div style="font-size: 10px; color: var(--text-dim);">—</div>';
+  }
 }
 
 async function onGroupChange(preserveSubclass) {
