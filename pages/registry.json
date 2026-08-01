@@ -56,24 +56,10 @@
     "order": 7
   },
   {
-    "id": "train_classes",
-    "name": "Train Classes",
-    "url": "/pages/train_classes.html",
-    "dev_only": true,
-    "order": 9
-  },
-  {
     "id": "known_trains",
     "name": "Known Trains",
     "url": "/pages/known_trains.html",
     "dev_only": false,
     "order": 10
-  },
-  {
-    "id": "install",
-    "name": "Add to Home Screen",
-    "url": "/pages/install.html",
-    "dev_only": false,
-    "order": 11
   }
 ]

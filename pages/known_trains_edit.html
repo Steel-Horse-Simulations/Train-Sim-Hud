@@ -5,8 +5,7 @@
 <title>TSW Hud - Edit Known Train</title>
 <link rel="stylesheet" href="/pages/style.css">
 <script src="/pages/theme.js"></script>
-<script src="/pages/offline-db.js"></script>
-<script src="/pages/sync-client.js"></script>
+
 <style>
   main { max-width: 960px; margin: 0 auto; }
   .wrap { display: grid; grid-template-columns: 260px 1fr; gap: 20px; }
@@ -17,19 +16,7 @@
     main { padding-top: 10px; }
   }
 
-  .sync-banner {
-    margin: 0 0 14px; border-radius: 9px; padding: 10px 13px; font-size: 12px;
-    border: 1px solid var(--hairline); display: flex; align-items: center; gap: 9px;
-    background: var(--panel-raised);
-  }
-  .sync-banner .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .sync-banner .dot.online { background: #5fd07a; box-shadow: 0 0 5px #5fd07a; }
-  .sync-banner .dot.offline { background: #e8b74a; box-shadow: 0 0 5px #e8b74a; }
-  .sync-banner.offline { border-color: rgba(232,183,74,0.35); background: rgba(232,183,74,0.07); }
-  .sync-banner .pending-chip {
-    font-size: 10.5px; font-weight: 700; background: #e8b74a; color: #1a1013;
-    padding: 2px 8px; border-radius: 8px; flex-shrink: 0;
-  }
+
 
   .img-slot {
     width: 100%; aspect-ratio: 4/3; background: #1a1620; border: 1px dashed var(--hairline);
@@ -101,10 +88,7 @@
   </div>
 
   <main>
-    <div class="sync-banner" id="syncBanner">
-      <span class="dot online" id="syncDot"></span>
-      <span class="txt" id="syncTxt">Checking sync status…</span>
-    </div>
+
     <div class="wrap">
       <div>
         <div class="img-slot" id="imgSlot">Loading…</div>
@@ -401,39 +385,19 @@ async function save() {
   body.max_speed_override_mph = (maxSpeedInput.value !== String(maxSpeedInput.dataset.default)) ? Number(maxSpeedInput.value) : null;
   body.dial_max_override_mph = (dialMaxInput.value !== String(dialMaxInput.dataset.default)) ? Number(dialMaxInput.value) : null;
 
-  // Always go through TSWSync.queueEdit - applies locally immediately,
-  // syncs to server right away if online, queues for later if offline.
-  await TSWSync.queueEdit('train_classes', Number(trainClassId), body);
-  location.href = '/pages/known_trains.html';
-}
-
-function updateSyncBanner(status) {
-  const banner = document.getElementById('syncBanner');
-  const dot = document.getElementById('syncDot');
-  const txt = document.getElementById('syncTxt');
-  banner.classList.toggle('offline', !status.online);
-  dot.className = 'dot ' + (status.online ? 'online' : 'offline');
-  let text;
-  if (status.syncing) {
-    text = 'Syncing…';
-  } else if (status.online) {
-    text = status.lastSyncedAt ? `Synced ${new Date(status.lastSyncedAt).toLocaleTimeString()}` : 'Synced';
+  const res = await fetch(`/api/known_trains/classes/${trainClassId}`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (res.ok) {
+    location.href = '/pages/known_trains.html';
   } else {
-    text = status.lastSyncedAt
-      ? `Offline — showing cached data from ${new Date(status.lastSyncedAt).toLocaleString()}`
-      : 'Offline — no data synced yet';
+    console.error('Save failed:', res.status);
   }
-  txt.innerHTML = text + (status.pendingCount
-    ? ` <span class="pending-chip">${status.pendingCount} pending</span>` : '');
 }
 
-if (typeof TSWSync !== 'undefined') {
-  TSWSync.onStatusChange(updateSyncBanner);
-}
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/pages/sw.js').catch(() => {});
-}
 
 function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
 

@@ -9,9 +9,7 @@ python -m venv venv
 call venv\Scripts\activate.bat
 pip install -r requirements.txt
 
-echo Starting TSW Hud in headless server mode...
-set TSW_HUD_NO_BROWSER=true
-set TSW_HUD_PORT=5273
+echo Starting TSW Hud...
 python app.py
 
 pause

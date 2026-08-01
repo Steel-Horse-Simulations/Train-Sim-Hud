@@ -1446,29 +1446,7 @@ def timetable_stop_update(stop_id):
 
 # ---- imported train classes (real data, via import_from_other_hud.py) ----
 
-@app.route("/api/train_classes", methods=["GET"])
-def train_classes_list():
-    q = request.args.get("q")
-    show_hidden = request.args.get("show_hidden") == "1"
-    results = train_classes_db.list_train_classes(visible_only=not show_hidden, query=q)
-    return jsonify({"train_classes": results})
 
-
-@app.route("/api/train_classes/<int:train_class_id>", methods=["GET"])
-def train_class_detail(train_class_id):
-    tc = train_classes_db.get_train_class(train_class_id)
-    if not tc:
-        return jsonify({"error": "not_found"}), 404
-    return jsonify(tc)
-
-
-@app.route("/api/train_classes/<int:train_class_id>", methods=["PATCH"])
-def train_class_update(train_class_id):
-    body = request.get_json(force=True, silent=True) or {}
-    ok = train_classes_db.update_train_class(train_class_id, body)
-    if not ok:
-        return jsonify({"error": "no_editable_fields_provided"}), 400
-    return jsonify(train_classes_db.get_train_class(train_class_id))
 
 
 # ---- Known Trains v2: groups, subclasses, resolved list ------------------

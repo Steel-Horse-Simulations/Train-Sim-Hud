@@ -7,8 +7,7 @@
 <meta name="theme-color" content="#0b0a10">
 <link rel="stylesheet" href="/pages/style.css">
 <script src="/pages/theme.js"></script>
-<script src="/pages/offline-db.js"></script>
-<script src="/pages/sync-client.js"></script>
+
 <style>
   main { max-width: 1000px; margin: 0 auto; }
 
@@ -52,19 +51,7 @@
   .toolbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
   .toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
 
-  .sync-banner {
-    margin: 10px 0; border-radius: 9px; padding: 10px 13px; font-size: 12px;
-    border: 1px solid var(--hairline); display: flex; align-items: center; gap: 9px;
-    background: var(--panel-raised); transition: background .2s ease, border-color .2s ease;
-  }
-  .sync-banner .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .sync-banner .dot.online { background: #5fd07a; box-shadow: 0 0 5px #5fd07a; }
-  .sync-banner .dot.offline { background: #e8b74a; box-shadow: 0 0 5px #e8b74a; }
-  .sync-banner.offline { border-color: rgba(232,183,74,0.35); background: rgba(232,183,74,0.07); }
-  .sync-banner .pending-chip {
-    font-size: 10.5px; font-weight: 700; background: #e8b74a; color: #1a1013;
-    padding: 2px 8px; border-radius: 8px; flex-shrink: 0;
-  }
+
 </style>
 </head>
 <body>
@@ -79,18 +66,14 @@
       <h2>Known Trains</h2>
       <p class="small dim">
         The Group &rarr; Subclass &rarr; Individual hierarchy for organising every train class you've
-        encountered - default speeds per group, overridable at the subclass or individual level. Builds on
-        the same data as <a href="/pages/train_classes.html">Train Classes</a>.
+        encountered - default speeds per group, overridable at the subclass or individual level.
       </p>
       <div class="toolbar">
         <label><input type="checkbox" id="showHidden"> Show hidden / non-UK</label>
       </div>
     </div>
 
-    <div class="sync-banner" id="syncBanner">
-      <span class="dot online" id="syncDot"></span>
-      <span class="txt" id="syncTxt">Checking sync status…</span>
-    </div>
+
 
     <div class="panel attention-panel" id="attentionPanel" style="display:none;">
       <h2 id="attentionHeading">&#9888; Needs attention</h2>
@@ -110,7 +93,7 @@
         <tbody id="tableBody"></tbody>
       </table>
       <p class="small dim" id="emptyState" style="display:none; text-align:center; margin-top:20px;">
-        No train classes yet - drive something to detect one live, or run a sync against the other app's catalog.
+        No train classes yet - drive something to detect one live.
       </p>
     </div>
 
@@ -241,36 +224,7 @@ function renderTableFromCache(classes) {
   tbody.innerHTML = html;
 }
 
-function updateSyncBanner(status) {
-  const banner = document.getElementById('syncBanner');
-  const dot = document.getElementById('syncDot');
-  const txt = document.getElementById('syncTxt');
-  banner.classList.toggle('offline', !status.online);
-  dot.className = 'dot ' + (status.online ? 'online' : 'offline');
-  let text;
-  if (status.syncing) {
-    text = 'Syncing…';
-  } else if (status.online) {
-    text = status.lastSyncedAt ? `Synced ${new Date(status.lastSyncedAt).toLocaleTimeString()}` : 'Synced';
-  } else {
-    text = status.lastSyncedAt
-      ? `Offline — showing cached data from ${new Date(status.lastSyncedAt).toLocaleString()}`
-      : 'Offline — no data synced yet';
-  }
-  txt.innerHTML = text + (status.pendingCount
-    ? ` <span class="pending-chip">${status.pendingCount} pending</span>` : '');
-}
 
-if (typeof TSWSync !== 'undefined') {
-  TSWSync.onStatusChange((status) => {
-    updateSyncBanner(status);
-    load();
-  });
-}
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/pages/sw.js').catch(() => {});
-}
 
 function exitApp() {
   fetch('/api/shutdown', {method: 'POST'});

@@ -1,4 +1,4 @@
 flask>=3.0
 requests>=2.31
-pywebview==5.4
+pywebview>=5.1
 cryptography>=42

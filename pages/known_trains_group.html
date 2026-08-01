@@ -5,8 +5,7 @@
 <title>TSW Hud - Group Settings</title>
 <link rel="stylesheet" href="/pages/style.css">
 <script src="/pages/theme.js"></script>
-<script src="/pages/offline-db.js"></script>
-<script src="/pages/sync-client.js"></script>
+
 <style>
   main { max-width: 700px; margin: 0 auto; }
   .back { color: var(--text-dim); text-decoration: none; font-size: 13px; }
@@ -17,19 +16,7 @@
     main { padding-top: 10px; }
   }
 
-  .sync-banner {
-    margin: 0 0 14px; border-radius: 9px; padding: 10px 13px; font-size: 12px;
-    border: 1px solid var(--hairline); display: flex; align-items: center; gap: 9px;
-    background: var(--panel-raised);
-  }
-  .sync-banner .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .sync-banner .dot.online { background: #5fd07a; box-shadow: 0 0 5px #5fd07a; }
-  .sync-banner .dot.offline { background: #e8b74a; box-shadow: 0 0 5px #e8b74a; }
-  .sync-banner.offline { border-color: rgba(232,183,74,0.35); background: rgba(232,183,74,0.07); }
-  .sync-banner .pending-chip {
-    font-size: 10.5px; font-weight: 700; background: #e8b74a; color: #1a1013;
-    padding: 2px 8px; border-radius: 8px; flex-shrink: 0;
-  }
+
 
   form label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; margin-top: 14px; }
   form label:first-child { margin-top: 0; }
@@ -76,10 +63,7 @@
   </div>
 
   <main>
-    <div class="sync-banner" id="syncBanner">
-      <span class="dot online" id="syncDot"></span>
-      <span class="txt" id="syncTxt">Checking sync status…</span>
-    </div>
+
     <a class="back" href="/pages/known_trains.html">&larr; Back to Known Trains</a>
     <h1 id="pageTitle">Group Settings</h1>
 
@@ -274,33 +258,7 @@ confirmBtn.addEventListener('click', async () => {
 
 function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
 
-function updateSyncBanner(status) {
-  const banner = document.getElementById('syncBanner');
-  const dot = document.getElementById('syncDot');
-  const txt = document.getElementById('syncTxt');
-  banner.classList.toggle('offline', !status.online);
-  dot.className = 'dot ' + (status.online ? 'online' : 'offline');
-  let text;
-  if (status.syncing) {
-    text = 'Syncing…';
-  } else if (status.online) {
-    text = status.lastSyncedAt ? `Synced ${new Date(status.lastSyncedAt).toLocaleTimeString()}` : 'Synced';
-  } else {
-    text = status.lastSyncedAt
-      ? `Offline — showing cached data from ${new Date(status.lastSyncedAt).toLocaleString()}`
-      : 'Offline — no data synced yet';
-  }
-  txt.innerHTML = text + (status.pendingCount
-    ? ` <span class="pending-chip">${status.pendingCount} pending</span>` : '');
-}
 
-if (typeof TSWSync !== 'undefined') {
-  TSWSync.onStatusChange(updateSyncBanner);
-}
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/pages/sw.js').catch(() => {});
-}
 
 load();
 </script>
