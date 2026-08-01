@@ -2,47 +2,194 @@
 <!-- Last modified: 2025-07-31 -->
 
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dev Settings - TSW Hud</title>
+  <title>TSW HUD - Dev Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/pages/style.css">
   <style>
-    .registry-container {
-      font-family: var(--mono);
+    :root {
+      --accent: #a06bf0;
+      --accent-bright: #c9a3ff;
+      --status-green: #5fd07a;
+      --status-yellow: #d9d24a;
+      --status-amber: #e8b74a;
+      --status-red: #e05a4e;
+      --bg: #0b0a10;
+      --panel: rgba(20, 18, 24, 0.85);
+      --panel-raised: rgba(30, 26, 36, 0.9);
+      --hairline: rgba(255, 255, 255, 0.08);
+      --text: #f0edf5;
+      --text-dim: #a9a4b3;
+      --heading: 'Barlow Condensed', 'Segoe UI', system-ui, sans-serif;
+      --sans: 'Barlow', 'Segoe UI', system-ui, sans-serif;
+      --mono: 'Barlow Condensed', 'Consolas', ui-monospace, monospace;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .topbar {
+      background: var(--panel-raised);
+      border-bottom: 1px solid var(--hairline);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 32px;
+    }
+
+    .brand {
+      font-family: var(--heading);
+      font-size: 18px;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    .brand strong {
+      color: var(--accent-bright);
+      display: block;
+    }
+
+    .nav {
+      display: flex;
+      gap: 24px;
+      flex: 1;
+      justify-content: center;
+    }
+
+    .nav a {
+      font-family: var(--heading);
+      font-size: 13px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .nav a:hover {
+      color: var(--accent-bright);
+    }
+
+    .nav a.active {
+      color: var(--accent-bright);
+      border-bottom: 2px solid var(--accent);
+      padding-bottom: 4px;
+    }
+
+    .exit-btn {
+      background: var(--status-red);
+      border: none;
+      color: white;
+      font-family: var(--heading);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .exit-btn:hover {
+      opacity: 0.8;
+    }
+
+    main {
+      padding: 24px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .panel {
       background: var(--panel);
       border: 1px solid var(--hairline);
-      border-radius: 4px;
-      padding: 16px;
-      margin: 16px 0;
-      max-height: 600px;
-      overflow-y: auto;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+
+    .panel h2 {
+      font-family: var(--heading);
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-bright);
+      margin-bottom: 16px;
+    }
+
+    .small {
+      font-size: 12px;
+    }
+
+    .dim {
+      color: var(--text-dim);
     }
 
     .registry-entry {
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--hairline);
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--hairline);
+      border-radius: 4px;
+      padding: 12px;
+      margin-bottom: 12px;
+      font-family: var(--mono);
+      font-size: 13px;
     }
 
     .registry-entry:last-child {
-      border-bottom: none;
       margin-bottom: 0;
-      padding-bottom: 0;
+    }
+
+    .registry-entry-header {
+      color: var(--accent-bright);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--hairline);
+      padding-bottom: 8px;
+    }
+
+    .registry-field {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 6px;
+      align-items: flex-start;
+    }
+
+    .registry-field:last-child {
+      margin-bottom: 0;
     }
 
     .registry-key {
-      color: var(--accent-bright);
-      font-weight: 600;
-      display: inline-block;
-      min-width: 120px;
+      color: var(--text-dim);
+      flex-shrink: 0;
+      min-width: 100px;
     }
 
     .registry-value {
       color: var(--text);
       word-break: break-all;
+      flex: 1;
     }
 
     .registry-bool-true {
@@ -54,40 +201,48 @@
     }
 
     .registry-string {
-      color: #a3d966;
+      color: var(--accent-bright);
     }
 
     .registry-number {
-      color: #6ba3ff;
+      color: var(--status-amber);
     }
 
-    .registry-entry-header {
-      color: var(--text-dim);
-      font-size: 0.85em;
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
-    .auto-refresh-notice {
+    .auto-refresh-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
       color: var(--status-green);
-      font-size: 0.9em;
-      margin-top: 16px;
+      font-size: 12px;
+      margin-top: 12px;
       font-style: italic;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--status-green);
+      box-shadow: 0 0 4px var(--status-green);
     }
   </style>
 </head>
 <body>
   <div class="topbar">
-    <div class="brand"><strong>TSW HUD</strong><br>DEV SETTINGS</div>
+    <div class="brand"><strong>TSW HUD</strong><br>Dev Settings</div>
     <div class="nav" id="navContainer"></div>
-    <button class="exit-btn" onclick="fetch('/api/shutdown',{method:'POST'})">Exit</button>
+    <button class="exit-btn" onclick="fetch('/api/shutdown', {method: 'POST'})">Exit</button>
   </div>
+
   <main>
     <div class="panel">
       <h2>Registry Contents</h2>
-      <div id="registryDisplay" class="registry-container"></div>
-      <div class="auto-refresh-notice">✓ Auto-refreshes every 5 seconds</div>
+      <p class="small dim" style="margin-bottom: 16px;">Current page registry entries. Updates automatically.</p>
+      <div id="registryDisplay"></div>
+      <div class="auto-refresh-indicator">
+        <div class="status-dot"></div>
+        <span>Auto-refreshing every 5 seconds</span>
+      </div>
     </div>
   </main>
 
@@ -117,7 +272,7 @@
 
     function displayRegistry(data) {
       if (!Array.isArray(data)) {
-        document.getElementById('registryDisplay').innerHTML = '<p style="color: var(--status-amber);">Registry is not an array</p>';
+        document.getElementById('registryDisplay').innerHTML = '<p style="color: var(--status-amber); margin-bottom: 0;">Registry is not an array</p>';
         return;
       }
 
@@ -127,7 +282,7 @@
         html += `<div class="registry-entry-header">Entry ${idx}</div>`;
         for (const key in entry) {
           const value = entry[key];
-          html += `<div>`;
+          html += `<div class="registry-field">`;
           html += `<span class="registry-key">${key}:</span>`;
           html += `<span class="registry-value">${formatValue(value)}</span>`;
           html += `</div>`;
