@@ -63,20 +63,10 @@
     border: 1.5px solid var(--hairline); border-radius: 3px; background: rgba(255,255,255,0.06);
     position: relative; cursor: pointer; box-sizing: border-box;
   }
-  .power-chip input[type="radio"] {
-    appearance: none; -webkit-appearance: none; width: 15px; height: 15px; flex: none; margin: 0; padding: 0;
-    border: 1.5px solid var(--hairline); border-radius: 50%; background: rgba(255,255,255,0.06);
-    position: relative; cursor: pointer; box-sizing: border-box;
-  }
   .power-chip input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
-  .power-chip input[type="radio"]:checked { background: var(--accent); border-color: var(--accent); }
   .power-chip input[type="checkbox"]:checked::after {
     content: ''; position: absolute; left: 4px; top: 0.5px; width: 4px; height: 8px;
     border: solid #1a1013; border-width: 0 2px 2px 0; transform: rotate(45deg);
-  }
-  .power-chip input[type="radio"]:checked::after {
-    content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; 
-    background: #1a1013; border-radius: 50%; transform: translate(-50%, -50%);
   }
   .electric-sub { margin-left: 4px; padding-left: 14px; border-left: 2px solid var(--hairline); }
   .mode-badge {
@@ -178,8 +168,8 @@
             Choose the speedometer style for this train.
           </p>
           <div class="power-options">
-            <label class="power-chip"><input type="radio" name="speedometer" value="analogue" id="f-speedometer-analogue"> Analogue</label>
-            <label class="power-chip"><input type="radio" name="speedometer" value="digital" id="f-speedometer-digital"> Digital</label>
+            <label class="power-chip"><input type="checkbox" value="analogue" id="f-speedometer-analogue" onchange="toggleSpeedometer('analogue')"> Analogue</label>
+            <label class="power-chip"><input type="checkbox" value="digital" id="f-speedometer-digital" onchange="toggleSpeedometer('digital')"> Digital</label>
           </div>
         </div>
 
@@ -265,7 +255,8 @@ async function load() {
   document.getElementById('f-photoOverride').value = trainClass.photo_override || '';
   
   const speedometer = trainClass.speedometer || 'analogue';
-  document.getElementById('f-speedometer-' + speedometer).checked = true;
+  document.getElementById('f-speedometer-analogue').checked = (speedometer === 'analogue');
+  document.getElementById('f-speedometer-digital').checked = (speedometer === 'digital');
   
   document.getElementById('f-steam').checked = !!trainClass.is_steam;
   document.getElementById('f-diesel').checked = !!trainClass.is_diesel;
@@ -443,7 +434,7 @@ primaryBoxIds.forEach(id => document.getElementById(id).addEventListener('change
 
 function isFieldFilled(fieldName) {
   if (fieldName === 'power') return primaryBoxIds.some(id => document.getElementById(id).checked);
-  if (fieldName === 'speedometer') return !!document.querySelector('input[name="speedometer"]:checked');
+  if (fieldName === 'speedometer') return document.getElementById('f-speedometer-analogue').checked || document.getElementById('f-speedometer-digital').checked;
   if (fieldName === 'group') return !!document.getElementById('f-group').value;
   if (fieldName === 'subclass') return !!document.getElementById('f-subclass').value;
   const el = document.getElementById('f-' + fieldName);
@@ -470,7 +461,13 @@ function refreshCompletion() {
 }
 
 document.querySelectorAll('#f-trainClass, #f-operator, #f-livery').forEach(el => el.addEventListener('input', refreshCompletion));
-document.querySelectorAll('input[name="speedometer"]').forEach(el => el.addEventListener('change', refreshCompletion));
+document.querySelectorAll('#f-speedometer-analogue, #f-speedometer-digital').forEach(el => el.addEventListener('change', refreshCompletion));
+
+function toggleSpeedometer(selected) {
+  document.getElementById('f-speedometer-analogue').checked = (selected === 'analogue');
+  document.getElementById('f-speedometer-digital').checked = (selected === 'digital');
+  refreshCompletion();
+}
 
 function goToOperatorPage() {
   location.href = '/pages/operators.html';
@@ -505,7 +502,7 @@ async function save() {
       is_electric: document.getElementById('f-electric').checked ? 1 : 0,
       electrification_types: JSON.stringify(Array.from(document.querySelectorAll('.elec-type:checked')).map(cb => cb.value)),
       photo_override: document.getElementById('f-photoOverride').value || null,
-      speedometer: document.querySelector('input[name="speedometer"]:checked')?.value || null,
+      speedometer: document.getElementById('f-speedometer-analogue').checked ? 'analogue' : (document.getElementById('f-speedometer-digital').checked ? 'digital' : null),
     };
     const maxSpeedInput = document.getElementById('f-maxSpeed');
     const dialMaxInput = document.getElementById('f-dialMax');

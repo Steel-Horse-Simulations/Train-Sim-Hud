@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.0.5"
+APP_VERSION = "7.0.6"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1539,6 +1539,19 @@ def known_trains_list():
         "classes": results,
         "needs_attention": train_classes_db.needs_attention(),
     })
+
+
+@app.route("/api/known_trains/classes/<int:train_class_id>", methods=["PATCH"])
+def known_trains_update(train_class_id):
+    """Update a single train class."""
+    body = request.get_json(force=True, silent=True) or {}
+    applied = train_classes_db.update_train_class(train_class_id, body)
+    if not applied:
+        return jsonify({"error": "not_found"}), 404
+    tc = train_classes_db.get_train_class(train_class_id)
+    if not tc:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(tc)
 
 
 # ---- lifecycle ------------------------------------------------------------
