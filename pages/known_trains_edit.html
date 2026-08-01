@@ -63,10 +63,20 @@
     border: 1.5px solid var(--hairline); border-radius: 3px; background: rgba(255,255,255,0.06);
     position: relative; cursor: pointer; box-sizing: border-box;
   }
+  .power-chip input[type="radio"] {
+    appearance: none; -webkit-appearance: none; width: 15px; height: 15px; flex: none; margin: 0; padding: 0;
+    border: 1.5px solid var(--hairline); border-radius: 50%; background: rgba(255,255,255,0.06);
+    position: relative; cursor: pointer; box-sizing: border-box;
+  }
   .power-chip input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+  .power-chip input[type="radio"]:checked { background: var(--accent); border-color: var(--accent); }
   .power-chip input[type="checkbox"]:checked::after {
     content: ''; position: absolute; left: 4px; top: 0.5px; width: 4px; height: 8px;
     border: solid #1a1013; border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+  .power-chip input[type="radio"]:checked::after {
+    content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; 
+    background: #1a1013; border-radius: 50%; transform: translate(-50%, -50%);
   }
   .electric-sub { margin-left: 4px; padding-left: 14px; border-left: 2px solid var(--hairline); }
   .mode-badge {
@@ -94,13 +104,13 @@
         <div class="panel">
           <h2>Field completion</h2>
           <div class="field-status" id="fieldStatus">
-            <div class="row" data-field="displayName"><span class="chk no">&#10005;</span> Display name</div>
-            <div class="row" data-field="liveryName"><span class="chk no">&#10005;</span> Livery name</div>
-            <div class="row" data-field="company"><span class="chk no">&#10005;</span> Company</div>
+            <div class="row" data-field="trainClass"><span class="chk no">&#10005;</span> Train Class</div>
+            <div class="row" data-field="operator"><span class="chk no">&#10005;</span> Operator</div>
+            <div class="row" data-field="livery"><span class="chk no">&#10005;</span> Livery</div>
             <div class="row" data-field="group"><span class="chk no">&#10005;</span> Group</div>
             <div class="row" data-field="subclass"><span class="chk no">&#10005;</span> Subclass</div>
             <div class="row" data-field="power"><span class="chk no">&#10005;</span> Power</div>
-            <div class="row" data-field="photo"><span class="chk no">&#10005;</span> Photo</div>
+            <div class="row" data-field="speedometer"><span class="chk no">&#10005;</span> Speedometer</div>
           </div>
         </div>
       </div>
@@ -118,35 +128,34 @@
           <div class="raw-readonly" id="sourceNameReadonly">&mdash;</div>
           
           <label style="margin-top: 14px;">Train Class</label>
-          <input type="text" id="f-trainClass" placeholder="e.g. Class 170">
+          <input type="text" id="f-trainClass" placeholder="e.g. Class 170" style="width: 100%; margin-bottom: 14px;">
           
           <label>Operator</label>
-          <div style="display: flex; gap: 8px; margin-bottom: 14px;">
-            <select id="f-operator" style="flex: 1; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px;"></select>
-            <button class="btn primary" style="flex-shrink: 0; padding: 8px 14px;" onclick="goToOperatorPage()">Manage</button>
-          </div>
+          <select id="f-operator" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;"></select>
           
           <label>Livery</label>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <select id="f-livery" style="flex: 1; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px;"></select>
-            <div id="operatorLogo" style="width: 40px; height: 40px; border-radius: 4px; background: #1c1a20; border: 1px solid var(--hairline); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-              <div style="font-size: 10px; color: var(--text-dim);">—</div>
-            </div>
+          <select id="f-livery" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;"></select>
+          
+          <label>Company logo</label>
+          <div id="operatorLogo" style="width: 100px; height: 100px; border-radius: 4px; background: #1c1a20; border: 1px solid var(--hairline); display: flex; align-items: center; justify-content: center; margin-bottom: 14px;">
+            <div style="font-size: 10px; color: var(--text-dim); text-align: center;">—</div>
           </div>
           
           <label>Photo override (if automatic detection fails)</label>
-          <input type="text" id="f-photoOverride" placeholder="e.g. Class_170_ScR">
+          <input type="text" id="f-photoOverride" placeholder="e.g. Class_170_ScR" style="width: 100%; margin-bottom: 14px;">
+          
+          <button class="btn primary" style="width: 100%;" onclick="goToOperatorPage()">Manage Operators</button>
         </div>
 
         <div class="panel" style="margin-top:16px;">
           <h2>Grouping</h2>
           <label>Group</label>
-          <div style="display: flex; gap: 8px; margin-bottom: 14px;">
-            <select id="f-group" style="flex: 1; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px;"><option value="">(none)</option></select>
-            <button class="btn primary" style="flex-shrink: 0; padding: 8px 14px;" onclick="goToGroupPage()">Manage</button>
-          </div>
+          <select id="f-group" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;"><option value="">(none)</option></select>
+          
+          <button class="btn primary" style="width: 100%; margin-bottom: 14px;" onclick="goToGroupPage()">Manage Groups</button>
+          
           <label>Subclass (shares the group's HUD panels, can have its own speeds)</label>
-          <select id="f-subclass" style="background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; width: 100%; margin-bottom: 0;"></select>
+          <select id="f-subclass" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 0;"></select>
         </div>
 
         <div class="panel" style="margin-top:16px;">
@@ -434,7 +443,7 @@ primaryBoxIds.forEach(id => document.getElementById(id).addEventListener('change
 
 function isFieldFilled(fieldName) {
   if (fieldName === 'power') return primaryBoxIds.some(id => document.getElementById(id).checked);
-  if (fieldName === 'photo') return !!(trainClass && trainClass.thumbnail_path);
+  if (fieldName === 'speedometer') return !!document.querySelector('input[name="speedometer"]:checked');
   if (fieldName === 'group') return !!document.getElementById('f-group').value;
   if (fieldName === 'subclass') return !!document.getElementById('f-subclass').value;
   const el = document.getElementById('f-' + fieldName);
@@ -461,6 +470,7 @@ function refreshCompletion() {
 }
 
 document.querySelectorAll('#f-trainClass, #f-operator, #f-livery').forEach(el => el.addEventListener('input', refreshCompletion));
+document.querySelectorAll('input[name="speedometer"]').forEach(el => el.addEventListener('change', refreshCompletion));
 
 function goToOperatorPage() {
   location.href = '/pages/operators.html';
@@ -478,37 +488,46 @@ function goToGroupPage() {
 async function save() {
   const btn = document.getElementById('saveBtn');
   btn.textContent = 'Saving…';
-  const trainClass = document.getElementById('f-trainClass').value;
-  const livery = document.getElementById('f-livery').value;
-  const displayName = trainClass && livery ? `${trainClass} - ${livery}` : (trainClass || '');
-  
-  const body = {
-    display_name: displayName,
-    livery_name: livery,
-    livery_id: document.getElementById('f-operator').value,
-    group_id: document.getElementById('f-group').value ? Number(document.getElementById('f-group').value) : null,
-    subclass_id: document.getElementById('f-subclass').value ? Number(document.getElementById('f-subclass').value) : null,
-    is_steam: document.getElementById('f-steam').checked ? 1 : 0,
-    is_diesel: document.getElementById('f-diesel').checked ? 1 : 0,
-    is_electric: document.getElementById('f-electric').checked ? 1 : 0,
-    electrification_types: JSON.stringify(Array.from(document.querySelectorAll('.elec-type:checked')).map(cb => cb.value)),
-    photo_override: document.getElementById('f-photoOverride').value || null,
-    speedometer: document.querySelector('input[name="speedometer"]:checked')?.value || null,
-  };
-  const maxSpeedInput = document.getElementById('f-maxSpeed');
-  const dialMaxInput = document.getElementById('f-dialMax');
-  body.max_speed_override_mph = (maxSpeedInput.value !== String(maxSpeedInput.dataset.default)) ? Number(maxSpeedInput.value) : null;
-  body.dial_max_override_mph = (dialMaxInput.value !== String(dialMaxInput.dataset.default)) ? Number(dialMaxInput.value) : null;
+  btn.disabled = true;
+  try {
+    const trainClass = document.getElementById('f-trainClass').value;
+    const livery = document.getElementById('f-livery').value;
+    const displayName = trainClass && livery ? `${trainClass} - ${livery}` : (trainClass || '');
+    
+    const body = {
+      display_name: displayName,
+      livery_name: livery,
+      livery_id: document.getElementById('f-operator').value,
+      group_id: document.getElementById('f-group').value ? Number(document.getElementById('f-group').value) : null,
+      subclass_id: document.getElementById('f-subclass').value ? Number(document.getElementById('f-subclass').value) : null,
+      is_steam: document.getElementById('f-steam').checked ? 1 : 0,
+      is_diesel: document.getElementById('f-diesel').checked ? 1 : 0,
+      is_electric: document.getElementById('f-electric').checked ? 1 : 0,
+      electrification_types: JSON.stringify(Array.from(document.querySelectorAll('.elec-type:checked')).map(cb => cb.value)),
+      photo_override: document.getElementById('f-photoOverride').value || null,
+      speedometer: document.querySelector('input[name="speedometer"]:checked')?.value || null,
+    };
+    const maxSpeedInput = document.getElementById('f-maxSpeed');
+    const dialMaxInput = document.getElementById('f-dialMax');
+    body.max_speed_override_mph = (maxSpeedInput.value !== String(maxSpeedInput.dataset.default)) ? Number(maxSpeedInput.value) : null;
+    body.dial_max_override_mph = (dialMaxInput.value !== String(dialMaxInput.dataset.default)) ? Number(dialMaxInput.value) : null;
 
-  const res = await fetch(`/api/known_trains/classes/${trainClassId}`, {
-    method: 'PATCH',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)
-  });
-  if (res.ok) {
-    location.href = '/pages/known_trains.html';
-  } else {
-    console.error('Save failed:', res.status);
+    const res = await fetch(`/api/known_trains/classes/${trainClassId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (res.ok) {
+      location.href = '/pages/known_trains.html';
+    } else {
+      btn.textContent = 'Save';
+      btn.disabled = false;
+      alert('Save failed: ' + res.statusText);
+    }
+  } catch (e) {
+    btn.textContent = 'Save';
+    btn.disabled = false;
+    alert('Error: ' + e.message);
   }
 }
 
