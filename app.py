@@ -90,6 +90,10 @@ def get_local_ip():
 def index():
     return send_from_directory(PAGES_DIR, 'settings.html')
 
+@app.route('/dev-settings')
+def dev_settings():
+    return send_from_directory(PAGES_DIR, 'dev-settings.html')
+
 @app.route('/pages/<path:filename>')
 def pages(filename):
     return send_from_directory(PAGES_DIR, filename)
