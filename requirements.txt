@@ -1,4 +1,0 @@
-flask>=3.0
-requests>=2.31
-pywebview==5.4
-cryptography>=42
