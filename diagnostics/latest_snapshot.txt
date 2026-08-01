@@ -1,0 +1,27 @@
+TSW Hud - Diagnostics
+App version: 6.1.3
+Generated: 2026-08-01T18:10:58
+config_folder: C:\Users\SDown\OneDrive\Documents\My Games\TrainSimWorld6\Saved\Config
+api_base (as saved): http://127.0.0.1:31270
+api_base (actually used for requests): http://127.0.0.1:31270
+key_found: True  key_path: C:\Users\SDown\OneDrive\Documents\My Games\TrainSimWorld6\Saved\Config\CommAPIKey.txt
+lan_ips: ['192.168.86.170', '10.14.0.2']
+last_heartbeat: 2026-08-01T18:10:58  (if this is far behind 'Generated' above, the whole app froze; if it's current, only the window/rendering is stuck)
+
+Recent call timings (most recent last):
+17:55:16    2010ms  connection_failed     GET http://127.0.0.1:31270/info
+17:59:02    2006ms  connection_failed     GET http://127.0.0.1:31270/info
+18:10:32    2004ms  connection_failed     GET http://127.0.0.1:31270/info
+18:10:37    2015ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentDrivableActor.Function.HUD_GetSpeed
+18:10:37    2016ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.Data
+18:10:37    2015ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentDrivableActor.ObjectClass
+18:10:39    2016ms  connection_failed     GET http://127.0.0.1:31270/info
+18:10:39    2007ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentFormation/0.Function.IS_GetVehicleInfo
+18:10:41    2014ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.Data
+18:10:43    2010ms  connection_failed     GET http://127.0.0.1:31270/list/CurrentDrivableActor
+18:10:45    2013ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.PlayerInfo
+18:10:45    2001ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentDrivableActor.ObjectClass
+18:10:47    2007ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.PlayerInfo
+18:10:47    2008ms  connection_failed     GET http://127.0.0.1:31270/info
+18:10:47    2007ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentFormation/0.Function.IS_GetVehicleInfo
+18:10:49    2008ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.Data

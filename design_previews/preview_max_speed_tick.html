@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Preview - Max Speed Tick on Speed Gauge</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --accent:#a06bf0; --accent-bright:#c9a3ff;
+    --bg:#0b0a10; --text:#eef0f4; --text-dim:#a9a4b3;
+    --hairline: rgba(255,255,255,0.08);
+    --status-green:#5fd07a; --status-amber:#e8b74a; --status-red:#e05a4e;
+    --heading:'Barlow Condensed',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:'Barlow',sans-serif; padding:30px 20px; }
+  .note{ display:inline-block; background:#1a1a1a; border:1px solid #333; color:#ccc; font-size:12px; padding:5px 12px; border-radius:16px; margin-bottom:16px; }
+
+  /* --- Real HUD stage/gauge markup + CSS, copied from pages/style.css so
+     this preview reflects the actual Dashboard, not a from-scratch guess --- */
+  .letterbox-frame{
+    max-width:1000px; margin:0 auto; border:1px solid #222; border-radius:12px; padding:14px;
+    background:#050505;
+  }
+  .letterbox-label{ text-align:center; font-size:11px; color:var(--text-dim); letter-spacing:.06em; text-transform:uppercase; margin-bottom:10px; }
+  .hud-stage {
+    width: 100%; aspect-ratio: 16/9; max-width: 1000px; position: relative; overflow: hidden; border-radius: 10px;
+    background: linear-gradient(180deg, rgba(160,107,240,0.22), rgba(0,0,0,0.55)), linear-gradient(160deg, #1c1620, #0c0a0e);
+    box-shadow: 0 16px 50px rgba(0,0,0,0.5);
+  }
+  .hud-corner { position: absolute; padding: 14px 18px; background: rgba(20,18,24,0.82); backdrop-filter: blur(6px); border: 1px solid var(--hairline); border-radius: 8px; }
+  .hud-route { left: 28px; top: 28px; width: 280px; }
+  .hud-kv { display: flex; justify-content: space-between; font-size: 13px; margin: 4px 0; }
+  .hud-kv .k { color: var(--text-dim); letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; }
+  .hud-kv .v { font-family: var(--heading); font-weight: 600; }
+  .hud-signal { right: 28px; top: 28px; display: flex; align-items: center; gap: 10px; }
+  .hud-signal .lamp { width: 16px; height: 16px; border-radius: 50%; }
+  .hud-signal .t1 { font-family: var(--heading); font-weight: 600; font-size: 15px; }
+  .hud-signal .t2 { font-size: 12px; color: var(--text-dim); }
+  .hud-speed-cluster { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 22px; padding: 18px 28px; }
+  .hud-gauge { width: 210px; height: 210px; position: relative; }
+  .hud-gauge svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .hud-gauge .speed-num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .hud-gauge .speed-num .n { font-family: var(--heading); font-weight: 600; font-size: 66px; line-height: 1; }
+  .hud-gauge .speed-num .u { font-family: var(--heading); font-size: 15px; color: var(--text-dim); letter-spacing: 0.14em; margin-top: 4px; }
+  .hud-limit-chip { display: flex; align-items: center; justify-content: center; width: 88px; height: 88px; border-radius: 50%; border: 5px solid var(--status-red); background: #f5f5f2; }
+  .hud-limit-chip .n { font-family: var(--heading); font-weight: 700; font-size: 38px; color: #141414; }
+  .hud-weather { right: 28px; bottom: 28px; display: flex; align-items: center; gap: 10px; }
+  .hud-weather .icon { width: 24px; height: 24px; flex-shrink: 0; color: var(--text); opacity: 0.9; }
+  .hud-weather .t1 { font-family: var(--heading); font-weight: 600; font-size: 18px; }
+  .hud-weather .t2 { font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; text-transform: uppercase; }
+
+  /* --- New: max-speed tick mark --- */
+  .max-tick { transition: stroke 0.15s ease; }
+  .max-tick-label{
+    position:absolute; font-family:var(--heading); font-size:10.5px; font-weight:600;
+    color:var(--text-dim); transform-origin:center; pointer-events:none; white-space:nowrap;
+  }
+  .over-max-badge{
+    position:absolute; top:-6px; left:50%; transform:translateX(-50%);
+    background:var(--status-red); color:#1a1013; font-family:var(--heading); font-weight:700;
+    font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; padding:2px 10px; border-radius:8px;
+    opacity:0; transition:opacity .15s ease;
+  }
+  .over-max-badge.show{ opacity:1; }
+
+  /* --- Controls (preview only, not part of the real HUD) --- */
+  .controls{ max-width:1000px; margin:16px auto 0; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+  .controls button{
+    background:rgba(255,255,255,0.05); border:1px solid var(--hairline); color:var(--text);
+    padding:8px 16px; border-radius:7px; font-size:13px; cursor:pointer; font-family:'Barlow',sans-serif;
+  }
+  .controls button.active{ border-color:var(--accent); color:var(--accent-bright); background:rgba(160,107,240,0.12); }
+  .readout{ max-width:1000px; margin:10px auto 0; text-align:center; font-size:12.5px; color:var(--text-dim); }
+</style>
+</head>
+<body>
+  <div class="note">PREVIEW ONLY — not wired to real data or the real app yet. Click the buttons below to see the gauge at different speeds.</div>
+
+  <div class="letterbox-frame">
+    <div class="letterbox-label">Letterboxed to the real Desktop HUD frame (16:9, matches hud-stage.desktop)</div>
+    <div class="hud-stage desktop">
+      <div class="hud-corner hud-route">
+        <div class="hud-kv"><span class="k">Gradient</span><span class="v">1:200 falling</span></div>
+        <div class="hud-kv"><span class="k">Distance to signal</span><span class="v">1.2 mi</span></div>
+      </div>
+
+      <div class="hud-corner hud-signal">
+        <div class="lamp" style="background:#5fd07a;"></div>
+        <div><div class="t1">Clear</div><div class="t2">Next signal</div></div>
+      </div>
+
+      <div class="hud-corner hud-speed-cluster">
+        <div class="hud-gauge">
+          <div class="over-max-badge" id="overMaxBadge">Over max speed</div>
+          <svg viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="50" fill="none" stroke="#2a2a30" stroke-width="8"/>
+            <circle id="gauge-ring" cx="60" cy="60" r="50" fill="none" stroke="#5fd07a" stroke-width="8"
+                    stroke-dasharray="0 314" stroke-linecap="round"/>
+            <!-- Max-speed tick: a short radial line at the max-speed angle, drawn on top -->
+            <line id="max-tick" class="max-tick" x1="60" y1="10" x2="60" y2="22" stroke="#eef0f4" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+          <div class="speed-num"><div class="n" id="v-speed">62</div><div class="u">MPH</div></div>
+          <div class="max-tick-label" id="maxTickLabel">75</div>
+        </div>
+        <div class="hud-limit-chip"><div class="n">70</div></div>
+      </div>
+
+      <div class="hud-corner hud-weather">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6.5 19a4 4 0 0 1-.4-7.98A5.5 5.5 0 0 1 16.6 8.5 4.5 4.5 0 0 1 16 19H6.5Z"/>
+        </svg>
+        <div><div class="t1">12°C · Overcast</div><div class="t2">Current weather</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button data-speed="35" class="state-btn">Well under max (35mph)</button>
+    <button data-speed="62" class="state-btn active">Under max (62mph)</button>
+    <button data-speed="75" class="state-btn">At max (75mph)</button>
+    <button data-speed="84" class="state-btn">Over max (84mph)</button>
+  </div>
+  <p class="readout" id="readout"></p>
+
+<script>
+  // Mirrors the real dashboard.js scaling: gauge fill fraction is speed /
+  // dialMax. dialMax here is a proposed HEADROOM above the loco's actual
+  // max speed (max 75 * 1.2 = 90), so the tick sits partway round the arc
+  // with visible room past it - matching a real speedometer's needle
+  // having somewhere to go past top speed. The real app doesn't have this
+  // separate "dial max" concept yet (that's part of the still-unbuilt
+  // Known Trains v2 two-speed field) - for now this proposes a fixed 1.2x
+  // multiplier as a stand-in. Worth confirming this is the right approach,
+  // or whether to just wait for the real dial-max field to exist.
+  const MAX_SPEED = 75;
+  const DIAL_MAX = MAX_SPEED * 1.2;
+  const CIRCUMFERENCE = 314;
+
+  function angleForFraction(frac) {
+    // 0 = top (12 o'clock) since the whole SVG is rotated -90deg; goes
+    // clockwise as frac increases, matching the real gauge fill direction.
+    return frac * 360;
+  }
+
+  function positionTick() {
+    const frac = MAX_SPEED / DIAL_MAX;
+    const angle = angleForFraction(frac);
+    const tick = document.getElementById('max-tick');
+    tick.setAttribute('transform', `rotate(${angle} 60 60)`);
+
+    // Position the text label just outside the ring at the same angle.
+    // The SVG is rotated -90deg as a whole, so compute the label's real
+    // screen angle as (angle - 90) to counteract that rotation.
+    const label = document.getElementById('maxTickLabel');
+    const rad = (angle - 90) * Math.PI / 180;
+    const r = 92; // just outside the 105px-radius gauge (210px / 2)
+    const cx = 105 + r * Math.cos(rad);
+    const cy = 105 + r * Math.sin(rad);
+    label.style.left = cx + 'px';
+    label.style.top = cy + 'px';
+    label.style.transform = 'translate(-50%, -50%)';
+  }
+
+  function setSpeed(speed) {
+    const frac = Math.max(0, Math.min(1, speed / DIAL_MAX));
+    const ring = document.getElementById('gauge-ring');
+    const overMax = speed > MAX_SPEED;
+
+    ring.setAttribute('stroke-dasharray', (frac * CIRCUMFERENCE).toFixed(1) + ' ' + CIRCUMFERENCE);
+    ring.setAttribute('stroke', overMax ? 'var(--status-red)' : 'var(--status-green)');
+
+    document.getElementById('v-speed').textContent = speed;
+    document.getElementById('overMaxBadge').classList.toggle('show', overMax);
+
+    const readout = document.getElementById('readout');
+    readout.textContent = overMax
+      ? `${speed} mph is ${speed - MAX_SPEED} mph over this loco's ${MAX_SPEED} mph max — ring turns red, badge appears.`
+      : `${speed} mph is under this loco's ${MAX_SPEED} mph max (tick mark) — ring stays the normal green.`;
+  }
+
+  document.querySelectorAll('.state-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.state-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      setSpeed(parseFloat(btn.dataset.speed));
+    });
+  });
+
+  positionTick();
+  setSpeed(62);
+</script>
+</body>
+</html>

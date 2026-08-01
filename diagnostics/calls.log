@@ -1,0 +1,16 @@
+17:55:16    2010ms  connection_failed     GET http://127.0.0.1:31270/info
+17:59:02    2006ms  connection_failed     GET http://127.0.0.1:31270/info
+18:10:32    2004ms  connection_failed     GET http://127.0.0.1:31270/info
+18:10:37    2015ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentDrivableActor.Function.HUD_GetSpeed
+18:10:37    2016ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.Data
+18:10:37    2015ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentDrivableActor.ObjectClass
+18:10:39    2016ms  connection_failed     GET http://127.0.0.1:31270/info
+18:10:39    2007ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentFormation/0.Function.IS_GetVehicleInfo
+18:10:41    2014ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.Data
+18:10:43    2010ms  connection_failed     GET http://127.0.0.1:31270/list/CurrentDrivableActor
+18:10:45    2013ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.PlayerInfo
+18:10:45    2001ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentDrivableActor.ObjectClass
+18:10:47    2007ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.PlayerInfo
+18:10:47    2008ms  connection_failed     GET http://127.0.0.1:31270/info
+18:10:47    2007ms  connection_failed     GET http://127.0.0.1:31270/get/CurrentFormation/0.Function.IS_GetVehicleInfo
+18:10:49    2008ms  connection_failed     GET http://127.0.0.1:31270/get/DriverAid.Data
