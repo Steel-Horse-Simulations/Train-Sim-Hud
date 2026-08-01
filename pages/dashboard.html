@@ -4,41 +4,45 @@
 <html lang="en" data-theme="purple">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TSW HUD - Dashboard</title>
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/pages/style.css">
   <style>
-    body {
+    * { box-sizing: border-box; }
+
+    html, body {
       margin: 0;
       padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      width: 100%;
+      height: 100%;
       overflow: hidden;
-      width: 100vw;
-      height: 100vh;
     }
 
     main {
+      width: 100%;
+      height: 100%;
       padding: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      height: 100vh;
-      width: 100vw;
       margin: 0;
     }
 
     .hud-wrap {
+      width: 100%;
+      height: 100%;
       display: flex;
-      justify-content: center;
       align-items: center;
-      width: 100vw;
-      height: 100vh;
+      justify-content: center;
     }
 
     .hud-stage {
-      width: 100vw;
-      height: 100vh;
-      aspect-ratio: 1340 / 800;
+      width: 100%;
+      height: 100%;
       position: relative;
       overflow: hidden;
       background:
@@ -266,47 +270,16 @@
       color: var(--text-dim);
     }
 
-    .hud-controls-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      display: flex;
-      justify-content: flex-start;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 16px;
-      background: linear-gradient(180deg, rgba(0,0,0,0.55), transparent);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.25s ease;
-      z-index: 500;
-    }
-
-    .hud-controls-overlay.visible {
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .hud-controls-overlay .brand {
-      font-family: var(--heading);
-      font-size: 13px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--text-dim);
-      text-decoration: none;
+    .brand-link {
       cursor: pointer;
+      user-select: none;
     }
   </style>
 </head>
 <body>
-  <div class="hud-controls-overlay" id="hud-controls">
-    <a href="#" class="brand" id="brand-link"><strong>TSW Hud</strong> · dashboard</a>
-  </div>
-
   <main>
     <div class="hud-wrap">
-      <div class="hud-stage">
+      <div class="hud-stage" id="hud-stage">
         <!-- Route and gradient info (top-left) -->
         <div class="hud-corner hud-route">
           <div class="loco-class" id="v-loco">Class 390</div>
@@ -358,26 +331,13 @@
     let pollInterval = null;
 
     // Fullscreen on brand click
-    document.getElementById('brand-link').addEventListener('click', (e) => {
-      e.preventDefault();
-      const elem = document.documentElement;
-      if (elem.requestFullscreen) elem.requestFullscreen();
-      else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
-      else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        }
+      }
     });
-
-    // Show/hide controls overlay on activity
-    let hideTimeout;
-    function showControls() {
-      const overlay = document.getElementById('hud-controls');
-      overlay.classList.add('visible');
-      clearTimeout(hideTimeout);
-      hideTimeout = setTimeout(() => overlay.classList.remove('visible'), 3000);
-    }
-
-    document.addEventListener('mousemove', showControls);
-    document.addEventListener('touchstart', showControls);
-    showControls();
 
     // Format speed with thousands separator
     function formatSpeed(ms) {
@@ -498,6 +458,19 @@
     // Start polling
     updateDashboard();
     pollInterval = setInterval(updateDashboard, 300);
+
+    // Fullscreen toggle on stage click
+    document.getElementById('hud-stage').addEventListener('click', async () => {
+      try {
+        if (!document.fullscreenElement) {
+          await document.getElementById('hud-stage').requestFullscreen();
+        } else {
+          await document.exitFullscreen();
+        }
+      } catch (err) {
+        console.error('Fullscreen error:', err);
+      }
+    });
   </script>
 </body>
 </html>
