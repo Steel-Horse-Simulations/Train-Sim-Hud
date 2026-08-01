@@ -1,7 +1,7 @@
 TSW HUD - APP VERSIONING SYSTEM
 ================================
 
-MAIN APP VERSION: 2.17.0
+MAIN APP VERSION: 0.1.0
 
 VERSION FORMAT (displayed to user): x.x.x
   Example: 0.1.0, 1.2.3, 2.0.0
@@ -31,36 +31,36 @@ VERSION METADATA FILE
 File: version.json (stored in app root)
 
 {
-  "main_version": "2.17.0",
-  "main_major": 2,
-  "main_minor": 17,
+  "main_version": "0.1.0",
+  "main_major": 0,
+  "main_minor": 1,
   "main_patch": 0,
   "release_date": "2025-08-01",
-  "git_tag": "v2.17.0",
+  "git_tag": "v0.1.0",
   "main_branch": true,
   "dev_notes": "",
   "pages": {
     "index": {
       "name": "Setup",
-      "version": "2.17.0",
-      "major": 2,
-      "minor": 17,
+      "version": "0.1.0",
+      "major": 0,
+      "minor": 1,
       "patch": 0,
       "last_modified": "2025-08-01"
     },
     "settings": {
       "name": "Settings",
-      "version": "2.17.0",
-      "major": 2,
-      "minor": 17,
+      "version": "0.1.0",
+      "major": 0,
+      "minor": 1,
       "patch": 0,
       "last_modified": "2025-08-01"
     },
     "dev_settings": {
       "name": "Dev Settings",
-      "version": "2.17.0",
-      "major": 2,
-      "minor": 17,
+      "version": "0.1.0",
+      "major": 0,
+      "minor": 1,
       "patch": 0,
       "last_modified": "2025-08-01"
     }
@@ -105,14 +105,14 @@ When adding a new page:
   6. Update version.json main_version, main_major, main_minor (reset to 0), main_patch (reset to 0)
 
 Example:
-  Page "index" goes from v2.17.0 to v2.17.1 (patch bump)
-    → Main version goes from v2.17.0 to v2.17.1
+  Page "index" goes from v0.1.0 to v0.1.1 (patch bump)
+    → Main version goes from v0.1.0 to v0.1.1
 
-  Page "settings" goes from v2.17.0 to v2.18.0 (minor bump)
-    → Main version goes from v2.17.1 to v2.18.0
+  Page "settings" goes from v0.1.0 to v0.2.0 (minor bump)
+    → Main version goes from v0.1.1 to v0.2.0
 
   New page "hud" added with v1.0.0
-    → Main version goes from v2.18.0 to v3.0.0
+    → Main version goes from v0.2.0 to v1.0.0
 
 FILE TAGGING SYSTEM
 ====================
