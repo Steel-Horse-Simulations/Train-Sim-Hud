@@ -1,0 +1,14 @@
+
+--- 2026-08-01T19:53:44 ---
+Traceback (most recent call last):
+  File "C:\Users\SDown\OneDrive\Desktop\Hud Stuff\Hud\app.py", line 1778, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\SDown\OneDrive\Desktop\Hud Stuff\Hud\app.py", line 1742, in main
+    run_in_system_browser()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\SDown\OneDrive\Desktop\Hud Stuff\Hud\app.py", line 1715, in run_in_system_browser
+    time.sleep(1)
+    ~~~~~~~~~~^^^
+KeyboardInterrupt
+

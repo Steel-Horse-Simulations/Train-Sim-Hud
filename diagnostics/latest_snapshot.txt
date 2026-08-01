@@ -1,0 +1,12 @@
+TSW Hud - Diagnostics
+App version: 6.2.0
+Generated: 2026-08-01T19:53:39
+config_folder: 
+api_base (as saved): http://127.0.0.1:31270
+api_base (actually used for requests): http://127.0.0.1:31270
+key_found: False  key_path: None
+lan_ips: ['192.168.86.170', '10.14.0.2']
+last_heartbeat: 2026-08-01T19:53:39  (if this is far behind 'Generated' above, the whole app froze; if it's current, only the window/rendering is stuck)
+
+Recent call timings (most recent last):
+(no calls logged yet)
