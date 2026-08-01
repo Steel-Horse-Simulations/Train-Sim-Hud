@@ -99,9 +99,9 @@ def get_version():
     try:
         with open(os.path.join(APP_DIR, 'version.json')) as f:
             version_data = json.load(f)
-        return jsonify({'version': version_data.get('version', 'Unknown')})
+        return jsonify({'main_version': version_data.get('main_version', 'Unknown')})
     except:
-        return jsonify({'version': 'Unknown'})
+        return jsonify({'main_version': 'Unknown'})
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
@@ -118,7 +118,12 @@ def set_config():
     if 'config_folder' in body:
         CONFIG['config_folder'] = body['config_folder']
     save_config(CONFIG)
-    return jsonify({'ok': True})
+    key, key_path = read_api_key()
+    return jsonify({
+        'ok': True,
+        'key_found': bool(key),
+        'key_file_path': key_path or ''
+    })
 
 @app.route('/api/autodetect', methods=['POST'])
 def autodetect():
@@ -155,6 +160,12 @@ def get_network():
         'ip': ip,
         'port': port
     })
+
+@app.route('/api/network-info')
+def network_info():
+    """Get local network IP address (not VPN or loopback)."""
+    ip = get_local_ip()
+    return jsonify({'network_ip': ip})
 
 @app.route('/api/proxy/get/<path:subpath>')
 def proxy_get(subpath):
