@@ -1,0 +1,99 @@
+TSW HUD - THEME AND STYLE GUIDE
+=================================
+
+This app uses a single fixed theme: PURPLE. Do not add theme switchers,
+do not reference any other colour names, do not make colours configurable.
+
+COLOURS (always use these exact values)
+-----------------------------------------
+--accent:       #a06bf0   ← purple, used for borders, active states, headings
+--accent-bright:#c9a3ff   ← lighter purple, used for text on dark backgrounds
+
+Functional colours (fixed meaning, never change with theme):
+--status-green: #5fd07a   ← connected, within limit, good
+--status-yellow:#d9d24a   ← mostly complete, moderate warning
+--status-amber: #e8b74a   ← warning, offline, pending
+--status-red:   #e05a4e   ← error, over limit, danger
+
+Base colours:
+--bg:           #0b0a10
+--panel:        rgba(20,18,24,0.85)
+--panel-raised: rgba(30,26,36,0.9)
+--hairline:     rgba(255,255,255,0.08)
+--text:         #f0edf5
+--text-dim:     #a9a4b3
+
+FONTS
+------
+Load from Google Fonts:
+  Barlow Condensed (wght 400, 500, 600, 700) — headings, nav, labels, numbers
+  Barlow (wght 400, 500) — body text
+
+CSS variables:
+  --heading: 'Barlow Condensed', 'Segoe UI', system-ui, sans-serif
+  --sans:    'Barlow', 'Segoe UI', system-ui, sans-serif
+  --mono:    'Barlow Condensed', 'Consolas', ui-monospace, monospace
+
+SHARED STYLESHEET
+------------------
+All pages include:
+  <link rel="stylesheet" href="/pages/style.css">
+Do NOT include /pages/theme.js — without it the page stays on purple always.
+
+THE STYLE.CSS FILE PROVIDES
+-----------------------------
+.topbar           — top navigation bar
+.topbar .brand    — app name/branding
+.nav              — nav link container (filled by nav.js)
+.nav a            — nav links
+.nav a.active     — active nav link
+.exit-btn         — red exit/close button
+main              — page content area
+.panel            — dark glass content card
+.panel h2         — section heading (uppercase, accent-bright colour)
+.field-row        — label + input + button row
+input[type=text]  — dark styled text input
+button.btn        — standard button
+button.btn.primary— accent-coloured primary action button
+.readout          — a numeric readout tile (label + big value)
+.status-dot       — small coloured status indicator dot
+.hud-stage        — full-screen HUD container
+.hud-corner       — dark glass panel for HUD corners (position absolute)
+.hud-gauge        — speed ring gauge container
+.hud-limit-chip   — circular speed limit badge (white/red)
+.hud-kv           — key/value row inside a HUD corner
+.hud-signal       — signal lamp + text container
+.hud-weather      — weather icon + text container
+.hud-limits-panel — upcoming speed limits panel
+.hud-controls-overlay — fade-in/out top controls bar on the HUD
+
+WRITING NEW PAGES
+------------------
+Structure every admin/settings page as:
+  <div class="topbar">
+    <div class="brand"><strong>TSW HUD</strong><br>PAGE NAME</div>
+    <div class="nav" id="navContainer"></div>
+    <button class="exit-btn" onclick="fetch('/api/shutdown',{method:'POST'})">Exit</button>
+  </div>
+  <main>
+    <div class="panel">
+      <h2>Section</h2>
+      content
+    </div>
+  </main>
+  <script src="/pages/nav.js"></script>
+
+Use .panel + .panel spacing (style.css handles it via + selector).
+Use button.btn.primary for the main action on a panel.
+Use .small and .dim as utility classes for secondary text.
+
+WRITING NEW HUD PANELS / GAUGES
+---------------------------------
+Use .hud-corner for the outer container.
+Labels: uppercase, letter-spacing 0.08em, color var(--text-dim), font var(--heading).
+Values: font var(--heading), font-weight 600 or 700, color var(--text).
+Status glow: box-shadow: 0 0 6px var(--status-X) on coloured dots.
+
+For a ring gauge, the SVG circle circumference at r=50 is 314.
+  stroke-dasharray: (fraction * 314).toFixed(1) + " 314"
+  SVG must be rotated -90deg so 0 starts at the top.

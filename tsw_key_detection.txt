@@ -1,0 +1,172 @@
+TSW API - KEY AUTO-DETECTION AND CONNECTION CHECK
+==================================================
+
+KEY FILE LOCATION
+------------------
+The TSW API key lives in a plain text file. The filename varies:
+  CommAPIKey.txt   (most common, TSW 4+)
+  DTGCommKey.txt   (used in some older guides and installs)
+
+Always try both filenames. The key is on the first line of the file.
+Read with UTF-8-sig encoding to strip the BOM that Windows sometimes adds.
+
+Common folder locations (try all of these, in order):
+  %USERPROFILE%\Documents\My Games\TrainSimWorld6\Saved\Config
+  %USERPROFILE%\Documents\My Games\TrainSimWorld5\Saved\Config
+  %USERPROFILE%\Documents\My Games\TrainSimWorld4\Saved\Config
+  %USERPROFILE%\Documents\My Games\TrainSimWorld3\Saved\Config
+  %USERPROFILE%\Documents\My Games\TrainSimWorld2\Saved\Config
+  %USERPROFILE%\Documents\My Games\TrainSimWorld\Saved\Config
+  Also check OneDrive-redirected Documents (common on Windows 11):
+  %USERPROFILE%\OneDrive\Documents\My Games\TrainSimWorld6\Saved\Config
+  (and equivalent for TSW5/TSW4/TSW3)
+
+PYTHON IMPLEMENTATION
+----------------------
+import os
+
+KEY_FILENAMES = ['CommAPIKey.txt', 'DTGCommKey.txt']
+
+def candidate_folders():
+    home = os.path.expanduser('~')
+    docs = os.path.join(home, 'Documents', 'My Games')
+    onedrive_docs = os.path.join(home, 'OneDrive', 'Documents', 'My Games')
+    folders = []
+    for version in ['TrainSimWorld6', 'TrainSimWorld5', 'TrainSimWorld4',
+                    'TrainSimWorld3', 'TrainSimWorld2', 'TrainSimWorld']:
+        folders.append(os.path.join(docs, version, 'Saved', 'Config'))
+    for version in ['TrainSimWorld6', 'TrainSimWorld5', 'TrainSimWorld4', 'TrainSimWorld3']:
+        folders.append(os.path.join(onedrive_docs, version, 'Saved', 'Config'))
+    return folders
+
+def find_key_file(folder):
+    """Return the path to the key file inside folder, or None."""
+    if not folder or not os.path.isdir(folder):
+        return None
+    for name in KEY_FILENAMES:
+        p = os.path.join(folder, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+def auto_detect_folder():
+    """Scan all candidate folders and return the first one that has a key file."""
+    for folder in candidate_folders():
+        if find_key_file(folder):
+            return folder
+    return None
+
+def read_api_key(config_folder=''):
+    """
+    Read the key from config_folder if given; fall back to auto-detect.
+    Returns (key_string, key_file_path) or (None, None).
+    """
+    folder = config_folder or auto_detect_folder() or ''
+    path = find_key_file(folder)
+    if not path:
+        return None, None
+    try:
+        with open(path, 'r', encoding='utf-8-sig') as f:
+            key = f.read().strip()
+        return key, path
+    except Exception:
+        return None, path
+
+FLASK ROUTES (add these to app.py)
+------------------------------------
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    key, key_path = read_api_key(CONFIG.get('config_folder', ''))
+    return jsonify({
+        'config_folder': CONFIG.get('config_folder', ''),
+        'key_found': key is not None,
+        'key_file_path': key_path,
+    })
+
+@app.route('/api/config', methods=['POST'])
+def set_config():
+    data = request.get_json(force=True, silent=True) or {}
+    if 'config_folder' in data:
+        CONFIG['config_folder'] = data['config_folder']
+        save_config(CONFIG)
+    key, key_path = read_api_key(CONFIG.get('config_folder', ''))
+    return jsonify({'ok': True, 'key_found': key is not None, 'key_file_path': key_path})
+
+@app.route('/api/autodetect', methods=['POST'])
+def autodetect():
+    folder = auto_detect_folder()
+    if folder:
+        CONFIG['config_folder'] = folder
+        save_config(CONFIG)
+        return jsonify({'ok': True, 'config_folder': folder})
+    return jsonify({'ok': False, 'error': 'not_found', 'checked': candidate_folders()})
+
+MAKING AUTHENTICATED REQUESTS
+-------------------------------
+The auth header name is DTGCommKey (always this, regardless of which
+filename held the key):
+  headers = {'DTGCommKey': key}
+
+The API base URL is always:
+  http://127.0.0.1:31270
+
+Use 127.0.0.1 explicitly, NOT 'localhost'. On some Windows setups 'localhost'
+triggers an IPv6 resolution attempt that silently times out before falling
+back to IPv4, adding ~2 seconds to every request.
+
+CHECKING WHETHER THE GAME IS RUNNING
+--------------------------------------
+Call GET /info (no path suffix — just /info at the root):
+  import requests
+  def check_game_running(key):
+      try:
+          r = requests.get('http://127.0.0.1:31270/info',
+                           headers={'DTGCommKey': key},
+                           timeout=(2, 3))
+          return r.status_code == 200
+      except requests.exceptions.ConnectionError:
+          return False   # game not running / -HTTPAPI not set
+      except requests.exceptions.Timeout:
+          return False   # game launching but not ready yet
+      except Exception:
+          return False
+
+A 200 response means the API is reachable. The game must have been launched
+with -HTTPAPI as a Steam launch option — without it the port is never opened
+and every request will get a ConnectionError.
+
+Even with the game running and -HTTPAPI set, many endpoints only respond
+when the player is in an active driving session (not in the main menu).
+/info and /list respond from the main menu. Everything under
+CurrentDrivableActor, DriverAid, CurrentFormation etc. requires an active session.
+
+ERROR STATES AND HOW TO HANDLE THEM
+--------------------------------------
+No key file found:
+  → Show a folder picker. Save the chosen folder to config. Try again.
+  → Also offer an "Auto-detect" button that calls /api/autodetect.
+
+Key found but ConnectionError:
+  → Game is not running, or was not launched with -HTTPAPI.
+  → Tell the user: "Start TSW with the -HTTPAPI Steam launch option."
+
+Key found but Timeout:
+  → Game may be launching. Retry silently after a few seconds.
+
+Key found, game running, but endpoint returns an error:
+  → Player may not be in an active session yet. Retry silently.
+  → Only surface an error to the user after repeated failures.
+
+SETUP PAGE UI PATTERN
+----------------------
+On page load:
+  1. GET /api/config → shows current folder and whether key was found
+  2. If key found, GET /info (via /api/proxy/raw/info) to check if game is running
+  3. Show one of three states:
+       ● green  — key found, game running
+       ● amber  — key found, game not running (or not in session)
+       ● red    — no key found
+
+Buttons:
+  "Auto-detect" → POST /api/autodetect, then refresh status
+  "Browse..."   → let user paste a folder path, POST /api/config, then refresh

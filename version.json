@@ -1,12 +1,12 @@
 {
-  "main_version": "0.1.0",
-  "main_major": 0,
-  "main_minor": 1,
-  "main_patch": 0,
+  "main_version": "1.0.3",
+  "main_major": 1,
+  "main_minor": 0,
+  "main_patch": 3,
   "release_date": "2025-08-01",
-  "git_tag": "v0.1.0",
+  "git_tag": "v1.0.3",
   "main_branch": true,
-  "dev_notes": "",
+  "dev_notes": "Added persistent SESSION, loco caching, improved proxy routes, dashboard support",
   "pages": {
     "index": {
       "name": "Setup",

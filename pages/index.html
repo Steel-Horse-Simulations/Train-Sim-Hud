@@ -1,4 +1,4 @@
-<!-- TSW Hud [v2.17.0] [main] [main] -->
+<!-- TSW Hud [v0.1.0] [main] [main] -->
 <!-- Last modified: 2025-08-01 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -32,13 +32,13 @@
       await fetch('/api/config', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ key_folder: path })
+        body: JSON.stringify({ config_folder: path })
       });
       checkStatus();
     }
     async function checkStatus() {
       const cfg = await fetch('/api/config').then(r => r.json());
-      document.getElementById('folderInput').value = cfg.key_folder || '';
+      document.getElementById('folderInput').value = cfg.config_folder || '';
       document.getElementById('keyStatus').textContent = cfg.key_found ? 'Key found.' : 'Key not found.';
     }
     checkStatus();

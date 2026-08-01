@@ -1,7 +1,7 @@
 # TSW HUD - Project Notes
 
 ## Current Version
-**v2.17.0** — Flask + pywebview architecture with theme system and API proxying
+**v0.1.0** — Flask + pywebview architecture with theme system and API proxying
 
 ## Known Trains v2 Redesign (Planned Major Version Bump)
 Three HTML preview mockups approved in `design_previews/`:

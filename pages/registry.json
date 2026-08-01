@@ -2,9 +2,15 @@
   {
     "id": "settings",
     "name": "Settings",
-    "url": "/",
-    "show_in_nav": true,
+    "url": "/pages/settings.html",
     "dev_only": false,
     "order": 0
+  },
+  {
+    "id": "dashboard",
+    "name": "Dashboard",
+    "url": "/pages/dashboard.html",
+    "dev_only": false,
+    "order": 1
   }
 ]
