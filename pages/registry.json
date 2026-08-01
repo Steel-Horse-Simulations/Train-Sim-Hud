@@ -1,0 +1,65 @@
+[
+  {
+    "id": "setup",
+    "name": "Setup",
+    "url": "/",
+    "dev_only": false,
+    "order": 0
+  },
+  {
+    "id": "dashboard_desktop",
+    "name": "Dashboard (Desktop)",
+    "url": "/pages/dashboard.html",
+    "dev_only": false,
+    "order": 1
+  },
+  {
+    "id": "dashboard_tablet",
+    "name": "Dashboard (Tablet)",
+    "url": "/pages/dashboard_tablet.html",
+    "dev_only": false,
+    "order": 2
+  },
+  {
+    "id": "timetables",
+    "name": "Timetables",
+    "url": "/pages/timetables_browser.html",
+    "dev_only": false,
+    "order": 3
+  },
+  {
+    "id": "map",
+    "name": "Map",
+    "url": "/pages/map.html",
+    "dev_only": false,
+    "order": 4
+  },
+  {
+    "id": "explorer",
+    "name": "Discovery",
+    "url": "/pages/explorer.html",
+    "dev_only": true,
+    "order": 5
+  },
+  {
+    "id": "weather",
+    "name": "Real Weather",
+    "url": "/pages/weather.html",
+    "dev_only": false,
+    "order": 6
+  },
+  {
+    "id": "hud_lab",
+    "name": "HUD Lab",
+    "url": "/pages/hud_lab.html",
+    "dev_only": true,
+    "order": 7
+  },
+  {
+    "id": "known_trains",
+    "name": "Known Trains",
+    "url": "/pages/known_trains.html",
+    "dev_only": false,
+    "order": 10
+  }
+]

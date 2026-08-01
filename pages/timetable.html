@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Timetable</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Timetable HUD is its own thing - deliberately NOT pulling in style.css's
+     global theme, and NOT sharing any code with the Dashboard HUDs. Changes
+     made to the Dashboard HUDs should not affect this page, and vice versa,
+     unless specifically asked for on both. */
+  :root { --text:#f0edf5; --text-dim:#a9a4b3; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(ellipse at 50% 0%, #16161a 0%, #0a0a0b 60%);
+    font-family: 'Barlow', sans-serif; color: var(--text);
+  }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 22px 12px 40px; }
+
+  /* Auto-hide controls overlay - hidden by default, appears on tap/hover,
+     fades back out after a short period of inactivity. Self-contained here
+     rather than pulled from style.css, keeping Timetable separate from the
+     Dashboard HUDs as agreed. */
+  .hud-controls-overlay {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 12px 16px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.55), transparent);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease;
+    z-index: 500;
+  }
+  .hud-controls-overlay.visible { opacity: 1; pointer-events: auto; }
+  .hud-controls-overlay a.brand {
+    font-family: 'Barlow Condensed', sans-serif; font-size: 13px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-dim); text-decoration: none;
+  }
+  .btns { display: flex; gap: 8px; }
+  .fullscreen-btn, .exit-btn {
+    font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 0.05em;
+    text-transform: uppercase; padding: 7px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .fullscreen-btn {
+    background: rgba(32,32,35,0.9); border: 1px solid rgba(255,255,255,0.1); color: var(--text);
+  }
+  .exit-btn { background: transparent; border: 1px solid #e05a4e; color: #e05a4e; }
+
+  .caption {
+    font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-dim); margin: 4px 0 14px;
+  }
+
+  .row {
+    margin: 0 0 10px; border-radius: 8px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(120deg, var(--tint1), rgba(0,0,0,0.5)), linear-gradient(160deg, var(--tint3), var(--tint2));
+    padding: 14px 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .row .swatch { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .row .label { font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 17px; color: var(--accent-bright); }
+  .row .sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+  [data-t="rainbow"] .swatch {
+    background: conic-gradient(from 0deg, #ff5f5f, #ffbb5f, #f5e75f, #7fe37f, #5fb8ff, #a06bf0, #ff5f5f);
+  }
+  [data-t="rainbow"] .label {
+    background: linear-gradient(90deg, #ff8080, #ffcf80, #fff480, #90e890, #80c3ff, #c79bff);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+</style>
+</head>
+<body>
+  <div class="hud-controls-overlay" id="hud-controls">
+    <a class="brand" href="/">TSW Hud</a>
+    <div class="btns">
+      <button class="fullscreen-btn" onclick="toggleFullScreen()">Full Screen</button>
+      <button class="exit-btn" onclick="exitApp()">Exit</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="caption">Timetable HUD - colour theme test (aesthetic only, no functionality yet)</div>
+    <div id="rows"></div>
+  </div>
+
+<script src="/pages/hud-controls.js"></script>
+<script>
+const THEMES = [
+  {id:'purple',  name:'Purple',  swatch:'#a06bf0', bright:'#c9a3ff', tint1:'rgba(35,20,45,0.3)',  tint2:'#201828', tint3:'#332440'},
+  {id:'green',   name:'Green',   swatch:'#5fb87a', bright:'#9fe6b0', tint1:'rgba(20,40,30,0.35)', tint2:'#142018', tint3:'#223328'},
+  {id:'blue',    name:'Blue',    swatch:'#5f9be0', bright:'#a3cdff', tint1:'rgba(20,35,55,0.35)', tint2:'#141e28', tint3:'#22384f'},
+  {id:'amber',   name:'Amber',   swatch:'#e0a83f', bright:'#f5cf8f', tint1:'rgba(50,38,15,0.35)', tint2:'#241c10', tint3:'#4a3316'},
+  {id:'crimson', name:'Crimson', swatch:'#d2585a', bright:'#f0a3a5', tint1:'rgba(45,18,20,0.35)', tint2:'#241213', tint3:'#402024'},
+  {id:'teal',    name:'Teal',    swatch:'#4fb8a8', bright:'#9fe6da', tint1:'rgba(15,45,42,0.35)', tint2:'#0f2220', tint3:'#1f4640'},
+  {id:'rose',    name:'Rose',    swatch:'#dd6ba0', bright:'#f5aecb', tint1:'rgba(50,20,38,0.35)', tint2:'#25121c', tint3:'#452038'},
+  {id:'slate',   name:'Slate',   swatch:'#8b96a3', bright:'#c3ccd6', tint1:'rgba(30,34,40,0.4)',  tint2:'#1b1e22', tint3:'#333a42'},
+  {id:'rainbow', name:'Rainbow', swatch:'#c77dff', bright:'#ffffff', tint1:'rgba(30,20,45,0.35)', tint2:'#1a1420', tint3:'#2c1e3d'},
+];
+
+document.getElementById('rows').innerHTML = THEMES.map(t => `
+  <div class="row" data-t="${t.id}" style="--accent:${t.swatch}; --accent-bright:${t.bright}; --tint1:${t.tint1}; --tint2:${t.tint2}; --tint3:${t.tint3};">
+    <div class="swatch"></div>
+    <div>
+      <div class="label">${t.name}</div>
+      <div class="sub">Timetable HUD · aesthetic test row</div>
+    </div>
+  </div>
+`).join('');
+
+// Temporary Full Screen toggle - placeholder, will likely be replaced later.
+function toggleFullScreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+function exitApp() {
+  fetch('/api/shutdown', {method: 'POST'});
+}
+
+initHudControls('hud-controls');
+</script>
+<script src="/pages/install-prompt.js"></script>
+</body>
+</html>
