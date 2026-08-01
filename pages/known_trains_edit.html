@@ -134,9 +134,12 @@
           <label>Photo override (if automatic detection fails)</label>
           <input type="text" id="f-photoOverride" placeholder="e.g. Class_170_ScR" style="width: 100%; margin-bottom: 14px;">
           
-          <button class="btn primary" style="width: 100%; margin-bottom: 14px;" onclick="goToOperatorPage()">Manage Operators</button>
+          <label>Visibility</label>
+          <div class="power-options" style="margin-bottom: 14px;">
+            <label class="power-chip"><input type="checkbox" id="f-visible" checked> Visible in Known Trains</label>
+          </div>
           
-          <button class="btn" style="width: 100%;" onclick="hideFromKnownTrains()">Hide from Known Trains</button>
+          <button class="btn primary" style="width: 100%;" onclick="goToOperatorPage()">Manage Operators</button>
         </div>
 
         <div class="panel" style="margin-top:16px;">
@@ -260,6 +263,8 @@ async function load() {
   const speedometer = trainClass.speedometer || 'analogue';
   document.getElementById('f-speedometer-analogue').checked = (speedometer === 'analogue');
   document.getElementById('f-speedometer-digital').checked = (speedometer === 'digital');
+  
+  document.getElementById('f-visible').checked = trainClass.is_visible !== 0;
   
   document.getElementById('f-steam').checked = !!trainClass.is_steam;
   document.getElementById('f-diesel').checked = !!trainClass.is_diesel;
@@ -485,24 +490,6 @@ function goToGroupPage() {
   }
 }
 
-async function hideFromKnownTrains() {
-  if (!confirm('Hide this train from Known Trains?')) return;
-  try {
-    const res = await fetch(`/api/known_trains/classes/${trainClassId}`, {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ is_visible: 0 })
-    });
-    if (res.ok) {
-      location.href = '/pages/known_trains.html';
-    } else {
-      alert('Failed to hide train');
-    }
-  } catch (e) {
-    alert('Error: ' + e.message);
-  }
-}
-
 async function save() {
   const btn = document.getElementById('saveBtn');
   btn.textContent = 'Saving…';
@@ -524,6 +511,7 @@ async function save() {
       electrification_types: JSON.stringify(Array.from(document.querySelectorAll('.elec-type:checked')).map(cb => cb.value)),
       photo_override: document.getElementById('f-photoOverride').value || null,
       speedometer: document.getElementById('f-speedometer-analogue').checked ? 'analogue' : (document.getElementById('f-speedometer-digital').checked ? 'digital' : null),
+      is_visible: document.getElementById('f-visible').checked ? 1 : 0,
     };
     const maxSpeedInput = document.getElementById('f-maxSpeed');
     const dialMaxInput = document.getElementById('f-dialMax');
