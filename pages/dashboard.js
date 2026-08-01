@@ -142,31 +142,22 @@ function updateGaugeRing() {
 
   const dialMax = currentMaxSpeedMph * DIAL_HEADROOM_MULTIPLIER;
   if (tick) {
-    const tickFrac = currentMaxSpeedMph / dialMax; // always 1/1.2 while the multiplier is fixed, but written generically
-    tick.setAttribute('transform', `rotate(${tickFrac * 360} 60 60)`);
+    const tickFrac = currentMaxSpeedMph / dialMax;
+    const tickRotation = 135 + (tickFrac * 271);
+    tick.setAttribute('transform', `rotate(${tickRotation} 60 60)`);
   }
 
   if (currentSpeedMph === null || currentSpeedMph <= 0) {
-    // A zero-length dash still renders a small dot because of the round
-    // line-cap, so hide the stroke entirely instead of just zeroing the dash.
-    ring.setAttribute('stroke-dasharray', '0 314');
+    ring.setAttribute('stroke-dasharray', '0 471');
     ring.setAttribute('stroke', 'none');
     if (overMaxBadge) overMaxBadge.classList.remove('show');
     return;
   }
-  // Scale the ring against this loco's own max speed (from its saved
-  // profile, or a suggested value learned from formationMaxSpeed the
-  // first time it's seen, or 100mph as a last-resort default) - a fixed
-  // 100mph reference is useless for a Class 08 (15mph) and just as
-  // useless for anything genuinely fast.
   const frac = Math.max(0, Math.min(1, currentSpeedMph / dialMax));
-  ring.setAttribute('stroke-dasharray', (frac * 314).toFixed(1) + ' 314');
+  const arcLength = frac * 471;
+  ring.setAttribute('stroke-dasharray', arcLength.toFixed(1) + ' 471');
 
   const overMax = currentSpeedMph > currentMaxSpeedMph;
-  // Exceeding the loco's own max speed takes priority over the normal
-  // track-speed-limit colour logic - it's a more fundamental "this
-  // shouldn't be physically possible" state, not just "going a bit over
-  // the posted limit".
   ring.setAttribute('stroke', overMax ? 'var(--status-red)' : speedRingColor(currentSpeedMph, currentLimitMph));
   if (overMaxBadge) overMaxBadge.classList.toggle('show', overMax);
 }
@@ -333,10 +324,10 @@ async function pollLoco() {
 
 function startDashboard() {
   setWeatherIcon('overcast');
-  poll();
-  setInterval(poll, 2000);
   pollSpeed();
   setInterval(pollSpeed, 300);
+  poll();
+  setInterval(poll, 300);
   pollLoco();
   setInterval(pollLoco, 10000);
 }

@@ -7,11 +7,7 @@
 <script src="/pages/theme.js"></script>
 
 <style>
-  main { max-width: 1000px; margin: 0 auto; }
-
-
-    main { padding-top: 10px; }
-  }
+  main { max-width: 1200px; margin: 0 auto; padding-top: 10px; }
 
   .attention-panel { border-color: rgba(232,183,74,0.4); background: rgba(232,183,74,0.06); }
   .attention-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--hairline); }
@@ -20,33 +16,39 @@
   .attention-row .meta { font-size: 12px; color: var(--text-dim); }
   .setup-btn { background: var(--accent); color: #1a1013; border: none; padding: 5px 12px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; }
 
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); padding: 8px; }
-  td { padding: 10px 8px; border-top: 1px solid var(--hairline); vertical-align: middle; }
-  .group-header td { padding-top: 18px; border-top: none; }
-  .group-header .gname { font-family: var(--heading); font-weight: 700; font-size: 14px; letter-spacing: .03em; color: var(--accent-bright); }
-  .group-header .glink { font-size: 11.5px; color: var(--text-dim); text-decoration: none; margin-left: 10px; }
-  .group-header .glink:hover { color: var(--accent-bright); }
+  .groups-container { display: flex; flex-direction: column; gap: 12px; }
+  .group-pill { background: var(--panel); border: 1px solid var(--hairline); border-radius: 6px; padding: 14px; }
+  .group-pill-header { font-family: var(--heading); font-weight: 700; font-size: 14px; color: var(--accent-bright); margin-bottom: 10px; }
+  .group-pill-header a { font-size: 11.5px; color: var(--text-dim); text-decoration: none; margin-left: 10px; }
+  .group-pill-header a:hover { color: var(--accent-bright); }
 
-  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .trains-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+  .train-pill { background: var(--panel-raised); border: 1px solid var(--hairline); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .train-pill-livery-line { width: 3px; height: 100%; position: absolute; left: 0; top: 0; border-radius: 6px 0 0 6px; }
+  .train-pill { position: relative; padding-left: 13px; }
+  .train-pill-livery-line { width: 3px; height: 100%; position: absolute; left: 0; top: 0; border-radius: 6px 0 0 6px; }
+
+  .train-pill-thumb { width: 100%; aspect-ratio: 4/3; border-radius: 4px; overflow: hidden; background: #1c1a20; border: 1px solid var(--hairline); display: flex; align-items: center; justify-content: center; }
+  .train-pill-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .train-pill-thumb.none { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .03em; text-align: center; }
+
+  .train-pill-name { font-weight: 600; font-size: 13px; color: var(--text); }
+  .train-pill-meta { font-size: 11px; color: var(--text-dim); display: flex; justify-content: space-between; }
+  .train-pill-actions { display: flex; gap: 6px; margin-top: 4px; }
+  .train-pill-actions .edit-btn { flex: 1; padding: 4px 8px; font-size: 11px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .dot.red { background: var(--status-red); box-shadow: 0 0 5px var(--status-red); }
   .dot.amber { background: var(--status-amber); box-shadow: 0 0 5px var(--status-amber); }
   .dot.yellow { background: var(--status-yellow); box-shadow: 0 0 5px var(--status-yellow); }
   .dot.green { background: var(--status-green); box-shadow: 0 0 5px var(--status-green); }
 
-  .thumb {
-    width: 46px; height: 28px; border-radius: 4px; flex-shrink: 0; overflow: hidden;
-    background: #1c1a20; border: 1px solid var(--hairline);
-    display: flex; align-items: center; justify-content: center;
-  }
-  .thumb img { width: 100%; height: 100%; object-fit: cover; }
-  .thumb.none { font-size: 8px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .03em; text-align: center; line-height: 1.2; }
-  .cls-name { font-weight: 600; }
   .edit-btn { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; text-decoration: none; display: inline-block; }
   .edit-btn:hover { border-color: var(--accent); color: var(--accent-bright); }
 
   .toolbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
   .toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+  .toolbar button { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+  .toolbar button:hover { border-color: var(--accent); color: var(--accent-bright); }
 
 
 </style>
@@ -67,6 +69,9 @@
       </p>
       <div class="toolbar">
         <label><input type="checkbox" id="showHidden"> Show hidden / non-UK</label>
+        <button onclick="downloadData()">⬇ Download</button>
+        <button onclick="document.getElementById('uploadInput').click()">⬆ Upload</button>
+        <input type="file" id="uploadInput" accept=".json" style="display:none;" onchange="uploadData(event)">
       </div>
     </div>
 
@@ -83,12 +88,7 @@
 
     <div class="panel">
       <h2>All known trains</h2>
-      <table>
-        <thead>
-          <tr><th></th><th></th><th>Livery</th><th>Times seen</th><th>Max speed</th><th></th></tr>
-        </thead>
-        <tbody id="tableBody"></tbody>
-      </table>
+      <div class="groups-container" id="groupsContainer"></div>
       <p class="small dim" id="emptyState" style="display:none; text-align:center; margin-top:20px;">
         No train classes yet - drive something to detect one live.
       </p>
@@ -150,19 +150,26 @@ function missingReason(item) {
   return 'has a name and group, but no subclass assigned';
 }
 
+function getRandomColor() {
+  const colors = ['#5fd07a', '#e05a4e', '#e8b74a', '#5f9be0', '#dd6ba0', '#4fb8a8', '#e0a83f'];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
 function renderTable(classes) {
-  const tbody = document.getElementById('tableBody');
+  const container = document.getElementById('groupsContainer');
   const empty = document.getElementById('emptyState');
-  if (!classes.length) {
-    tbody.innerHTML = '';
+  
+  const filtered = classes.filter(c => c.times_seen > 0 && c.source_name !== 'Error');
+  
+  if (!filtered.length) {
+    container.innerHTML = '';
     empty.style.display = 'block';
     return;
   }
   empty.style.display = 'none';
 
-  // Group by group_name (ungrouped entries get their own bucket at the end)
   const groups = new Map();
-  for (const c of classes) {
+  for (const c of filtered) {
     const key = c.group_name || '(Ungrouped)';
     if (!groups.has(key)) groups.set(key, { groupId: c.group_id, items: [] });
     groups.get(key).items.push(c);
@@ -171,60 +178,122 @@ function renderTable(classes) {
   let html = '';
   for (const [groupName, { groupId, items }] of groups) {
     const settingsLink = groupId
-      ? `<a class="glink" href="/pages/known_trains_group.html?id=${groupId}">&#9881; Group settings</a>`
+      ? `<a href="/pages/known_trains_group.html?id=${groupId}">&#9881; Group settings</a>`
       : '';
-    html += `<tr class="group-header"><td colspan="6"><span class="gname">${groupName}</span>${settingsLink}</td></tr>`;
+    html += `<div class="group-pill">
+      <div class="group-pill-header">${groupName}${settingsLink}</div>
+      <div class="trains-grid">`;
     for (const c of items) {
       const thumb = c.thumbnail_path
-        ? `<div class="thumb"><img src="${c.thumbnail_path}" alt="" onerror="this.parentElement.outerHTML='<div class=&quot;thumb none&quot;>no<br>photo</div>'"></div>`
-        : `<div class="thumb none">no<br>photo</div>`;
-      const subclassNote = c.subclass_id ? ` <span class="small dim">(subclass)</span>` : '';
-      html += `
-        <tr>
-          <td><span class="dot ${c.status.color}"></span></td>
-          <td>${thumb}</td>
-          <td class="cls-name">${c.display_name || c.source_name}</td>
-          <td>${c.times_seen}</td>
-          <td>${Math.round(c.resolved_max_speed_mph)} mph${subclassNote}</td>
-          <td><a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a></td>
-        </tr>`;
+        ? `<img src="${c.thumbnail_path}" alt="" onerror="this.parentElement.outerHTML='<div class=&quot;none&quot;>no<br>photo</div>'">`
+        : `<div class="none">no<br>photo</div>`;
+      const liveryColor = getRandomColor();
+      html += `<div class="train-pill">
+        <div class="train-pill-livery-line" style="background: ${liveryColor};"></div>
+        <div class="train-pill-thumb">${thumb}</div>
+        <div class="train-pill-name">${c.display_name || c.source_name}</div>
+        <div class="train-pill-meta">
+          <span><span class="dot ${c.status.color}"></span> Seen ${c.times_seen}</span>
+          <span>${Math.round(c.resolved_max_speed_mph)} mph</span>
+        </div>
+        <div class="train-pill-actions">
+          <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
+        </div>
+      </div>`;
     }
+    html += `</div></div>`;
   }
-  tbody.innerHTML = html;
+  container.innerHTML = html;
 }
 
 document.getElementById('showHidden').addEventListener('change', load);
 
 function renderTableFromCache(classes) {
-  // Simplified grouped view from cached data when offline.
-  // group_id/group_name not resolved from server, so bucket by group_id presence only.
+  const filtered = classes.filter(c => c.times_seen > 0 && c.source_name !== 'Error');
+  const container = document.getElementById('groupsContainer');
+  const empty = document.getElementById('emptyState');
+  if (!filtered.length) { container.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
   const grouped = new Map();
-  for (const c of classes) {
+  for (const c of filtered) {
     const key = c.group_id ? String(c.group_id) : '(Ungrouped)';
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(c);
   }
-  const tbody = document.getElementById('tableBody');
-  const empty = document.getElementById('emptyState');
-  if (!classes.length) { tbody.innerHTML = ''; empty.style.display = 'block'; return; }
-  empty.style.display = 'none';
   let html = '';
   for (const [key, items] of grouped) {
-    html += `<tr class="group-header"><td colspan="6"><span class="gname">${key === '(Ungrouped)' ? key : 'Group ' + key}</span></td></tr>`;
+    html += `<div class="group-pill">
+      <div class="group-pill-header">${key === '(Ungrouped)' ? key : 'Group ' + key}</div>
+      <div class="trains-grid">`;
     for (const c of items) {
       const thumb = c.thumbnail_path
-        ? `<div class="thumb"><img src="${c.thumbnail_path}" alt="" onerror="this.parentElement.outerHTML='<div class=&quot;thumb none&quot;>no<br>photo</div>'"></div>`
-        : `<div class="thumb none">no<br>photo</div>`;
-      html += `<tr><td></td><td>${thumb}</td><td class="cls-name">${c.display_name || c.source_name}</td><td>${c.times_seen}</td><td>${c.max_speed_mph ? Math.round(c.max_speed_mph) + ' mph' : '—'}</td><td><a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a></td></tr>`;
+        ? `<img src="${c.thumbnail_path}" alt="" onerror="this.parentElement.outerHTML='<div class=&quot;none&quot;>no<br>photo</div>'">`
+        : `<div class="none">no<br>photo</div>`;
+      const liveryColor = getRandomColor();
+      html += `<div class="train-pill">
+        <div class="train-pill-livery-line" style="background: ${liveryColor};"></div>
+        <div class="train-pill-thumb">${thumb}</div>
+        <div class="train-pill-name">${c.display_name || c.source_name}</div>
+        <div class="train-pill-meta">
+          <span>Seen ${c.times_seen}</span>
+          <span>${c.max_speed_mph ? Math.round(c.max_speed_mph) + ' mph' : '—'}</span>
+        </div>
+        <div class="train-pill-actions">
+          <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
+        </div>
+      </div>`;
     }
+    html += `</div></div>`;
   }
-  tbody.innerHTML = html;
+  container.innerHTML = html;
 }
 
 
 
 function exitApp() {
   fetch('/api/shutdown', {method: 'POST'});
+}
+
+async function downloadData() {
+  try {
+    const res = await fetch('/api/known_trains/list');
+    const data = await res.json();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `known-trains-backup-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Download failed: ' + e.message);
+  }
+}
+
+async function uploadData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const res = await fetch('/api/known_trains/restore', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    });
+    if (res.ok) {
+      alert('Data restored successfully');
+      load();
+    } else {
+      alert('Restore failed: ' + res.statusText);
+    }
+  } catch (e) {
+    alert('Upload failed: ' + e.message);
+  }
+  event.target.value = '';
 }
 
 load();

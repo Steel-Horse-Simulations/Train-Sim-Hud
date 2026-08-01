@@ -116,18 +116,35 @@
           <h2>Identity</h2>
           <label>As found via API (read-only)</label>
           <div class="raw-readonly" id="sourceNameReadonly">&mdash;</div>
-          <label>Display name (shown on HUD)</label>
-          <input type="text" id="f-displayName">
-          <label>Livery name (appended on HUD, e.g. "Class 170 - ScotRail")</label>
-          <input type="text" id="f-liveryName">
-          <label>Company / operator (for future filtering, not shown on HUD)</label>
-          <input type="text" placeholder="e.g. Freightliner Group" id="f-company">
+          
+          <label style="margin-top: 14px;">Train Class</label>
+          <input type="text" id="f-trainClass" placeholder="e.g. Class 170">
+          
+          <label>Operator</label>
+          <div style="display: flex; gap: 8px;">
+            <select id="f-operator" style="flex: 1; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px;"></select>
+            <button class="btn primary" style="flex-shrink: 0; padding: 8px 14px;" onclick="goToOperatorPage()">Manage</button>
+          </div>
+          
+          <label>Livery</label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <select id="f-livery" style="flex: 1; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px;"></select>
+            <div id="operatorLogo" style="width: 40px; height: 40px; border-radius: 4px; background: #1c1a20; border: 1px solid var(--hairline); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+              <div style="font-size: 10px; color: var(--text-dim);">—</div>
+            </div>
+          </div>
+          
+          <label>Photo override (if automatic detection fails)</label>
+          <input type="text" id="f-photoOverride" placeholder="e.g. Class_170_ScR">
         </div>
 
         <div class="panel" style="margin-top:16px;">
           <h2>Grouping</h2>
           <label>Group</label>
-          <select id="f-group"><option value="">(none)</option></select>
+          <div style="display: flex; gap: 8px;">
+            <select id="f-group" style="flex: 1;"><option value="">(none)</option></select>
+            <button class="btn primary" style="flex-shrink: 0; padding: 8px 14px;" onclick="goToGroupPage()">Manage</button>
+          </div>
           <label>Subclass (shares the group's HUD panels, can have its own speeds)</label>
           <select id="f-subclass"><option value="">(none)</option></select>
         </div>
@@ -143,6 +160,17 @@
           <div class="speed-field">
             <input type="text" id="f-dialMax">
             <div class="speed-caption" id="dialMaxCaption"></div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:16px;">
+          <h2>Speedometer</h2>
+          <p style="font-size:12.5px; color:var(--text-dim); margin:0 0 10px;">
+            Choose the speedometer style for this train.
+          </p>
+          <div class="power-options">
+            <label class="power-chip"><input type="radio" name="speedometer" value="analogue" id="f-speedometer-analogue"> Analogue</label>
+            <label class="power-chip"><input type="radio" name="speedometer" value="digital" id="f-speedometer-digital"> Digital</label>
           </div>
         </div>
 
@@ -177,7 +205,7 @@
 
         <div class="save-bar">
           <button class="btn primary" id="saveBtn" onclick="save()">Save</button>
-          <a class="btn" href="/pages/known_trains.html">Cancel</a>
+          <button class="btn primary" onclick="location.href='/pages/known_trains.html'">Cancel</button>
         </div>
       </div>
     </div>
@@ -215,9 +243,21 @@ async function load() {
 
   document.getElementById('titleText').textContent = trainClass.display_name || trainClass.source_name;
   document.getElementById('sourceNameReadonly').textContent = trainClass.source_name;
-  document.getElementById('f-displayName').value = trainClass.display_name || '';
-  document.getElementById('f-liveryName').value = trainClass.livery_name || '';
-  document.getElementById('f-company').value = trainClass.livery_id || '';
+  
+  // Parse display_name to extract class and livery
+  const displayName = trainClass.display_name || '';
+  const parts = displayName.split(' - ');
+  const trainClassName = parts[0] || '';
+  const liveryName = parts[1] || '';
+  
+  document.getElementById('f-trainClass').value = trainClassName;
+  document.getElementById('f-liveryName').value = liveryName;
+  document.getElementById('f-operator').value = trainClass.livery_id || '';
+  document.getElementById('f-photoOverride').value = trainClass.photo_override || '';
+  
+  const speedometer = trainClass.speedometer || 'analogue';
+  document.getElementById('f-speedometer-' + speedometer).checked = true;
+  
   document.getElementById('f-steam').checked = !!trainClass.is_steam;
   document.getElementById('f-diesel').checked = !!trainClass.is_diesel;
   document.getElementById('f-electric').checked = !!trainClass.is_electric;
@@ -363,21 +403,40 @@ function refreshCompletion() {
   dot.classList.add(level);
 }
 
-document.querySelectorAll('#f-displayName, #f-liveryName, #f-company').forEach(el => el.addEventListener('input', refreshCompletion));
+document.querySelectorAll('#f-trainClass, #f-operator, #f-livery').forEach(el => el.addEventListener('input', refreshCompletion));
+
+function goToOperatorPage() {
+  location.href = '/pages/operators.html';
+}
+
+function goToGroupPage() {
+  const groupId = document.getElementById('f-group').value;
+  if (groupId) {
+    location.href = `/pages/known_trains_group.html?id=${groupId}`;
+  } else {
+    location.href = '/pages/groups.html';
+  }
+}
 
 async function save() {
   const btn = document.getElementById('saveBtn');
   btn.textContent = 'Saving…';
+  const trainClass = document.getElementById('f-trainClass').value;
+  const livery = document.getElementById('f-livery').value;
+  const displayName = trainClass && livery ? `${trainClass} - ${livery}` : (trainClass || '');
+  
   const body = {
-    display_name: document.getElementById('f-displayName').value,
-    livery_name: document.getElementById('f-liveryName').value,
-    livery_id: document.getElementById('f-company').value,
+    display_name: displayName,
+    livery_name: livery,
+    livery_id: document.getElementById('f-operator').value,
     group_id: document.getElementById('f-group').value ? Number(document.getElementById('f-group').value) : null,
     subclass_id: document.getElementById('f-subclass').value ? Number(document.getElementById('f-subclass').value) : null,
     is_steam: document.getElementById('f-steam').checked ? 1 : 0,
     is_diesel: document.getElementById('f-diesel').checked ? 1 : 0,
     is_electric: document.getElementById('f-electric').checked ? 1 : 0,
     electrification_types: JSON.stringify(Array.from(document.querySelectorAll('.elec-type:checked')).map(cb => cb.value)),
+    photo_override: document.getElementById('f-photoOverride').value || null,
+    speedometer: document.querySelector('input[name="speedometer"]:checked')?.value || null,
   };
   const maxSpeedInput = document.getElementById('f-maxSpeed');
   const dialMaxInput = document.getElementById('f-dialMax');
