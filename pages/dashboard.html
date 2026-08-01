@@ -1,0 +1,503 @@
+<!-- TSW Hud [v1.0.1] [dev] [main] -->
+<!-- Last modified: 2025-08-01 -->
+<!DOCTYPE html>
+<html lang="en" data-theme="purple">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>TSW HUD - Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/pages/style.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    main {
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      width: 100vw;
+      margin: 0;
+    }
+
+    .hud-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .hud-stage {
+      width: 100vw;
+      height: 100vh;
+      aspect-ratio: 1340 / 800;
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--accent) 22%, transparent), rgba(0,0,0,0.55)),
+        linear-gradient(160deg, #1c1620, #0c0a0e);
+    }
+
+    .hud-corner {
+      position: absolute;
+      padding: 14px 18px;
+      background: rgba(20,18,24,0.82);
+      backdrop-filter: blur(6px);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+    }
+
+    .hud-route {
+      left: 28px;
+      top: 28px;
+      width: 280px;
+    }
+
+    .hud-route .divider {
+      height: 1px;
+      background: var(--hairline);
+      margin: 10px 0;
+    }
+
+    .hud-route .loco-class {
+      font-family: var(--heading);
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+
+    .hud-route .loco-class.missing {
+      color: var(--text-dim);
+      font-style: italic;
+      font-weight: 500;
+    }
+
+    .hud-kv {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin: 4px 0;
+    }
+
+    .hud-kv .k {
+      color: var(--text-dim);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+
+    .hud-kv .v {
+      font-family: var(--heading);
+      font-weight: 600;
+    }
+
+    .hud-signal {
+      right: 28px;
+      top: 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .hud-signal .lamp {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+    }
+
+    .hud-signal .t1 {
+      font-family: var(--heading);
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .hud-signal .t2 {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .hud-speed-cluster {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      padding: 18px 28px;
+    }
+
+    .hud-gauge {
+      width: 210px;
+      height: 210px;
+      position: relative;
+    }
+
+    .hud-gauge svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+
+    .hud-gauge .speed-num {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hud-gauge .speed-num .n {
+      font-family: var(--heading);
+      font-weight: 600;
+      font-size: 66px;
+      line-height: 1;
+    }
+
+    .hud-gauge .speed-num .u {
+      font-family: var(--heading);
+      font-size: 15px;
+      color: var(--text-dim);
+      letter-spacing: 0.14em;
+      margin-top: 4px;
+    }
+
+    .hud-limit-chip {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 88px;
+      height: 88px;
+      border-radius: 50%;
+      border: 5px solid var(--status-red);
+      background: #f5f5f2;
+    }
+
+    .hud-limit-chip .n {
+      font-family: var(--heading);
+      font-weight: 700;
+      font-size: 38px;
+      color: #141414;
+    }
+
+    .hud-weather {
+      right: 28px;
+      bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .hud-weather .icon {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+      color: var(--text);
+      opacity: 0.9;
+    }
+
+    .hud-weather .t1 {
+      font-family: var(--heading);
+      font-weight: 600;
+      font-size: 18px;
+    }
+
+    .hud-weather .t2 {
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .hud-limits-panel {
+      left: 28px;
+      bottom: 28px;
+      width: 210px;
+      display: none;
+    }
+
+    .hud-limits-panel h3 {
+      margin: 0 0 8px;
+      font-family: var(--heading);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent-bright);
+    }
+
+    .hud-limits-row {
+      display: flex;
+      gap: 16px;
+    }
+
+    .hud-limits-row .limit-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .hud-limits-row .chip {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 2px solid var(--status-red);
+      background: #f5f5f2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--heading);
+      font-weight: 700;
+      font-size: 15px;
+      color: #141414;
+    }
+
+    .hud-limits-row .dist {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .hud-controls-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: flex-start;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.55), transparent);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+      z-index: 500;
+    }
+
+    .hud-controls-overlay.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .hud-controls-overlay .brand {
+      font-family: var(--heading);
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      text-decoration: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="hud-controls-overlay" id="hud-controls">
+    <a href="#" class="brand" id="brand-link"><strong>TSW Hud</strong> · dashboard</a>
+  </div>
+
+  <main>
+    <div class="hud-wrap">
+      <div class="hud-stage">
+        <!-- Route and gradient info (top-left) -->
+        <div class="hud-corner hud-route">
+          <div class="loco-class" id="v-loco">Class 390</div>
+          <div class="hud-kv"><span class="k">Gradient</span><span class="v"><span id="v-gradient">+0.4%</span></span></div>
+          <div class="hud-kv"><span class="k">Distance to signal</span><span class="v" id="v-dist">1,240 m</span></div>
+        </div>
+
+        <!-- Signal aspect (top-right) -->
+        <div class="hud-corner hud-signal">
+          <div class="lamp" id="signal-lamp" style="background:#5fd07a; box-shadow:0 0 10px #5fd07a;"></div>
+          <div><div class="t1" id="v-signal-text">Clear</div><div class="t2">Next signal</div></div>
+        </div>
+
+        <!-- Speed gauge and limit (center) -->
+        <div class="hud-corner hud-speed-cluster">
+          <div class="hud-gauge">
+            <svg viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="50" fill="none" stroke="#2a2a30" stroke-width="8"/>
+              <circle id="gauge-ring" cx="60" cy="60" r="50" fill="none" stroke="#5fd07a" stroke-width="8"
+                      stroke-dasharray="194.68 314" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+            </svg>
+            <div class="speed-num"><div class="n" id="v-speed">62</div><div class="u">MPH</div></div>
+          </div>
+          <div class="hud-limit-chip"><div class="n" id="v-limit">70</div></div>
+        </div>
+
+        <!-- Upcoming speed limits (bottom-left) -->
+        <div class="hud-corner hud-limits-panel" id="limits-panel">
+          <h3>Limits ahead</h3>
+          <div class="hud-limits-row" id="limits-row"></div>
+        </div>
+
+        <!-- Weather (bottom-right) -->
+        <div class="hud-corner hud-weather">
+          <svg class="icon" id="weather-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.5 19a4 4 0 0 1-.4-7.98A5.5 5.5 0 0 1 16.6 8.5 4.5 4.5 0 0 1 16 19H6.5Z"/>
+          </svg>
+          <div>
+            <div class="t1" id="w-hud-text">12°C · Overcast</div>
+            <div class="t2" id="w-hud-source">Current weather</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const API_BASE = '/api/proxy/get';
+    let pollInterval = null;
+
+    // Fullscreen on brand click
+    document.getElementById('brand-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      const elem = document.documentElement;
+      if (elem.requestFullscreen) elem.requestFullscreen();
+      else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
+      else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
+    });
+
+    // Show/hide controls overlay on activity
+    let hideTimeout;
+    function showControls() {
+      const overlay = document.getElementById('hud-controls');
+      overlay.classList.add('visible');
+      clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => overlay.classList.remove('visible'), 3000);
+    }
+
+    document.addEventListener('mousemove', showControls);
+    document.addEventListener('touchstart', showControls);
+    showControls();
+
+    // Format speed with thousands separator
+    function formatSpeed(ms) {
+      if (ms === null || ms === undefined) return '0';
+      const mph = Math.round(ms * 2.23694);
+      return mph.toLocaleString();
+    }
+
+    // Format distance
+    function formatDistance(cm) {
+      if (cm === null || cm === undefined) return '0 m';
+      const m = cm / 100;
+      if (m < 1000) return Math.round(m) + ' m';
+      const km = m / 1000;
+      return km.toFixed(1) + ' km';
+    }
+
+    // Update speed gauge ring
+    function updateGaugeRing(speedMs, maxSpeedMs) {
+      if (!speedMs || !maxSpeedMs) return;
+      const fraction = Math.min(speedMs / maxSpeedMs, 1);
+      const circumference = 314;
+      const dasharray = (fraction * circumference).toFixed(1);
+      document.getElementById('gauge-ring').setAttribute('stroke-dasharray', `${dasharray} ${circumference}`);
+    }
+
+    // Signal lamp colors
+    const signalColors = {
+      'Clear': '#5fd07a',
+      'Caution': '#d9d24a',
+      'Danger': '#e05a4e',
+      'Unknown': '#a9a4b3'
+    };
+
+    // Fetch and update data
+    async function updateDashboard() {
+      try {
+        // Speed
+        const speedResp = await fetch(`${API_BASE}/CurrentDrivableActor.Function.HUD_GetSpeed`).then(r => r.json());
+        const speedMs = speedResp.Values?.ReturnValue || 0;
+        document.getElementById('v-speed').textContent = formatSpeed(speedMs);
+
+        // DriverAid data
+        const driverResp = await fetch(`${API_BASE}/DriverAid.Data`).then(r => r.json());
+        const driverData = driverResp.Values || {};
+        
+        // Gradient
+        const gradient = driverData.gradient || 0;
+        document.getElementById('v-gradient').textContent = (gradient >= 0 ? '+' : '') + gradient.toFixed(1) + '%';
+
+        // Distance to signal
+        const distCm = driverData.distanceToSignal || 0;
+        document.getElementById('v-dist').textContent = formatDistance(distCm);
+
+        // Signal aspect
+        const signalAspect = driverData.signalAspectClass || 'Unknown';
+        document.getElementById('v-signal-text').textContent = signalAspect;
+        const lampColor = signalColors[signalAspect] || signalColors['Unknown'];
+        document.getElementById('signal-lamp').style.background = lampColor;
+        document.getElementById('signal-lamp').style.boxShadow = `0 0 10px ${lampColor}`;
+
+        // Speed limit
+        const speedLimitMs = driverData.speedLimit?.value || 0;
+        if (speedLimitMs >= 112) {
+          document.getElementById('v-limit').textContent = '—';
+        } else {
+          document.getElementById('v-limit').textContent = Math.round(speedLimitMs * 2.23694);
+        }
+
+        // Max speed and gauge
+        const maxSpeedMs = driverData.formationMaxSpeed || 33.3;
+        updateGaugeRing(speedMs, maxSpeedMs);
+
+        // Upcoming speed limits
+        const nextLimits = driverData.nextSpeedLimits || [];
+        if (nextLimits.length > 0) {
+          document.getElementById('limits-panel').style.display = 'block';
+          const limitsRow = document.getElementById('limits-row');
+          limitsRow.innerHTML = nextLimits.slice(0, 3).map(limit => {
+            const mph = Math.round(limit.value?.value * 2.23694 || 0);
+            const dist = formatDistance(limit.distanceToNextSpeedLimit || 0);
+            return `<div class="limit-item"><div class="chip">${mph}</div><div class="dist">${dist}</div></div>`;
+          }).join('');
+        } else {
+          document.getElementById('limits-panel').style.display = 'none';
+        }
+
+        // Loco class
+        const locoResp = await fetch(`${API_BASE}/CurrentFormation/0.Function.IS_GetVehicleInfo`).then(r => r.json());
+        const displayName = locoResp.Values?.VehicleInfoResult?.DisplayName || 'Unknown';
+        document.getElementById('v-loco').textContent = displayName;
+        document.getElementById('v-loco').classList.remove('missing');
+
+        // Weather
+        const weatherResp = await fetch(`${API_BASE}/WeatherManager.Data`).then(r => r.json());
+        const weather = weatherResp.Values || {};
+        const temp = Math.round(weather.Temperature || 12);
+        const precipitation = Math.round((weather.Precipitation || 0) * 100);
+        const cloudiness = Math.round((weather.Cloudiness || 0) * 100);
+
+        let weatherDesc = '';
+        if (cloudiness > 80) weatherDesc = 'Overcast';
+        else if (cloudiness > 50) weatherDesc = 'Cloudy';
+        else if (cloudiness > 20) weatherDesc = 'Partly cloudy';
+        else weatherDesc = 'Clear';
+
+        if (precipitation > 10) weatherDesc = 'Rain';
+        else if (precipitation > 0) weatherDesc = 'Drizzle';
+
+        document.getElementById('w-hud-text').textContent = `${temp}°C · ${weatherDesc}`;
+        document.getElementById('w-hud-source').textContent = 'Current weather';
+
+      } catch (e) {
+        console.error('Dashboard update error:', e);
+      }
+    }
+
+    // Start polling
+    updateDashboard();
+    pollInterval = setInterval(updateDashboard, 300);
+  </script>
+</body>
+</html>
