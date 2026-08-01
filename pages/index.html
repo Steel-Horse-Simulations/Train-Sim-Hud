@@ -1,0 +1,410 @@
+<!-- TSW Hud [v0.1.1] [dev] [main] -->
+<!-- Last modified: 2025-08-01 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TSW HUD - Settings</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/pages/style.css">
+  <style>
+    .status-section {
+      display: grid;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+    }
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      box-shadow: 0 0 6px currentColor;
+    }
+    .status-dot.green {
+      background: #5fd07a;
+      color: #5fd07a;
+    }
+    .status-dot.red {
+      background: #e05a4e;
+      color: #e05a4e;
+    }
+    .status-dot.amber {
+      background: #e8b74a;
+      color: #e8b74a;
+    }
+    .status-info {
+      flex: 1;
+    }
+    .status-label {
+      font-size: 13px;
+      color: #a9a4b3;
+      font-family: 'Barlow Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .status-text {
+      font-size: 14px;
+      color: #f0edf5;
+    }
+    .connection-box {
+      background: rgba(160, 107, 240, 0.05);
+      border: 0.5px solid #a06bf0;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .connection-label {
+      font-size: 12px;
+      color: #a9a4b3;
+      font-family: 'Barlow Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .connection-value {
+      font-size: 14px;
+      color: #c9a3ff;
+      font-family: 'Barlow Condensed', sans-serif;
+      word-break: break-all;
+      padding: 8px 12px;
+      background: rgba(20, 18, 24, 0.8);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      user-select: all;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .info-item {
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+    }
+    .info-label {
+      font-size: 11px;
+      color: #a9a4b3;
+      font-family: 'Barlow Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .info-value {
+      font-size: 13px;
+      color: #f0edf5;
+      word-break: break-word;
+    }
+    .folder-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .folder-row input {
+      flex: 1;
+      background: rgba(20, 18, 24, 0.8);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      color: #c9a3ff;
+      font-family: 'Barlow Condensed', sans-serif;
+      padding: 8px 12px;
+      border-radius: 4px;
+    }
+    .folder-row input::placeholder {
+      color: #a9a4b3;
+    }
+    .folder-row button {
+      flex-shrink: 0;
+    }
+    button.small-btn {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-family: 'Barlow Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .message {
+      font-size: 12px;
+      padding: 8px 0;
+      margin: 8px 0;
+    }
+    .message.success {
+      color: #5fd07a;
+    }
+    .message.error {
+      color: #e05a4e;
+    }
+    .message.pending {
+      color: #e8b74a;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><strong>TSW HUD</strong><br>Settings</div>
+    <div class="nav" id="navContainer"></div>
+    <button class="exit-btn" onclick="fetch('/api/shutdown',{method:'POST'})">Exit</button>
+  </div>
+
+  <main>
+    <!-- API Key Configuration -->
+    <div class="panel">
+      <h2>TSW API Key</h2>
+      <p style="font-size: 13px; color: #a9a4b3; margin: 0 0 16px 0;">Location of your Train Sim World CommAPIKey.txt file</p>
+      
+      <div class="folder-row">
+        <input type="text" id="folderInput" placeholder="Paste folder path or use auto-detect">
+        <button class="btn primary small-btn" onclick="autoDetectFolder()">Auto-detect</button>
+      </div>
+      
+      <button class="btn small-btn" onclick="browseFolder()">Browse Folder</button>
+      <div id="folderMessage" class="message"></div>
+    </div>
+
+    <!-- Status Indicators -->
+    <div class="panel">
+      <h2>Connection Status</h2>
+      
+      <div class="status-section">
+        <div class="status-item">
+          <div class="status-dot red" id="keyStatusDot"></div>
+          <div class="status-info">
+            <div class="status-label">API Key Status</div>
+            <div class="status-text" id="keyStatusText">Checking...</div>
+          </div>
+        </div>
+        
+        <div class="status-item">
+          <div class="status-dot red" id="gameStatusDot"></div>
+          <div class="status-info">
+            <div class="status-label">Game Connection</div>
+            <div class="status-text" id="gameStatusText">Checking...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection Address -->
+    <div class="panel">
+      <h2>Connection Address</h2>
+      <p style="font-size: 13px; color: #a9a4b3; margin: 0 0 16px 0;">Use these addresses to access this app from other devices on your network</p>
+      
+      <div class="connection-box">
+        <div class="connection-label">Local Access (Same Computer)</div>
+        <div class="connection-value" id="localAddress">http://127.0.0.1:5273</div>
+      </div>
+      
+      <div class="connection-box">
+        <div class="connection-label">Network Access (Tablet / Other Device)</div>
+        <div class="connection-value" id="networkAddress">Detecting...</div>
+      </div>
+    </div>
+
+    <!-- App Information -->
+    <div class="panel">
+      <h2>App Information</h2>
+      
+      <div class="info-grid">
+        <div class="info-item">
+          <div class="info-label">App Version</div>
+          <div class="info-value" id="appVersion">0.1.0</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">API Server</div>
+          <div class="info-value">127.0.0.1:31270</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Configuration Folder</div>
+          <div class="info-value" id="configFolder">Not set</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Key File Found</div>
+          <div class="info-value" id="keyFileStatus">Checking...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Page Registry Debug -->
+    <div class="panel" style="opacity: 0.7;">
+      <h2>Navigation</h2>
+      <p style="font-size: 13px; color: #a9a4b3; margin: 0;">Pages shown in navigation are dynamically loaded from registry.json and filtered by dev_only setting</p>
+    </div>
+  </main>
+
+  <script src="/pages/nav.js"></script>
+  <script>
+    // Auto-refresh status every 2 seconds
+    const pollInterval = 2000;
+    let pollTimer = null;
+
+    async function getNetworkIP() {
+      try {
+        const response = await fetch('/api/network-info');
+        if (!response.ok) return null;
+        const data = await response.json();
+        return data.network_ip;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function updateNetworkAddress() {
+      const ip = await getNetworkIP();
+      const elem = document.getElementById('networkAddress');
+      if (ip) {
+        elem.textContent = `http://${ip}:5273`;
+      } else {
+        elem.textContent = 'Unable to detect network IP. Check that you are connected to a network.';
+      }
+    }
+
+    async function updateStatus() {
+      try {
+        // Get config and key status
+        const configResp = await fetch('/api/config');
+        const config = await configResp.json();
+        
+        // Update folder display
+        document.getElementById('folderInput').value = config.config_folder || '';
+        document.getElementById('configFolder').textContent = config.config_folder || 'Not set';
+        
+        // Update key status
+        const keyStatusDot = document.getElementById('keyStatusDot');
+        const keyStatusText = document.getElementById('keyStatusText');
+        const keyFileStatus = document.getElementById('keyFileStatus');
+        
+        if (config.key_found) {
+          keyStatusDot.className = 'status-dot green';
+          keyStatusText.textContent = 'Found';
+          keyFileStatus.textContent = 'Yes';
+        } else {
+          keyStatusDot.className = 'status-dot red';
+          keyStatusText.textContent = 'Not found';
+          keyFileStatus.textContent = 'No';
+        }
+        
+        // Check if game is running (only if key is found)
+        const gameStatusDot = document.getElementById('gameStatusDot');
+        const gameStatusText = document.getElementById('gameStatusText');
+        
+        if (config.key_found) {
+          try {
+            const infoResp = await fetch('/api/proxy/get/info', { timeout: 3000 });
+            if (infoResp.ok) {
+              gameStatusDot.className = 'status-dot green';
+              gameStatusText.textContent = 'Connected';
+            } else {
+              gameStatusDot.className = 'status-dot red';
+              gameStatusText.textContent = 'Not running or no active session';
+            }
+          } catch (e) {
+            gameStatusDot.className = 'status-dot red';
+            gameStatusText.textContent = 'Not running or no active session';
+          }
+        } else {
+          gameStatusDot.className = 'status-dot amber';
+          gameStatusText.textContent = 'Waiting for API key...';
+        }
+        
+      } catch (e) {
+        console.error('Status update error:', e);
+      }
+    }
+
+    async function autoDetectFolder() {
+      const msg = document.getElementById('folderMessage');
+      msg.textContent = 'Auto-detecting...';
+      msg.className = 'message pending';
+      
+      try {
+        const resp = await fetch('/api/autodetect', { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.ok) {
+          msg.textContent = `Found: ${data.config_folder}`;
+          msg.className = 'message success';
+          setTimeout(() => updateStatus(), 500);
+        } else {
+          msg.textContent = 'Could not auto-detect. Please paste the folder path manually.';
+          msg.className = 'message error';
+        }
+      } catch (e) {
+        msg.textContent = 'Error during auto-detect.';
+        msg.className = 'message error';
+      }
+      
+      setTimeout(() => msg.textContent = '', 5000);
+    }
+
+    async function browseFolder() {
+      const folder = prompt('Paste the full path to your TSW config folder:');
+      if (!folder) return;
+      
+      const msg = document.getElementById('folderMessage');
+      msg.textContent = 'Saving...';
+      msg.className = 'message pending';
+      
+      try {
+        const resp = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config_folder: folder })
+        });
+        const data = await resp.json();
+        
+        if (data.ok) {
+          msg.textContent = data.key_found ? 'Saved and key found!' : 'Saved but key not found in this folder.';
+          msg.className = data.key_found ? 'message success' : 'message error';
+          setTimeout(() => updateStatus(), 500);
+        }
+      } catch (e) {
+        msg.textContent = 'Error saving folder.';
+        msg.className = 'message error';
+      }
+      
+      setTimeout(() => msg.textContent = '', 5000);
+    }
+
+    // Load app version from version.json
+    async function loadAppVersion() {
+      try {
+        const resp = await fetch('/api/version');
+        if (resp.ok) {
+          const data = await resp.json();
+          document.getElementById('appVersion').textContent = data.main_version || '0.1.0';
+        }
+      } catch (e) {
+        console.error('Failed to load version:', e);
+      }
+    }
+
+    // Initialize on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      updateStatus();
+      updateNetworkAddress();
+      loadAppVersion();
+      
+      // Poll status every 2 seconds
+      pollTimer = setInterval(() => {
+        updateStatus();
+      }, pollInterval);
+    });
+
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+      if (pollTimer) clearInterval(pollTimer);
+    });
+  </script>
+</body>
+</html>

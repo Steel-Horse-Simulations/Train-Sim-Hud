@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Train Classes</title>
+<meta name="theme-color" content="#0b0a10">
+<link rel="stylesheet" href="/pages/style.css">
+<script src="/pages/theme.js"></script>
+<script src="/pages/offline-db.js"></script>
+<script src="/pages/sync-client.js"></script>
+<style>
+  main { max-width: 1000px; margin: 0 auto; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .toolbar input[type=text] { flex: 1; min-width: 200px; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+
+  .sync-banner {
+    margin: 10px 0; border-radius: 9px; padding: 10px 13px; font-size: 12px;
+    border: 1px solid var(--hairline); display: flex; align-items: center; gap: 9px;
+    background: var(--panel-raised); transition: background .2s ease, border-color .2s ease;
+  }
+  .sync-banner .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .sync-banner .dot.online { background: #5fd07a; box-shadow: 0 0 5px #5fd07a; }
+  .sync-banner .dot.offline { background: #e8b74a; box-shadow: 0 0 5px #e8b74a; }
+  .sync-banner.offline { border-color: rgba(232,183,74,0.35); background: rgba(232,183,74,0.07); }
+  .sync-banner .pending-chip {
+    font-size: 10.5px; font-weight: 700; background: #e8b74a; color: #1a1013;
+    padding: 2px 8px; border-radius: 8px; flex-shrink: 0;
+  }
+
+  .tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin-top: 16px; }
+  .tc-card {
+    background: var(--panel-raised); border: 1px solid var(--hairline); border-radius: 10px;
+    overflow: hidden; cursor: pointer; transition: border-color .15s ease;
+  }
+  .tc-card:hover { border-color: var(--accent); }
+  .tc-card.hidden-entry { opacity: 0.55; }
+  .tc-thumb {
+    width: 100%; aspect-ratio: 522/208; background: #0a0a0b;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .tc-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .tc-thumb .no-image { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; }
+  .tc-body { padding: 10px 12px; }
+  .tc-name { font-family: var(--heading); font-weight: 600; font-size: 15px; }
+  .tc-meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .tc-chip {
+    font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+    padding: 1px 7px; border-radius: 8px; border: 1px solid var(--hairline); color: var(--text-dim);
+  }
+  .tc-chip.uk { border-color: var(--accent); color: var(--accent-bright); }
+
+  /* Edit panel */
+  .edit-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 1000; overflow-y: auto;
+  }
+  .edit-overlay.open { display: flex; }
+  .edit-panel {
+    background: #14121a; border: 1px solid var(--hairline); border-radius: 12px;
+    width: 100%; max-width: 560px; padding: 20px 22px 22px;
+  }
+  .edit-panel h3 { font-family: var(--heading); margin: 0 0 4px; }
+  .edit-panel .src-name { font-size: 12px; color: var(--text-dim); margin-bottom: 14px; }
+  .field-row { margin-bottom: 12px; }
+  .field-row label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); margin-bottom: 4px; }
+  .field-row input[type=text], .field-row input[type=number], .field-row textarea {
+    width: 100%;
+  }
+  .field-row textarea { min-height: 60px; font-family: var(--heading); resize: vertical; }
+  .field-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .panel-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
+  .protected-note { font-size: 11px; color: var(--text-dim); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><strong>TSW Hud</strong> · train classes</div>
+    <div class="nav" id="navContainer"></div>
+    <button class="exit-btn" onclick="exitApp()">Exit</button>
+  </div>
+
+  <main>
+    <div class="panel">
+      <h2>Train Classes</h2>
+      <p class="small dim">
+        Imported from the wider train-class database (via <code>import_from_other_hud.py</code>).
+        UK classes are shown by default; other regions are imported too but kept hidden until you
+        choose to show them - nothing is discarded, and you can surface any individual entry
+        yourself below. Every field is editable except its internal ID, so you can correct a name,
+        speed, or livery without waiting for a re-import to fix it upstream.
+      </p>
+      <div class="toolbar">
+        <input type="text" id="search" placeholder="Search by name…">
+        <label><input type="checkbox" id="showHidden"> Show hidden / non-UK</label>
+      </div>
+    </div>
+
+    <div class="sync-banner" id="syncBanner">
+      <span class="dot online" id="syncDot"></span>
+      <span class="txt" id="syncTxt">Checking sync status…</span>
+    </div>
+
+    <div class="tc-grid" id="grid"></div>
+    <p class="small dim" id="empty" style="display:none; margin-top:16px;">
+      No train classes found - run <code>import_from_other_hud.py</code> first, or adjust your search.
+    </p>
+  </main>
+
+  <div class="edit-overlay" id="editOverlay">
+    <div class="edit-panel" id="editPanel"></div>
+  </div>
+
+<script>
+let allClasses = [];
+let currentId = null;
+
+async function load() {
+  const q = document.getElementById('search').value.trim();
+  const showHidden = document.getElementById('showHidden').checked;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (showHidden) params.set('show_hidden', '1');
+  try {
+    const res = await fetch('/api/train_classes?' + params.toString());
+    if (!res.ok) throw new Error('bad response');
+    const data = await res.json();
+    allClasses = data.train_classes || [];
+  } catch (e) {
+    // Live API unreachable - fall back to IndexedDB.
+    const cached = await TSWOfflineDB.getAll('train_classes');
+    allClasses = cached
+      .filter(c => showHidden || c.is_visible)
+      .filter(c => !q || (c.source_name || '').toLowerCase().includes(q.toLowerCase()) ||
+                         (c.display_name || '').toLowerCase().includes(q.toLowerCase()))
+      .sort((a, b) => (a.display_name || a.source_name || '').localeCompare(b.display_name || b.source_name || ''));
+  }
+  render();
+}
+
+function render() {
+  const grid = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  if (!allClasses.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.innerHTML = allClasses.map(c => {
+    const name = c.display_name || c.source_name;
+    const thumb = c.thumbnail_path
+      ? `<img src="${c.thumbnail_path}" alt="${name}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=&quot;no-image&quot;>No image</div>'">`
+      : `<div class="no-image">No image</div>`;
+    const speed = c.max_speed_mph != null ? `${c.max_speed_mph} mph` : '—';
+    const power = c.is_electric ? 'Electric' : (c.is_electric === 0 ? 'Diesel/other' : '—');
+    return `
+      <div class="tc-card ${c.is_visible ? '' : 'hidden-entry'}" onclick="openEdit(${c.id})">
+        <div class="tc-thumb">${thumb}</div>
+        <div class="tc-body">
+          <div class="tc-name">${name}</div>
+          <div class="tc-meta">
+            <span>${speed}</span>
+            <span>${power}</span>
+            ${c.livery_id ? `<span>${c.livery_id}</span>` : ''}
+          </div>
+          <div class="tc-meta" style="margin-top:6px;">
+            ${c.is_uk ? '<span class="tc-chip uk">UK</span>' : '<span class="tc-chip">Other region</span>'}
+            ${c.is_visible ? '' : '<span class="tc-chip">Hidden</span>'}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function openEdit(id) {
+  const c = allClasses.find(x => x.id === id);
+  if (!c) return;
+  currentId = id;
+  const panel = document.getElementById('editPanel');
+  panel.innerHTML = `
+    <h3>${c.display_name || c.source_name}</h3>
+    <div class="src-name">Source: ${c.source_name}</div>
+
+    <div class="field-row">
+      <label>Display name</label>
+      <input type="text" id="f_display_name" value="${(c.display_name || '').replace(/"/g, '&quot;')}">
+    </div>
+    <div class="field-two">
+      <div class="field-row">
+        <label>Livery / operator</label>
+        <input type="text" id="f_livery_id" value="${(c.livery_id || '').replace(/"/g, '&quot;')}">
+      </div>
+      <div class="field-row">
+        <label>Vehicle category</label>
+        <input type="text" id="f_vehicle_category" value="${(c.vehicle_category || '').replace(/"/g, '&quot;')}">
+      </div>
+    </div>
+    <div class="field-two">
+      <div class="field-row">
+        <label>Max speed (mph)</label>
+        <input type="number" step="0.1" id="f_max_speed_mph" value="${c.max_speed_mph != null ? c.max_speed_mph : ''}">
+      </div>
+      <div class="field-row">
+        <label>Manufacturer</label>
+        <input type="text" id="f_manufacturer_name" value="${(c.manufacturer_name || '').replace(/"/g, '&quot;')}">
+      </div>
+    </div>
+    <div class="field-row">
+      <label>Thumbnail path</label>
+      <input type="text" id="f_thumbnail_path" value="${(c.thumbnail_path || '').replace(/"/g, '&quot;')}">
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="f_is_electric" ${c.is_electric ? 'checked' : ''}>
+      <label for="f_is_electric" style="margin:0; text-transform:none; font-size:13px; color:var(--text);">Electric</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="f_is_visible" ${c.is_visible ? 'checked' : ''}>
+      <label for="f_is_visible" style="margin:0; text-transform:none; font-size:13px; color:var(--text);">
+        Visible in the app (untick to hide without deleting)
+      </label>
+    </div>
+    <div class="field-row">
+      <label>Notes</label>
+      <textarea id="f_notes">${c.notes || ''}</textarea>
+    </div>
+
+    <div class="protected-note">
+      Internal ID and source ID aren't editable here - they're what let a re-import find this
+      entry again without duplicating it.
+    </div>
+
+    <div class="panel-actions">
+      <button class="btn" onclick="closeEdit()">Cancel</button>
+      <button class="btn primary" id="saveBtn" onclick="saveEdit()">Save</button>
+    </div>`;
+  document.getElementById('editOverlay').classList.add('open');
+}
+
+function closeEdit() {
+  document.getElementById('editOverlay').classList.remove('open');
+  currentId = null;
+}
+
+async function saveEdit() {
+  if (currentId == null) return;
+  const btn = document.getElementById('saveBtn');
+  const speedVal = document.getElementById('f_max_speed_mph').value;
+  const body = {
+    display_name: document.getElementById('f_display_name').value,
+    livery_id: document.getElementById('f_livery_id').value,
+    vehicle_category: document.getElementById('f_vehicle_category').value,
+    max_speed_mph: speedVal === '' ? null : Number(speedVal),
+    manufacturer_name: document.getElementById('f_manufacturer_name').value,
+    thumbnail_path: document.getElementById('f_thumbnail_path').value,
+    is_electric: document.getElementById('f_is_electric').checked ? 1 : 0,
+    is_visible: document.getElementById('f_is_visible').checked ? 1 : 0,
+    notes: document.getElementById('f_notes').value,
+  };
+  btn.textContent = 'Saving…';
+  // Always goes through TSWSync.queueEdit - applies locally immediately
+  // (instant-feeling UI) and attempts a live sync right away if reachable,
+  // or queues it for later if not. Same path whether online or offline.
+  await TSWSync.queueEdit('train_classes', currentId, body);
+  closeEdit();
+  await load();
+}
+
+document.getElementById('search').addEventListener('input', () => {
+  clearTimeout(window._searchDebounce);
+  window._searchDebounce = setTimeout(load, 250);
+});
+document.getElementById('showHidden').addEventListener('change', load);
+document.getElementById('editOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'editOverlay') closeEdit();
+});
+
+function updateSyncBanner(status) {
+  const banner = document.getElementById('syncBanner');
+  const dot = document.getElementById('syncDot');
+  const txt = document.getElementById('syncTxt');
+  banner.classList.toggle('offline', !status.online);
+  dot.className = 'dot ' + (status.online ? 'online' : 'offline');
+
+  let text;
+  if (status.syncing) {
+    text = 'Syncing…';
+  } else if (status.online) {
+    text = status.lastSyncedAt ? `Synced ${new Date(status.lastSyncedAt).toLocaleTimeString()}` : 'Synced';
+  } else {
+    text = status.lastSyncedAt
+      ? `Offline — showing cached data from ${new Date(status.lastSyncedAt).toLocaleString()}`
+      : 'Offline — no data synced yet';
+  }
+  txt.innerHTML = text + (status.pendingCount
+    ? ` <span class="pending-chip">${status.pendingCount} pending</span>` : '');
+}
+
+if (typeof TSWSync !== 'undefined') {
+  TSWSync.onStatusChange((status) => {
+    updateSyncBanner(status);
+    load();
+  });
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/pages/sw.js').catch(() => {
+    // Expected to fail over plain HTTP on any device other than this PC -
+    // see HTTPS_SETUP.md.
+  });
+}
+
+function exitApp() {
+  fetch('/api/shutdown', {method: 'POST'});
+}
+
+load();
+</script>
+<script src="/pages/nav.js"></script>
+</body>
+</html>
