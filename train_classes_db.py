@@ -54,7 +54,7 @@ EDITABLE_FIELDS = {
     "max_power_kw", "manufacturer_name", "engine_description", "type_description",
     "vehicle_category", "thumbnail_path", "rail_vehicle_class",
     "is_drivable", "powered_axle_count", "is_uk", "is_visible", "notes",
-    "group_id", "subclass_id",
+    "group_id", "subclass_id", "photo_override", "speedometer",
 }
 
 # Known Trains v2: the field-completion checklist the status dot is based

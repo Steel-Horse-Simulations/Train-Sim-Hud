@@ -134,7 +134,9 @@
           <label>Photo override (if automatic detection fails)</label>
           <input type="text" id="f-photoOverride" placeholder="e.g. Class_170_ScR" style="width: 100%; margin-bottom: 14px;">
           
-          <button class="btn primary" style="width: 100%;" onclick="goToOperatorPage()">Manage Operators</button>
+          <button class="btn primary" style="width: 100%; margin-bottom: 14px;" onclick="goToOperatorPage()">Manage Operators</button>
+          
+          <button class="btn" style="width: 100%;" onclick="hideFromKnownTrains()">Hide from Known Trains</button>
         </div>
 
         <div class="panel" style="margin-top:16px;">
@@ -205,6 +207,7 @@
         <div class="save-bar">
           <button class="btn primary" id="saveBtn" onclick="save()">Save</button>
           <button class="btn primary" onclick="location.href='/pages/known_trains.html'">Cancel</button>
+          <button class="btn" id="hideBtn" onclick="hideTrain()" style="margin-left: auto;">Hide from Known Trains</button>
         </div>
       </div>
     </div>
@@ -479,6 +482,24 @@ function goToGroupPage() {
     location.href = `/pages/known_trains_group.html?id=${groupId}`;
   } else {
     location.href = '/pages/groups.html';
+  }
+}
+
+async function hideFromKnownTrains() {
+  if (!confirm('Hide this train from Known Trains?')) return;
+  try {
+    const res = await fetch(`/api/known_trains/classes/${trainClassId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ is_visible: 0 })
+    });
+    if (res.ok) {
+      location.href = '/pages/known_trains.html';
+    } else {
+      alert('Failed to hide train');
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
   }
 }
 

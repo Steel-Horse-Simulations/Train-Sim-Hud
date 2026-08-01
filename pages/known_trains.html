@@ -34,11 +34,11 @@
   .train-pill-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .train-pill-thumb.none { font-size: 9px; color: var(--text-dim); text-transform: uppercase; }
   
-  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 12px; }
-  .train-pill-name { font-weight: 600; font-size: 13px; color: var(--text); }
-  .train-pill-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 12px; align-items: center; }
-  .train-pill-actions { display: flex; gap: 6px; }
-  .train-pill-actions .edit-btn { padding: 4px 10px; font-size: 11px; }
+  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 12px; align-items: flex-start; }
+  .train-pill-name { font-weight: 600; font-size: 13px; color: var(--text); word-wrap: break-word; }
+  .train-pill-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .train-pill-actions { display: flex; gap: 6px; align-self: flex-end; }
+  .train-pill-actions .edit-btn { padding: 4px 10px; font-size: 11px; flex-shrink: 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .dot.red { background: var(--status-red); box-shadow: 0 0 5px var(--status-red); }
   .dot.amber { background: var(--status-amber); box-shadow: 0 0 5px var(--status-amber); }
@@ -195,7 +195,7 @@ function renderTable(classes) {
         <div class="train-pill-livery-line"></div>
         <div class="train-pill-thumb">${thumb}</div>
         <div class="train-pill-content">
-          <div>
+          <div style="flex: 1; width: 100%;">
             <div class="train-pill-name">${c.display_name || c.source_name}</div>
             <div class="train-pill-meta">
               <span><span class="dot ${c.status.color}"></span> Seen ${c.times_seen}</span>
@@ -241,7 +241,7 @@ function renderTableFromCache(classes) {
         <div class="train-pill-livery-line"></div>
         <div class="train-pill-thumb">${thumb}</div>
         <div class="train-pill-content">
-          <div>
+          <div style="flex: 1; width: 100%;">
             <div class="train-pill-name">${c.display_name || c.source_name}</div>
             <div class="train-pill-meta">
               <span>Seen ${c.times_seen}</span>
