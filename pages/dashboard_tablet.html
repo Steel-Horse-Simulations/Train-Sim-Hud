@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Dashboard (Tablet)</title>
+<link rel="manifest" href="/pages/manifest-dashboard.json">
+<meta name="theme-color" content="#0b0a10">
+<link rel="stylesheet" href="/pages/style.css">
+<script src="/pages/theme.js"></script>
+<script src="/pages/hud-controls.js"></script>
+<style>
+  .hud-wrap { display:flex; justify-content:center; margin-bottom: 18px; }
+  main { padding-top: 22px; }
+</style>
+</head>
+<body>
+  <div class="hud-controls-overlay" id="hud-controls">
+    <a href="/" class="brand" style="text-decoration:none;"><strong>TSW Hud</strong> · dashboard (tablet)</a>
+    <div class="btns">
+      <button class="fullscreen-btn" onclick="toggleFullScreen()">Full Screen</button>
+      <button class="exit-btn" onclick="exitApp()">Exit</button>
+    </div>
+  </div>
+
+  <main>
+    <div class="hud-wrap">
+      <div class="hud-stage tablet">
+        <div class="hud-corner hud-route">
+          <div class="loco-class" id="v-loco" style="display:none;"></div>
+          <div class="hud-kv"><span class="k">Gradient</span><span class="v"><span id="v-gradient">—</span></span></div>
+          <div class="hud-kv"><span class="k">Distance to signal</span><span class="v" id="v-dist">—</span></div>
+        </div>
+
+        <div class="hud-corner hud-signal">
+          <div class="lamp" id="signal-lamp" style="background:#555;"></div>
+          <div><div class="t1" id="v-signal-text">—</div><div class="t2">Next signal</div></div>
+        </div>
+
+        <div class="hud-corner hud-speed-cluster">
+          <div class="hud-gauge">
+            <div class="over-max-badge" id="over-max-badge">Over max speed</div>
+            <svg viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="50" fill="none" stroke="#2a2a30" stroke-width="8"/>
+              <circle id="gauge-ring" cx="60" cy="60" r="50" fill="none" stroke="#5fd07a" stroke-width="8"
+                      stroke-dasharray="0 314" stroke-linecap="round"/>
+              <line id="max-tick" class="max-tick" x1="60" y1="10" x2="60" y2="22" stroke="#eef0f4" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+            <div class="speed-num"><div class="n" id="v-speed">—</div><div class="u">MPH</div></div>
+          </div>
+          <div class="hud-limit-chip"><div class="n" id="v-limit">—</div></div>
+        </div>
+
+        <div class="hud-corner hud-limits-panel" id="limits-panel">
+          <h3>Limits ahead</h3>
+          <div class="hud-limits-row" id="limits-row"></div>
+        </div>
+
+        <div class="hud-corner hud-weather">
+          <svg class="icon" id="weather-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></svg>
+          <div>
+            <div class="t1" id="w-hud-text">—</div>
+            <div class="t2" id="w-hud-source">Current weather</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="dim small" style="text-align:center; margin-top:-6px;" id="poll-status"></p>
+    <p class="mono small" style="text-align:center; color:var(--status-amber); display:none; word-break:break-all; max-width:900px; margin:4px auto;" id="speed-debug"></p>
+
+    <div class="panel">
+      <h2>Weather detail</h2>
+      <div class="gauge-row">
+        <div class="readout"><div class="label">Temperature</div><div class="value" id="w-temp">—</div></div>
+        <div class="readout"><div class="label">Precipitation</div><div class="value" id="w-precip">—</div></div>
+        <div class="readout"><div class="label">Cloudiness</div><div class="value" id="w-cloud">—</div></div>
+        <div class="readout"><div class="label">Fog density</div><div class="value" id="w-fog">—</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Time of day</h2>
+      <div class="gauge-row">
+        <div class="readout"><div class="label">Local time</div><div class="value" id="t-local">—</div></div>
+        <div class="readout"><div class="label">Sunrise</div><div class="value" id="t-sunrise">—</div></div>
+        <div class="readout"><div class="label">Sunset</div><div class="value" id="t-sunset">—</div></div>
+      </div>
+    </div>
+
+    <p class="dim small">
+      This is the <strong>Tablet</strong> HUD (optimized for the Samsung Galaxy Tab A11's 1340×800
+      landscape display). It's kept visually and functionally identical to the Desktop HUD - any
+      change requested for one applies to both. This page polls the game once every couple seconds
+      while it's running. If you don't see values, make sure the game is launched with
+      <span class="mono">-HTTPAPI</span>, you're in an active driving session, and the key folder
+      is set correctly on the Setup page.
+    </p>
+  </main>
+
+<script src="/pages/dashboard.js"></script>
+<script>startDashboard(); initHudControls("hud-controls");</script>
+<script src="/pages/install-prompt.js"></script>
+</body>
+</html>

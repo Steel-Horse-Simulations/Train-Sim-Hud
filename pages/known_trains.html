@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Known Trains</title>
+<link rel="manifest" href="/pages/manifest-train-classes.json">
+<meta name="theme-color" content="#0b0a10">
+<link rel="stylesheet" href="/pages/style.css">
+<script src="/pages/theme.js"></script>
+<script src="/pages/offline-db.js"></script>
+<script src="/pages/sync-client.js"></script>
+<style>
+  main { max-width: 1000px; margin: 0 auto; }
+
+  @media (display-mode: standalone) {
+    .topbar { display: none; }
+    main { padding-top: 10px; }
+  }
+
+  .attention-panel { border-color: rgba(232,183,74,0.4); background: rgba(232,183,74,0.06); }
+  .attention-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--hairline); }
+  .attention-row:first-of-type { border-top: none; }
+  .attention-row .name { font-weight: 600; flex: 1; }
+  .attention-row .meta { font-size: 12px; color: var(--text-dim); }
+  .setup-btn { background: var(--accent); color: #1a1013; border: none; padding: 5px 12px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); padding: 8px; }
+  td { padding: 10px 8px; border-top: 1px solid var(--hairline); vertical-align: middle; }
+  .group-header td { padding-top: 18px; border-top: none; }
+  .group-header .gname { font-family: var(--heading); font-weight: 700; font-size: 14px; letter-spacing: .03em; color: var(--accent-bright); }
+  .group-header .glink { font-size: 11.5px; color: var(--text-dim); text-decoration: none; margin-left: 10px; }
+  .group-header .glink:hover { color: var(--accent-bright); }
+
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .dot.red { background: var(--status-red); box-shadow: 0 0 5px var(--status-red); }
+  .dot.amber { background: var(--status-amber); box-shadow: 0 0 5px var(--status-amber); }
+  .dot.yellow { background: var(--status-yellow); box-shadow: 0 0 5px var(--status-yellow); }
+  .dot.green { background: var(--status-green); box-shadow: 0 0 5px var(--status-green); }
+
+  .thumb {
+    width: 46px; height: 28px; border-radius: 4px; flex-shrink: 0; overflow: hidden;
+    background: #1c1a20; border: 1px solid var(--hairline);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .thumb.none { font-size: 8px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .03em; text-align: center; line-height: 1.2; }
+  .cls-name { font-weight: 600; }
+  .edit-btn { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .edit-btn:hover { border-color: var(--accent); color: var(--accent-bright); }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+
+  .sync-banner {
+    margin: 10px 0; border-radius: 9px; padding: 10px 13px; font-size: 12px;
+    border: 1px solid var(--hairline); display: flex; align-items: center; gap: 9px;
+    background: var(--panel-raised); transition: background .2s ease, border-color .2s ease;
+  }
+  .sync-banner .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .sync-banner .dot.online { background: #5fd07a; box-shadow: 0 0 5px #5fd07a; }
+  .sync-banner .dot.offline { background: #e8b74a; box-shadow: 0 0 5px #e8b74a; }
+  .sync-banner.offline { border-color: rgba(232,183,74,0.35); background: rgba(232,183,74,0.07); }
+  .sync-banner .pending-chip {
+    font-size: 10.5px; font-weight: 700; background: #e8b74a; color: #1a1013;
+    padding: 2px 8px; border-radius: 8px; flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><strong>TSW Hud</strong> · known trains</div>
+    <div class="nav" id="navContainer"></div>
+    <button class="exit-btn" onclick="exitApp()">Exit</button>
+  </div>
+
+  <main>
+    <div class="panel">
+      <h2>Known Trains</h2>
+      <p class="small dim">
+        The Group &rarr; Subclass &rarr; Individual hierarchy for organising every train class you've
+        encountered - default speeds per group, overridable at the subclass or individual level. Builds on
+        the same data as <a href="/pages/train_classes.html">Train Classes</a>.
+      </p>
+      <div class="toolbar">
+        <label><input type="checkbox" id="showHidden"> Show hidden / non-UK</label>
+      </div>
+    </div>
+
+    <div class="sync-banner" id="syncBanner">
+      <span class="dot online" id="syncDot"></span>
+      <span class="txt" id="syncTxt">Checking sync status…</span>
+    </div>
+
+    <div class="panel attention-panel" id="attentionPanel" style="display:none;">
+      <h2 id="attentionHeading">&#9888; Needs attention</h2>
+      <p class="small dim" style="margin-bottom:6px;">
+        Trains missing a display name, or not yet assigned to a group/subclass. This section disappears
+        once everything's set up.
+      </p>
+      <div id="attentionRows"></div>
+    </div>
+
+    <div class="panel">
+      <h2>All known trains</h2>
+      <table>
+        <thead>
+          <tr><th></th><th></th><th>Livery</th><th>Times seen</th><th>Max speed</th><th></th></tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <p class="small dim" id="emptyState" style="display:none; text-align:center; margin-top:20px;">
+        No train classes yet - drive something to detect one live, or run a sync against the other app's catalog.
+      </p>
+    </div>
+
+    <p class="small dim" style="text-align:center; margin-top: 14px;">
+      Status dot scale: red = nothing filled in, amber = some fields, yellow = most fields, green = everything
+      filled in. Recalculates automatically as more fields get added later.
+    </p>
+  </main>
+
+<script>
+async function load() {
+  const showHidden = document.getElementById('showHidden').checked;
+  const params = new URLSearchParams();
+  if (showHidden) params.set('show_hidden', '1');
+  try {
+    const res = await fetch('/api/known_trains/list?' + params.toString());
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    renderAttention(data.needs_attention);
+    renderTable(data.classes);
+  } catch (e) {
+    // Offline fallback: read train_classes from IndexedDB and render a
+    // simplified grouped view (no server-resolved speeds/status - just cached data)
+    const cached = await TSWOfflineDB.getAll('train_classes');
+    const visible = cached.filter(c => showHidden || c.is_visible);
+    renderAttention(visible.filter(c => !c.display_name || !c.group_id || !c.subclass_id));
+    renderTableFromCache(visible);
+  }
+}
+
+function renderAttention(items) {
+  const panel = document.getElementById('attentionPanel');
+  const heading = document.getElementById('attentionHeading');
+  const rows = document.getElementById('attentionRows');
+  if (!items.length) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  heading.innerHTML = `&#9888; Needs attention (${items.length})`;
+  rows.innerHTML = items.map(item => {
+    const status = missingReason(item);
+    const dotColor = item.display_name ? 'amber' : 'red';
+    return `
+      <div class="attention-row">
+        <span class="dot ${dotColor}"></span>
+        <span class="name">${item.display_name || item.source_name}</span>
+        <span class="meta">seen ${item.times_seen} times &middot; ${status}</span>
+        <a class="setup-btn" href="/pages/known_trains_edit.html?id=${item.id}">Set up</a>
+      </div>`;
+  }).join('');
+}
+
+function missingReason(item) {
+  if (!item.display_name) return 'no display name set';
+  if (!item.group_id) return 'has a name, but no group assigned';
+  return 'has a name and group, but no subclass assigned';
+}
+
+function renderTable(classes) {
+  const tbody = document.getElementById('tableBody');
+  const empty = document.getElementById('emptyState');
+  if (!classes.length) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Group by group_name (ungrouped entries get their own bucket at the end)
+  const groups = new Map();
+  for (const c of classes) {
+    const key = c.group_name || '(Ungrouped)';
+    if (!groups.has(key)) groups.set(key, { groupId: c.group_id, items: [] });
+    groups.get(key).items.push(c);
+  }
+
+  let html = '';
+  for (const [groupName, { groupId, items }] of groups) {
+    const settingsLink = groupId
+      ? `<a class="glink" href="/pages/known_trains_group.html?id=${groupId}">&#9881; Group settings</a>`
+      : '';
+    html += `<tr class="group-header"><td colspan="6"><span class="gname">${groupName}</span>${settingsLink}</td></tr>`;
+    for (const c of items) {
+      const thumb = c.thumbnail_path
+        ? `<div class="thumb"><img src="${c.thumbnail_path}" alt="" onerror="this.parentElement.outerHTML='<div class=&quot;thumb none&quot;>no<br>photo</div>'"></div>`
+        : `<div class="thumb none">no<br>photo</div>`;
+      const subclassNote = c.subclass_id ? ` <span class="small dim">(subclass)</span>` : '';
+      html += `
+        <tr>
+          <td><span class="dot ${c.status.color}"></span></td>
+          <td>${thumb}</td>
+          <td class="cls-name">${c.display_name || c.source_name}</td>
+          <td>${c.times_seen}</td>
+          <td>${Math.round(c.resolved_max_speed_mph)} mph${subclassNote}</td>
+          <td><a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a></td>
+        </tr>`;
+    }
+  }
+  tbody.innerHTML = html;
+}
+
+document.getElementById('showHidden').addEventListener('change', load);
+
+function renderTableFromCache(classes) {
+  // Simplified grouped view from cached data when offline.
+  // group_id/group_name not resolved from server, so bucket by group_id presence only.
+  const grouped = new Map();
+  for (const c of classes) {
+    const key = c.group_id ? String(c.group_id) : '(Ungrouped)';
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(c);
+  }
+  const tbody = document.getElementById('tableBody');
+  const empty = document.getElementById('emptyState');
+  if (!classes.length) { tbody.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  let html = '';
+  for (const [key, items] of grouped) {
+    html += `<tr class="group-header"><td colspan="6"><span class="gname">${key === '(Ungrouped)' ? key : 'Group ' + key}</span></td></tr>`;
+    for (const c of items) {
+      const thumb = c.thumbnail_path
+        ? `<div class="thumb"><img src="${c.thumbnail_path}" alt="" onerror="this.parentElement.outerHTML='<div class=&quot;thumb none&quot;>no<br>photo</div>'"></div>`
+        : `<div class="thumb none">no<br>photo</div>`;
+      html += `<tr><td></td><td>${thumb}</td><td class="cls-name">${c.display_name || c.source_name}</td><td>${c.times_seen}</td><td>${c.max_speed_mph ? Math.round(c.max_speed_mph) + ' mph' : '—'}</td><td><a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a></td></tr>`;
+    }
+  }
+  tbody.innerHTML = html;
+}
+
+function updateSyncBanner(status) {
+  const banner = document.getElementById('syncBanner');
+  const dot = document.getElementById('syncDot');
+  const txt = document.getElementById('syncTxt');
+  banner.classList.toggle('offline', !status.online);
+  dot.className = 'dot ' + (status.online ? 'online' : 'offline');
+  let text;
+  if (status.syncing) {
+    text = 'Syncing…';
+  } else if (status.online) {
+    text = status.lastSyncedAt ? `Synced ${new Date(status.lastSyncedAt).toLocaleTimeString()}` : 'Synced';
+  } else {
+    text = status.lastSyncedAt
+      ? `Offline — showing cached data from ${new Date(status.lastSyncedAt).toLocaleString()}`
+      : 'Offline — no data synced yet';
+  }
+  txt.innerHTML = text + (status.pendingCount
+    ? ` <span class="pending-chip">${status.pendingCount} pending</span>` : '');
+}
+
+if (typeof TSWSync !== 'undefined') {
+  TSWSync.onStatusChange((status) => {
+    updateSyncBanner(status);
+    load();
+  });
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/pages/sw.js').catch(() => {});
+}
+
+function exitApp() {
+  fetch('/api/shutdown', {method: 'POST'});
+}
+
+load();
+</script>
+<script src="/pages/install-prompt.js"></script>
+<script src="/pages/nav.js"></script>
+</body>
+</html>

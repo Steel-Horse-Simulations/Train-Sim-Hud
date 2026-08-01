@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Map</title>
+<link rel="stylesheet" href="/pages/style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="/pages/theme.js"></script>
+<script src="/pages/hud-controls.js"></script>
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  main { padding: 0; height: 100%; overflow: hidden; }
+  #map { position: absolute; inset: 0; background: #0b0a10; }
+
+  .waiting {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-family: var(--heading); font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-dim); z-index: 100; pointer-events: none;
+  }
+
+  /* Themed dot marker */
+  .player-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent-bright);
+    border: 2px solid rgba(255,255,255,0.9);
+    box-shadow: 0 0 10px var(--accent-bright), 0 0 0 6px rgba(160,107,240,0.2);
+    box-shadow: 0 0 10px var(--accent-bright), 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  [data-theme="rainbow"] .player-dot {
+    background: conic-gradient(from 0deg, #ff5f5f, #ffbb5f, #f5e75f, #7fe37f, #5fb8ff, #a06bf0, #ff5f5f);
+  }
+
+  /* Keep the required OSM attribution small and unobtrusive */
+  .leaflet-control-attribution { font-size: 10px; background: rgba(10,10,11,0.75) !important; color: #999 !important; }
+  .leaflet-control-attribution a { color: #bbb !important; }
+
+  .rail-toggle-btn {
+    background: var(--panel-raised); border: 1px solid var(--hairline); color: var(--text);
+    font-family: var(--heading); font-size: 12px; letter-spacing: 0.04em;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+  }
+  .rail-toggle-btn:hover { border-color: var(--accent); }
+  .rail-toggle-btn.active { border-color: var(--accent); color: var(--accent-bright); }
+</style>
+</head>
+<body>
+  <div class="hud-controls-overlay" id="hud-controls">
+    <a href="/" class="brand" style="text-decoration:none;"><strong>TSW Hud</strong> · map</a>
+    <div class="btns">
+      <button class="rail-toggle-btn" id="rail-toggle-btn" onclick="toggleRailOverlay()">Rail Overlay: Off</button>
+      <button class="fullscreen-btn" onclick="toggleFullScreen()">Full Screen</button>
+      <button class="exit-btn" onclick="exitApp()">Exit</button>
+    </div>
+  </div>
+
+  <main>
+    <div id="map"></div>
+    <div class="waiting" id="waiting">Waiting for player location…</div>
+  </main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const DEFAULT_ZOOM = 15;
+const MOVE_DURATION_MS = 1800; // just under the 2s poll interval, so motion finishes before the next update
+let map = null;
+let marker = null;
+let moveAnimFrame = null;
+let railLayer = null;
+let railOverlayOn = false; // defaults to off every launch
+
+function animateMarkerAndMap(newLat, newLon) {
+  const start = marker.getLatLng();
+  const startTime = performance.now();
+  if (moveAnimFrame) cancelAnimationFrame(moveAnimFrame);
+
+  function step(now) {
+    const t = Math.min(1, (now - startTime) / MOVE_DURATION_MS);
+    const lat = start.lat + (newLat - start.lat) * t;
+    const lon = start.lng + (newLon - start.lng) * t;
+    marker.setLatLng([lat, lon]);
+    if (t < 1) {
+      moveAnimFrame = requestAnimationFrame(step);
+    }
+  }
+  moveAnimFrame = requestAnimationFrame(step);
+
+  // easeLinearity: 1 makes the map's own pan linear too, matching the
+  // marker's linear interpolation above so they move together instead of
+  // the dot reaching the new spot before the map catches up (which is what
+  // was reading as a sudden jump).
+  map.panTo([newLat, newLon], { animate: true, duration: MOVE_DURATION_MS / 1000, easeLinearity: 1 });
+}
+
+function initMap(lat, lon) {
+  map = L.map('map', {
+    center: [lat, lon],
+    zoom: DEFAULT_ZOOM,
+    zoomControl: false,
+    dragging: false,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    boxZoom: false,
+    keyboard: false,
+    touchZoom: false,
+    attributionControl: true,
+  });
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors',
+  }).addTo(map);
+
+  // Real-world rail infrastructure overlay (tracks, platforms, signals,
+  // switches) from OpenRailwayMap - built on OSM data, free for
+  // non-commercial use. Off by default; toggled on via the button.
+  railLayer = L.tileLayer('https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    opacity: 0.85,
+    attribution: 'Rendering: OpenRailwayMap, Map data: OpenStreetMap contributors',
+  });
+
+  const icon = L.divIcon({ className: 'player-dot', iconSize: [16, 16] });
+  marker = L.marker([lat, lon], { icon }).addTo(map);
+
+  document.getElementById('waiting').style.display = 'none';
+}
+
+function toggleRailOverlay() {
+  const btn = document.getElementById('rail-toggle-btn');
+  if (!map || !railLayer) return;
+  railOverlayOn = !railOverlayOn;
+  if (railOverlayOn) {
+    railLayer.addTo(map);
+    btn.textContent = 'Rail Overlay: On';
+    btn.classList.add('active');
+  } else {
+    map.removeLayer(railLayer);
+    btn.textContent = 'Rail Overlay: Off';
+    btn.classList.remove('active');
+  }
+}
+
+async function pollLocation() {
+  try {
+    const res = await fetch('/api/location');
+    const data = await res.json();
+    if (data.latitude === null || data.longitude === null) return;
+
+    if (!map) {
+      initMap(data.latitude, data.longitude);
+    } else {
+      animateMarkerAndMap(data.latitude, data.longitude);
+    }
+  } catch (e) {
+    // stays on the "waiting" state / keeps last known position until the
+    // next successful poll
+  }
+}
+
+function toggleFullScreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+function exitApp() {
+  fetch('/api/shutdown', {method: 'POST'});
+}
+
+initHudControls('hud-controls');
+pollLocation();
+setInterval(pollLocation, 2000);
+</script>
+</body>
+</html>
