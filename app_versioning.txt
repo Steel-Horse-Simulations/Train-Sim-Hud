@@ -1,0 +1,117 @@
+TSW HUD - APP VERSIONING SYSTEM
+================================
+
+MAIN APP VERSION: 0.1.0
+
+VERSION FORMAT (displayed to user): x.x.x
+  Example: 0.1.0, 1.2.3, 2.0.0
+
+VERSION COMPONENT RULES (applies to all versions: main and per-page)
+=====================================================================
+
+MAJOR (x.0.0) — Incremented when:
+  • A new page is added to the app
+  • Major structural changes to the app
+  • Breaking changes to configuration or API
+
+MINOR (x.x.0) — Incremented when:
+  • Updates to pre-existing pages
+  • New features added to existing functionality
+  • UI/UX improvements to current components
+
+PATCH (x.x.x) — Incremented when:
+  • Bug fixes
+  • Small cosmetic changes
+  • Performance improvements
+  • Documentation updates
+
+VERSION METADATA FILE
+======================
+
+File: version.json (stored in app root)
+
+{
+  "main_version": "0.1.0",
+  "main_major": 0,
+  "main_minor": 1,
+  "main_patch": 0,
+  "release_date": "2025-08-01",
+  "git_tag": "v0.1.0",
+  "main_branch": true,
+  "dev_notes": "",
+  "pages": {
+    "index": {
+      "name": "Setup",
+      "version": "0.1.0",
+      "major": 0,
+      "minor": 1,
+      "patch": 0,
+      "last_modified": "2025-08-01"
+    },
+    "settings": {
+      "name": "Settings",
+      "version": "0.1.0",
+      "major": 0,
+      "minor": 1,
+      "patch": 0,
+      "last_modified": "2025-08-01"
+    },
+    "dev_settings": {
+      "name": "Dev Settings",
+      "version": "0.1.0",
+      "major": 0,
+      "minor": 1,
+      "patch": 0,
+      "last_modified": "2025-08-01"
+    }
+  }
+}
+
+Main version fields:
+  • main_version: Display-friendly x.x.x format (STRING)
+  • main_major: Major version number (INTEGER)
+  • main_minor: Minor version number (INTEGER)
+  • main_patch: Patch version number (INTEGER)
+  • release_date: ISO 8601 date (YYYY-MM-DD)
+  • git_tag: GitHub tag name (v<version>)
+  • main_branch: Whether this is from main/prod branch (BOOLEAN)
+  • dev_notes: Optional development notes for maintainers (STRING)
+
+Page version fields (one entry per page):
+  • name: Display name of the page (STRING)
+  • version: Current page version x.x.x (STRING)
+  • major: Page major version number (INTEGER)
+  • minor: Page minor version number (INTEGER)
+  • patch: Page patch version number (INTEGER)
+  • last_modified: ISO 8601 date when page was last updated (YYYY-MM-DD)
+
+PER-PAGE VERSIONING GUIDELINES
+===============================
+
+Each page (HTML file in pages/) has its own version tracking:
+  • Page versions are independent and can differ from main app version
+  • When a page is updated, increment its version number following the VERSION COMPONENT RULES above
+  • Update the main app version following these rules:
+    - If page patch incremented: increment main patch (reset to 0 if main minor/major changed)
+    - If page minor incremented: increment main minor (reset patch to 0)
+    - If page major incremented: increment main major (reset minor/patch to 0)
+
+When adding a new page:
+  1. Create the page HTML file in pages/<page_name>.html
+  2. Add entry to pages/registry.json
+  3. Add new entry to version.json under "pages" section with initial version 1.0.0
+  4. Add version comment to top of new page file: <!-- TSW Hud [v1.0.0] [main] [main] -->
+  5. Increment main version to next MAJOR (since new page = major feature)
+  6. Update version.json main_version, main_major, main_minor (reset to 0), main_patch (reset to 0)
+
+Example:
+  Page "index" goes from v0.1.0 to v0.1.1 (patch bump)
+    → Main version goes from v0.1.0 to v0.1.1
+
+  Page "settings" goes from v0.1.0 to v0.2.0 (minor bump)
+    → Main version goes from v0.1.1 to v0.2.0
+
+  New page "hud" added with v1.0.0
+    → Main version goes from v0.2.0 to v1.0.0
+
+[FILE TAGGING SYSTEM and remaining sections unchanged]

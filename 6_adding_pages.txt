@@ -1,0 +1,250 @@
+TSW HUD - ADDING PAGES GUIDE
+=============================
+
+This document explains how to add new pages to the TSW HUD app and how to
+request app code updates from Claude.
+
+ADDING A NEW PAGE - STEP BY STEP
+==================================
+
+1. CREATE THE HTML FILE
+  
+  Location: pages/<page_name>.html
+  
+  Template:
+    <!-- TSW Hud [v2.17.0] [main] [main] -->
+    <!-- Last modified: YYYY-MM-DD -->
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>TSW HUD - Page Name</title>
+      <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+      <link rel="stylesheet" href="/pages/style.css">
+    </head>
+    <body>
+      <div class="topbar">
+        <div class="brand"><strong>TSW HUD</strong><br>Page Name</div>
+        <div class="nav" id="navContainer"></div>
+        <button class="exit-btn" onclick="fetch('/api/shutdown',{method:'POST'})">Exit</button>
+      </div>
+      <main>
+        <div class="panel">
+          <h2>Section Title</h2>
+          <!-- Your content here -->
+        </div>
+      </main>
+      <script src="/pages/nav.js"></script>
+    </body>
+    </html>
+
+  Key requirements:
+    • Include version comment at top with current version
+    • Use shared stylesheet: <link rel="stylesheet" href="/pages/style.css">
+    • Include topbar with brand, nav container, and exit button
+    • Content in <main> with .panel divs
+    • Always load nav.js at bottom
+
+2. ADD ENTRY TO pages/registry.json
+
+  Example entry:
+    {
+      "id": "new_page",
+      "name": "Page Display Name",
+      "url": "/pages/new_page.html",
+      "dev_only": false,
+      "order": 2
+    }
+
+  Fields:
+    id          — unique identifier (lowercase, no spaces)
+    name        — display name in navigation
+    url         — path to HTML file (relative to app root)
+    dev_only    — set true to hide from production builds
+    order       — sort order in nav bar (lower numbers first)
+
+  Example full registry.json:
+    [
+      {"id": "setup", "name": "Setup", "url": "/", "dev_only": false, "order": 0},
+      {"id": "settings", "name": "Settings", "url": "/pages/settings.html", "dev_only": false, "order": 1},
+      {"id": "hud", "name": "HUD", "url": "/pages/hud.html", "dev_only": false, "order": 2}
+    ]
+
+3. (OPTIONAL) ADD FLASK ROUTE FOR DYNAMIC CONTENT
+
+  If your page needs data from the API, add a route to app.py:
+
+    @app.route('/api/my_endpoint')
+    def my_endpoint():
+        # Fetch data or perform logic
+        return jsonify({'status': 'ok', 'data': [...]})
+
+  Then in your HTML, fetch it:
+    fetch('/api/my_endpoint')
+      .then(r => r.json())
+      .then(data => console.log(data))
+
+REQUESTING APP CODE UPDATES FROM CLAUDE
+==========================================
+
+When you need Claude to update app.py or add new routes, provide a .txt file
+with the following structure:
+
+FILE NAME: <feature_name>_spec.txt
+
+TEMPLATE:
+---------
+
+FEATURE: Brief description of what needs to be added
+VERSION BUMP: patch | minor | major
+
+API ENDPOINTS NEEDED:
+  [List any new Flask routes that need to be added]
+  Example:
+    GET /api/speed
+      → returns current speed in mph, kph, m/s
+    GET /api/loco/current
+      → returns current locomotive info (name, class, max speed)
+
+MODIFICATIONS TO EXISTING ENDPOINTS:
+  [List changes to already-existing Flask routes]
+  Example:
+    MODIFY: GET /api/config
+      Add field: "theme" (string) → current theme name
+      Add field: "poll_rate" (int) → API poll rate in ms
+
+RESPONSE FORMATS:
+  [Specify exact JSON structure expected]
+  Example:
+    GET /api/speed returns:
+      {
+        "speed_mph": <float>,
+        "speed_kph": <float>,
+        "speed_ms": <float>,
+        "unit_preference": "mph" | "kph" | "ms"
+      }
+
+DEPENDENCIES:
+  [List any new Python packages needed]
+  Example:
+    • requests (already in requirements.txt)
+    • pytz (new — add to requirements.txt)
+
+INTEGRATION NOTES:
+  [Any special setup, config changes, or important details]
+  Example:
+    • API key must be loaded before this endpoint is called
+    • Config file needs new field "dark_mode" (boolean, default false)
+    • This requires TSW6 to be running with -HTTPAPI flag
+
+REAL API ENDPOINTS USED:
+  [Reference which TSW API endpoints this feature calls]
+  Example:
+    • GET /get/CurrentDrivableActor.Function.HUD_GetSpeed
+    • GET /get/DriverAid.Data
+    • GET /get/WeatherManager.Data
+
+EXAMPLE FEATURE REQUEST FILE
+==============================
+
+FEATURE: Add real-time speed display page
+VERSION BUMP: minor
+
+API ENDPOINTS NEEDED:
+  GET /api/speed/current
+    → Returns current speed in multiple units and recent speed data
+
+MODIFICATIONS TO EXISTING ENDPOINTS:
+  None
+
+RESPONSE FORMATS:
+  GET /api/speed/current returns:
+    {
+      "timestamp": "2025-08-01T14:32:00",
+      "speed_ms": 25.5,
+      "speed_kph": 91.8,
+      "speed_mph": 57.0,
+      "max_speed_ms": 33.3,
+      "max_speed_kph": 120.0,
+      "max_speed_mph": 75.0,
+      "speed_limit_ms": 30.0,
+      "speed_limit_kph": 108.0,
+      "speed_limit_mph": 67.0,
+      "status": "under_limit" | "approaching_limit" | "over_limit"
+    }
+
+DEPENDENCIES:
+  • requests (already present)
+  • No new packages needed
+
+INTEGRATION NOTES:
+  • Must read from DriverAid.Data for speed limit
+  • Must guard against unset speed limit (>= 112 m/s)
+  • Poll rate should match config.poll_rate_ms (default 300ms)
+  • Status calculation: 
+    - "under_limit" if speed < limit - 2 m/s
+    - "approaching_limit" if limit - 2 <= speed <= limit
+    - "over_limit" if speed > limit
+
+REAL API ENDPOINTS USED:
+  • GET /get/CurrentDrivableActor.Function.HUD_GetSpeed
+  • GET /get/DriverAid.Data
+
+GUIDELINES FOR CLAUDE
+=======================
+
+When providing a spec to Claude:
+
+1. Be as specific as possible about response formats (use JSON examples)
+2. Reference exact TSW API endpoints from 2_known_endpoints.txt
+3. Mention any special logic (guards, unit conversions, calculations)
+4. Note if config changes are needed
+5. Specify which fields are required vs optional
+6. Include example responses with realistic values
+
+Claude will:
+  • Add the Flask routes to app.py
+  • Update requirements.txt if needed
+  • Add version comment tags to new code
+  • Test response formats against documented API endpoints
+  • Increment version.json appropriately
+  • Commit changes with clear messages
+
+STYLE AND NAMING CONVENTIONS
+==============================
+
+Python (app.py):
+  • Use snake_case for function names
+  • Use UPPERCASE for constants
+  • Always include try/except for API calls
+  • Return JSON with consistent field naming (snake_case)
+  • Add docstring comments for complex functions
+
+HTML/CSS/JS:
+  • Use kebab-case for CSS classes
+  • Follow existing panel and field-row structures
+  • Use var(--accent), var(--status-green), etc. for colors
+  • Always include nav.js and exit button in topbar
+  • Keep font sizes consistent with existing pages
+
+Endpoints:
+  • Use /api/ prefix for all Flask routes
+  • Use /get/ prefix for TSW API proxy routes
+  • Use descriptive names: /api/speed/current, /api/loco/info, etc.
+  • Return { "Result": "Success", "data": {...} } for consistency
+
+VERSION TAGGING
+================
+
+Always include version tag comments in new files:
+
+Python:
+  # TSW Hud [vX.X.X] [main] [main]
+  # Last modified: YYYY-MM-DD
+
+HTML/CSS/JS:
+  <!-- TSW Hud [vX.X.X] [main] [main] -->
+  <!-- Last modified: YYYY-MM-DD -->
+
+When Claude updates code, the version in these tags will reflect the change.
