@@ -29,6 +29,10 @@ from datetime import datetime
 import requests
 from flask import Flask, jsonify, request, send_from_directory
 
+# Headless mode detection (for launcher embedding)
+NO_BROWSER = os.environ.get("TSW_HUD_NO_BROWSER", "false").lower() == "true"
+HUD_PORT = int(os.environ.get("TSW_HUD_PORT", "5273"))
+
 # --------------------------------------------------------------------------
 # Paths / constants
 # --------------------------------------------------------------------------
@@ -73,7 +77,7 @@ def candidate_folders():
 os.makedirs(EXPORTS_DIR, exist_ok=True)
 os.makedirs(DIAG_DIR, exist_ok=True)
 
-SERVER_PORT = 5273
+SERVER_PORT = HUD_PORT
 
 
 def _run_with_timeout(fn, timeout_seconds, default):
@@ -1720,18 +1724,16 @@ def run_in_system_browser():
     
     If TSW_HUD_NO_BROWSER is set (parent launcher will do this), skip opening
     the browser and just run the server — the parent launcher will embed it."""
-    no_browser = os.environ.get("TSW_HUD_NO_BROWSER", "").lower() == "true"
-    if not no_browser:
+    if not NO_BROWSER:
         print("Running in browser mode (no native window) - this avoids a class")
         print("of WebView2 bugs some Windows setups hit with the native window.")
-        print("Opening http://127.0.0.1:5273/ in your default browser...")
+        print(f"Opening http://127.0.0.1:{SERVER_PORT}/ in your default browser...")
         import webbrowser
-        webbrowser.open(f"http://127.0.0.1:5273/")
+        webbrowser.open(f"http://127.0.0.1:{SERVER_PORT}/")
         print("You can close this window with Ctrl+C, or click Exit in the app.")
     else:
-        print("Running in headless server mode (parent launcher will embed the UI).")
-        print("TSW Hud server running on http://127.0.0.1:5273/")
-        print("Press Ctrl+C to stop.")
+        print(f"Running in headless server mode (port {SERVER_PORT})")
+        print("Parent launcher will embed the UI. Press Ctrl+C to stop.")
     while True:
         time.sleep(1)
 
@@ -1757,6 +1759,14 @@ def main():
     flask_thread.start()
     time.sleep(0.6)  # let Flask bind before the window tries to load it
 
+    # Headless mode: just run Flask, don't open any UI window
+    if NO_BROWSER:
+        print(f"Running in headless server mode (port {SERVER_PORT})")
+        print("Parent launcher will embed the UI. Press Ctrl+C to stop.")
+        while True:
+            time.sleep(1)
+        return
+
     if "--browser" in sys.argv:
         run_in_system_browser()
         return
@@ -1773,7 +1783,7 @@ def main():
         js_api = JSApi()
         window = webview.create_window(
             "TSW Hud",
-            "http://127.0.0.1:5273/",
+            f"http://127.0.0.1:{SERVER_PORT}/",
             width=1280,
             height=860,
             min_size=(900, 600),
