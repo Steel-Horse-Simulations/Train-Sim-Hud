@@ -1,10 +1,36 @@
 {
-  "version": "0.1.0",
-  "major": 0,
-  "minor": 1,
-  "patch": 0,
-  "release_date": "2025-01-31",
-  "git_tag": "v0.1.0",
+  "main_version": "2.17.0",
+  "main_major": 2,
+  "main_minor": 17,
+  "main_patch": 0,
+  "release_date": "2025-08-01",
+  "git_tag": "v2.17.0",
   "main_branch": true,
-  "dev_notes": "Initial settings page with API key detection and navigation management"
+  "dev_notes": "",
+  "pages": {
+    "index": {
+      "name": "Setup",
+      "version": "2.17.0",
+      "major": 2,
+      "minor": 17,
+      "patch": 0,
+      "last_modified": "2025-08-01"
+    },
+    "settings": {
+      "name": "Settings",
+      "version": "2.17.0",
+      "major": 2,
+      "minor": 17,
+      "patch": 0,
+      "last_modified": "2025-08-01"
+    },
+    "dev_settings": {
+      "name": "Dev Settings",
+      "version": "2.17.0",
+      "major": 2,
+      "minor": 17,
+      "patch": 0,
+      "last_modified": "2025-08-01"
+    }
+  }
 }
