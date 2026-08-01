@@ -1,344 +1,410 @@
+<!-- TSW Hud [v0.1.1] [dev] [main] -->
+<!-- Last modified: 2025-08-01 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>TSW Hud</title>
-<link rel="stylesheet" href="/pages/style.css">
-<script src="/pages/theme.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TSW HUD - Settings</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/pages/style.css">
+  <style>
+    .status-section {
+      display: grid;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+    }
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      box-shadow: 0 0 6px currentColor;
+    }
+    .status-dot.green {
+      background: #5fd07a;
+      color: #5fd07a;
+    }
+    .status-dot.red {
+      background: #e05a4e;
+      color: #e05a4e;
+    }
+    .status-dot.amber {
+      background: #e8b74a;
+      color: #e8b74a;
+    }
+    .status-info {
+      flex: 1;
+    }
+    .status-label {
+      font-size: 13px;
+      color: #a9a4b3;
+      font-family: 'Barlow Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .status-text {
+      font-size: 14px;
+      color: #f0edf5;
+    }
+    .connection-box {
+      background: rgba(160, 107, 240, 0.05);
+      border: 0.5px solid #a06bf0;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .connection-label {
+      font-size: 12px;
+      color: #a9a4b3;
+      font-family: 'Barlow Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .connection-value {
+      font-size: 14px;
+      color: #c9a3ff;
+      font-family: 'Barlow Condensed', sans-serif;
+      word-break: break-all;
+      padding: 8px 12px;
+      background: rgba(20, 18, 24, 0.8);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      user-select: all;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .info-item {
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+    }
+    .info-label {
+      font-size: 11px;
+      color: #a9a4b3;
+      font-family: 'Barlow Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .info-value {
+      font-size: 13px;
+      color: #f0edf5;
+      word-break: break-word;
+    }
+    .folder-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .folder-row input {
+      flex: 1;
+      background: rgba(20, 18, 24, 0.8);
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      color: #c9a3ff;
+      font-family: 'Barlow Condensed', sans-serif;
+      padding: 8px 12px;
+      border-radius: 4px;
+    }
+    .folder-row input::placeholder {
+      color: #a9a4b3;
+    }
+    .folder-row button {
+      flex-shrink: 0;
+    }
+    button.small-btn {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-family: 'Barlow Condensed', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .message {
+      font-size: 12px;
+      padding: 8px 0;
+      margin: 8px 0;
+    }
+    .message.success {
+      color: #5fd07a;
+    }
+    .message.error {
+      color: #e05a4e;
+    }
+    .message.pending {
+      color: #e8b74a;
+    }
+  </style>
 </head>
 <body>
   <div class="topbar">
-    <div class="brand"><strong>TSW Hud</strong> · setup <span id="version-tag" class="dim"></span></div>
+    <div class="brand"><strong>TSW HUD</strong><br>Settings</div>
     <div class="nav" id="navContainer"></div>
-    <button class="exit-btn" onclick="exitApp()">Exit</button>
+    <button class="exit-btn" onclick="fetch('/api/shutdown',{method:'POST'})">Exit</button>
   </div>
 
   <main>
+    <!-- API Key Configuration -->
     <div class="panel">
-      <h2>Connection</h2>
-      <p class="small">
-        <span id="dot" class="status-dot warn"></span>
-        <span id="status-text">Checking…</span>
-      </p>
-      <p class="small dim">
-        The game must be running with the <span class="mono">-HTTPAPI</span> launch option set
-        (Steam &rarr; right-click Train Sim World &rarr; Properties &rarr; Launch Options), and you
-        should be in an active session for most endpoints to respond.
-      </p>
-    </div>
-
-    <div class="panel">
-      <h2>API key folder</h2>
-      <p class="small dim">
-        This is the folder that contains <span class="mono">CommAPIKey.txt</span> — normally
-        <span class="mono">Documents\My Games\TrainSimWorldX\Saved\Config</span>. The app reads
-        the key from here every time it talks to the game; it's never typed in by hand.
-      </p>
-      <div class="field-row">
-        <input type="text" id="folder-input" placeholder="C:\Users\you\Documents\My Games\TrainSimWorld6\Saved\Config">
-        <button class="btn" onclick="browseFolder()">Browse…</button>
-        <button class="btn" onclick="autoDetect()">Auto-detect</button>
-        <button class="btn primary" onclick="saveFolder()">Save</button>
+      <h2>TSW API Key</h2>
+      <p style="font-size: 13px; color: #a9a4b3; margin: 0 0 16px 0;">Location of your Train Sim World CommAPIKey.txt file</p>
+      
+      <div class="folder-row">
+        <input type="text" id="folderInput" placeholder="Paste folder path or use auto-detect">
+        <button class="btn primary small-btn" onclick="autoDetectFolder()">Auto-detect</button>
       </div>
-      <p class="small" id="key-status"></p>
+      
+      <button class="btn small-btn" onclick="browseFolder()">Browse Folder</button>
+      <div id="folderMessage" class="message"></div>
     </div>
 
+    <!-- Status Indicators -->
     <div class="panel">
-      <h2>API address</h2>
-      <p class="small dim">Only change this if you've configured TSW to use a non-default port.</p>
-      <div class="field-row">
-        <input type="text" id="api-base-input" placeholder="http://127.0.0.1:31270">
-        <button class="btn" onclick="saveApiBase()">Save</button>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Real timetables &amp; train classes (TSW HUD app)</h2>
-      <p class="small dim">
-        Automatically finds and imports real timetable/train-class data from the other "TSW HUD"
-        app's own database, in the background, so <a href="/pages/timetables_browser.html">Timetables</a>
-        and <a href="/pages/train_classes.html">Train Classes</a> stay current without any manual
-        copying. Checks on startup and roughly every 15 minutes after that.
-      </p>
-      <p class="small" id="other-hud-status">Checking…</p>
-      <div class="field-row">
-        <input type="text" id="other-hud-db-input" placeholder="Leave blank to auto-detect">
-        <button class="btn" onclick="saveOtherHudDb()">Save</button>
-        <button class="btn" onclick="syncOtherHudNow()">Sync now</button>
-      </div>
-      <p class="small dim">
-        Auto-detection scans common folders (Downloads, Desktop, Documents) for the other app's
-        database. If it can't find it, or found the wrong one, paste the correct path to
-        <span class="mono">tsw_hud.db</span> above.
-      </p>
-    </div>
-
-    <div class="panel" id="certPanel">
-      <h2>HTTPS Certificate</h2>
-      <p class="small dim">
-        Offline sync on other devices (see HTTPS_SETUP.md) needs a certificate that expires
-        every couple of years. <strong>Important limitation:</strong> once it's actually
-        expired, browsers block the connection outright before this page can even load to
-        show a warning - so this can only ever be a useful heads-up <em>before</em> that
-        happens, not an after-the-fact alert. Check back here occasionally, especially if
-        it's been a year or two since you set it up.
-      </p>
-      <p class="small" id="cert-status">Checking…</p>
-    </div>
-
-    <div class="panel">
-      <h2>Open on another device (tablet, phone)</h2>
-      <p class="small dim">
-        Works over your local Wi-Fi/network only — not the internet. Make sure your tablet is on
-        the <strong>same Wi-Fi network</strong> as this PC, then open one of these addresses in
-        its browser. If this PC has a VPN active, you may see extra addresses that won't work —
-        the one matching what your router shows for this PC (often <span class="mono">192.168.x.x</span>)
-        is the one to use.
-      </p>
-      <div id="lan-url-list"></div>
-      <p class="small dim" id="lan-note"></p>
-    </div>
-
-    <div class="panel">
-      <h2>Diagnostics</h2>
-      <p class="small dim">
-        If the app hangs or seems stuck, click this and copy the result to send to Claude — it
-        shows exactly how long each recent request to the game took, which pinpoints whether the
-        slowdown is the game, the network, or the app itself.
-      </p>
-      <div class="field-row">
-        <button class="btn" onclick="runDiagnostics()">Copy diagnostics</button>
-        <span class="small dim" id="diag-status"></span>
+      <h2>Connection Status</h2>
+      
+      <div class="status-section">
+        <div class="status-item">
+          <div class="status-dot red" id="keyStatusDot"></div>
+          <div class="status-info">
+            <div class="status-label">API Key Status</div>
+            <div class="status-text" id="keyStatusText">Checking...</div>
+          </div>
+        </div>
+        
+        <div class="status-item">
+          <div class="status-dot red" id="gameStatusDot"></div>
+          <div class="status-info">
+            <div class="status-label">Game Connection</div>
+            <div class="status-text" id="gameStatusText">Checking...</div>
+          </div>
+        </div>
       </div>
     </div>
 
+    <!-- Connection Address -->
     <div class="panel">
-      <h2>Where to go next</h2>
-      <p class="small">
-        <strong>Dashboard</strong> — a live readout of speed, gradient, signal and weather while you drive.<br>
-        <strong>Discovery</strong> — scans everything the game currently exposes and gives you copyable
-        text you can paste back to Claude so future dashboard pages can be built for it.
-      </p>
+      <h2>Connection Address</h2>
+      <p style="font-size: 13px; color: #a9a4b3; margin: 0 0 16px 0;">Use these addresses to access this app from other devices on your network</p>
+      
+      <div class="connection-box">
+        <div class="connection-label">Local Access (Same Computer)</div>
+        <div class="connection-value" id="localAddress">http://127.0.0.1:5000</div>
+      </div>
+      
+      <div class="connection-box">
+        <div class="connection-label">Network Access (Tablet / Other Device)</div>
+        <div class="connection-value" id="networkAddress">Detecting...</div>
+      </div>
+    </div>
+
+    <!-- App Information -->
+    <div class="panel">
+      <h2>App Information</h2>
+      
+      <div class="info-grid">
+        <div class="info-item">
+          <div class="info-label">App Version</div>
+          <div class="info-value" id="appVersion">0.1.0</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">API Server</div>
+          <div class="info-value">127.0.0.1:31270</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Configuration Folder</div>
+          <div class="info-value" id="configFolder">Not set</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Key File Found</div>
+          <div class="info-value" id="keyFileStatus">Checking...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Page Registry Debug -->
+    <div class="panel" style="opacity: 0.7;">
+      <h2>Navigation</h2>
+      <p style="font-size: 13px; color: #a9a4b3; margin: 0;">Pages shown in navigation are dynamically loaded from registry.json and filtered by dev_only setting</p>
     </div>
   </main>
 
-<script>
-// Wraps fetch with a hard timeout so a stuck request can never freeze the UI -
-// it will always resolve or reject within `ms`, giving clear feedback instead
-// of an endless spinner.
-async function fetchTimeout(url, options = {}, ms = 6000) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), ms);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(id);
-  }
-}
+  <script src="/pages/nav.js"></script>
+  <script>
+    // Auto-refresh status every 2 seconds
+    const pollInterval = 2000;
+    let pollTimer = null;
 
-async function refreshConfig() {
-  const res = await fetchTimeout('/api/config');
-  const cfg = await res.json();
-  document.getElementById('version-tag').textContent = cfg.version ? ('(' + cfg.version + ')') : '';
-  document.getElementById('folder-input').value = cfg.config_folder || '';
-  document.getElementById('api-base-input').value = cfg.api_base || 'http://127.0.0.1:31270';
-  const dot = document.getElementById('dot');
-  const statusText = document.getElementById('status-text');
-  const keyStatus = document.getElementById('key-status');
-  if (cfg.key_found) {
-    keyStatus.innerHTML = '<span class="status-dot ok"></span> Key file found: <span class="mono dim">' + cfg.key_file_path + '</span>';
-  } else {
-    keyStatus.innerHTML = '<span class="status-dot bad"></span> No key file found in that folder yet.';
-  }
-  // check live connection using the key (if present) - bounded to 6s, will
-  // never sit on "Checking…" forever
-  if (cfg.key_found) {
-    dot.className = 'status-dot warn';
-    statusText.textContent = 'Checking…';
-    try {
-      const info = await fetchTimeout('/api/proxy/raw/info', {}, 6000);
-      if (info.status === 200) {
-        const body = await info.json();
-        dot.className = 'status-dot ok';
-        statusText.textContent = 'Connected — ' + (body.Meta ? body.Meta.GameName : 'TSW') + ' is responding.';
-      } else {
-        dot.className = 'status-dot warn';
-        statusText.textContent = 'Key found, but the game did not respond. Is it running with -HTTPAPI?';
+    async function getNetworkIP() {
+      try {
+        const response = await fetch('/api/network-info');
+        if (!response.ok) return null;
+        const data = await response.json();
+        return data.network_ip;
+      } catch (e) {
+        return null;
       }
-    } catch (e) {
-      dot.className = 'status-dot warn';
-      statusText.textContent = (e.name === 'AbortError')
-        ? 'Timed out waiting for a response (over 6s) — see Diagnostics below.'
-        : 'Could not reach the local app server.';
     }
-  } else {
-    dot.className = 'status-dot bad';
-    statusText.textContent = 'No API key configured yet — set the folder below.';
-  }
-}
 
-async function saveFolder() {
-  const folder = document.getElementById('folder-input').value.trim();
-  await fetchTimeout('/api/config', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({config_folder: folder})
-  });
-  refreshConfig();
-}
-
-async function saveApiBase() {
-  const base = document.getElementById('api-base-input').value.trim();
-  await fetchTimeout('/api/config', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({api_base: base})
-  });
-  refreshConfig();
-}
-
-async function autoDetect() {
-  const res = await fetchTimeout('/api/autodetect', {method: 'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    document.getElementById('folder-input').value = data.config_folder;
-  } else {
-    alert('Could not auto-detect the config folder. Use Browse… to pick it manually.');
-  }
-  refreshConfig();
-}
-
-async function browseFolder() {
-  if (window.pywebview && window.pywebview.api && window.pywebview.api.choose_folder) {
-    const folder = await window.pywebview.api.choose_folder();
-    if (folder) document.getElementById('folder-input').value = folder;
-  } else {
-    alert('Native folder picker is only available in the desktop app window.');
-  }
-}
-
-async function loadCertStatus() {
-  const el = document.getElementById('cert-status');
-  const panel = document.getElementById('certPanel');
-  try {
-    const res = await fetchTimeout('/api/https_cert_status', {}, 5000);
-    const data = await res.json();
-    if (!data.has_cert) {
-      el.textContent = 'Not set up yet - the app is running on plain HTTP. See HTTPS_SETUP.md if you want offline sync on other devices.';
-      panel.style.borderColor = '';
-      return;
+    async function updateNetworkAddress() {
+      const ip = await getNetworkIP();
+      const elem = document.getElementById('networkAddress');
+      if (ip) {
+        elem.textContent = `http://${ip}:5000`;
+      } else {
+        elem.textContent = 'Unable to detect network IP. Check that you are connected to a network.';
+      }
     }
-    if (data.error) {
-      el.textContent = `Couldn't read the certificate file (${data.error}) - it may be corrupted. See HTTPS_SETUP.md to regenerate.`;
-      panel.style.borderColor = '#e05a4e';
-      return;
+
+    async function updateStatus() {
+      try {
+        // Get config and key status
+        const configResp = await fetch('/api/config');
+        const config = await configResp.json();
+        
+        // Update folder display
+        document.getElementById('folderInput').value = config.config_folder || '';
+        document.getElementById('configFolder').textContent = config.config_folder || 'Not set';
+        
+        // Update key status
+        const keyStatusDot = document.getElementById('keyStatusDot');
+        const keyStatusText = document.getElementById('keyStatusText');
+        const keyFileStatus = document.getElementById('keyFileStatus');
+        
+        if (config.key_found) {
+          keyStatusDot.className = 'status-dot green';
+          keyStatusText.textContent = 'Found';
+          keyFileStatus.textContent = 'Yes';
+        } else {
+          keyStatusDot.className = 'status-dot red';
+          keyStatusText.textContent = 'Not found';
+          keyFileStatus.textContent = 'No';
+        }
+        
+        // Check if game is running (only if key is found)
+        const gameStatusDot = document.getElementById('gameStatusDot');
+        const gameStatusText = document.getElementById('gameStatusText');
+        
+        if (config.key_found) {
+          try {
+            const infoResp = await fetch('/api/proxy/get/info', { timeout: 3000 });
+            if (infoResp.ok) {
+              gameStatusDot.className = 'status-dot green';
+              gameStatusText.textContent = 'Connected';
+            } else {
+              gameStatusDot.className = 'status-dot red';
+              gameStatusText.textContent = 'Not running or no active session';
+            }
+          } catch (e) {
+            gameStatusDot.className = 'status-dot red';
+            gameStatusText.textContent = 'Not running or no active session';
+          }
+        } else {
+          gameStatusDot.className = 'status-dot amber';
+          gameStatusText.textContent = 'Waiting for API key...';
+        }
+        
+      } catch (e) {
+        console.error('Status update error:', e);
+      }
     }
-    const expiresDate = new Date(data.expires_at).toLocaleDateString();
-    if (data.expired) {
-      el.innerHTML = `<strong style="color:#e05a4e;">Expired ${expiresDate}.</strong> If other devices can no longer connect, this is almost certainly why - ask Claude for help regenerating it (see HTTPS_SETUP.md).`;
-      panel.style.borderColor = '#e05a4e';
-    } else if (data.expiring_soon) {
-      el.innerHTML = `<strong style="color:#e8b74a;">Expires in ${data.days_remaining} day${data.days_remaining === 1 ? '' : 's'}</strong> (${expiresDate}). Worth regenerating soon - ask Claude for help, or follow HTTPS_SETUP.md yourself.`;
-      panel.style.borderColor = '#e8b74a';
-    } else {
-      el.textContent = `Valid until ${expiresDate} (${data.days_remaining} days remaining). Nothing to do.`;
-      panel.style.borderColor = '';
+
+    async function autoDetectFolder() {
+      const msg = document.getElementById('folderMessage');
+      msg.textContent = 'Auto-detecting...';
+      msg.className = 'message pending';
+      
+      try {
+        const resp = await fetch('/api/autodetect', { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.ok) {
+          msg.textContent = `Found: ${data.config_folder}`;
+          msg.className = 'message success';
+          setTimeout(() => updateStatus(), 500);
+        } else {
+          msg.textContent = 'Could not auto-detect. Please paste the folder path manually.';
+          msg.className = 'message error';
+        }
+      } catch (e) {
+        msg.textContent = 'Error during auto-detect.';
+        msg.className = 'message error';
+      }
+      
+      setTimeout(() => msg.textContent = '', 5000);
     }
-  } catch (e) {
-    el.textContent = 'Could not check certificate status.';
-  }
-}
 
-async function loadOtherHudStatus() {
-  const status = document.getElementById('other-hud-status');
-  try {
-    const res = await fetchTimeout('/api/other_hud_sync/status', {}, 5000);
-    const data = await res.json();
-    document.getElementById('other-hud-db-input').value = data.db_path || '';
-    if (!data.db_path) {
-      status.textContent = 'Not found yet — will keep auto-detecting in the background, or set the path manually below.';
-    } else {
-      const source = data.db_auto_detected ? 'auto-detected' : 'manually set';
-      const when = data.last_import_at ? `Last synced ${data.last_import_at}.` : 'Not synced yet.';
-      status.textContent = `Using ${source} database at ${data.db_path}. ${when}`;
+    async function browseFolder() {
+      const folder = prompt('Paste the full path to your TSW config folder:');
+      if (!folder) return;
+      
+      const msg = document.getElementById('folderMessage');
+      msg.textContent = 'Saving...';
+      msg.className = 'message pending';
+      
+      try {
+        const resp = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config_folder: folder })
+        });
+        const data = await resp.json();
+        
+        if (data.ok) {
+          msg.textContent = data.key_found ? 'Saved and key found!' : 'Saved but key not found in this folder.';
+          msg.className = data.key_found ? 'message success' : 'message error';
+          setTimeout(() => updateStatus(), 500);
+        }
+      } catch (e) {
+        msg.textContent = 'Error saving folder.';
+        msg.className = 'message error';
+      }
+      
+      setTimeout(() => msg.textContent = '', 5000);
     }
-  } catch (e) {
-    status.textContent = 'Could not check sync status.';
-  }
-}
 
-async function saveOtherHudDb() {
-  const path = document.getElementById('other-hud-db-input').value.trim();
-  await fetchTimeout('/api/other_hud_sync/config', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({db_path: path})
-  });
-  loadOtherHudStatus();
-}
-
-async function syncOtherHudNow() {
-  const status = document.getElementById('other-hud-status');
-  status.textContent = 'Syncing…';
-  try {
-    const res = await fetchTimeout('/api/other_hud_sync/run_now', {method: 'POST'}, 30000);
-    const data = await res.json();
-    status.textContent = (data.log && data.log.length) ? data.log.join(' ') : 'Sync finished.';
-  } catch (e) {
-    status.textContent = 'Sync failed or timed out.';
-  }
-  loadOtherHudStatus();
-}
-
-async function refreshNetwork() {
-  const list = document.getElementById('lan-url-list');
-  try {
-    const res = await fetchTimeout('/api/network', {}, 5000);
-    const data = await res.json();
-    if (!data.candidates || data.candidates.length === 0) {
-      list.innerHTML = '<p class="small dim">Could not detect any network address.</p>';
-      return;
+    // Load app version from version.json
+    async function loadAppVersion() {
+      try {
+        const resp = await fetch('/api/version');
+        if (resp.ok) {
+          const data = await resp.json();
+          document.getElementById('appVersion').textContent = data.main_version || '0.1.0';
+        }
+      } catch (e) {
+        console.error('Failed to load version:', e);
+      }
     }
-    list.innerHTML = data.candidates.map((c, i) => `
-      <div class="field-row">
-        <input type="text" readonly value="${c.dashboard_url}" id="lan-url-${i}">
-        <button class="btn" onclick="copyLanUrl(${i})">Copy</button>
-      </div>
-    `).join('');
-    document.getElementById('lan-note').textContent =
-      'Firewall note: the first time you run this, Windows may ask to allow the app through '
-      + 'the firewall — choose "Private networks" (not Public). If nothing loads on the tablet, '
-      + 'that prompt is the most common cause.';
-  } catch (e) {
-    list.innerHTML = '<p class="small dim">Could not detect network address (timed out).</p>';
-  }
-}
 
-function copyLanUrl(i) {
-  const el = document.getElementById('lan-url-' + i);
-  el.select();
-  navigator.clipboard.writeText(el.value);
-}
+    // Initialize on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      updateStatus();
+      updateNetworkAddress();
+      loadAppVersion();
+      
+      // Poll status every 2 seconds
+      pollTimer = setInterval(() => {
+        updateStatus();
+      }, pollInterval);
+    });
 
-async function runDiagnostics() {
-  const status = document.getElementById('diag-status');
-  status.textContent = 'Gathering…';
-  try {
-    const res = await fetchTimeout('/api/diagnostics', {}, 8000);
-    const data = await res.json();
-    await navigator.clipboard.writeText(data.text);
-    status.textContent = 'Copied to clipboard — paste it into chat.';
-  } catch (e) {
-    status.textContent = 'Failed to gather diagnostics: ' + e;
-  }
-}
-
-function exitApp() {
-  fetch('/api/shutdown', {method: 'POST'});
-}
-
-refreshConfig();
-refreshNetwork();
-loadOtherHudStatus();
-loadCertStatus();
-</script>
-<script src="/pages/nav.js"></script>
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+      if (pollTimer) clearInterval(pollTimer);
+    });
+  </script>
 </body>
 </html>
