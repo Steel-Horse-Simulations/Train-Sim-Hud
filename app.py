@@ -1246,9 +1246,26 @@ def network_info():
     return jsonify({
         "candidates": candidates,
         "lan_ip": best["ip"] if best else None,
+        "network_ip": best["ip"] if best else None,
         "port": SERVER_PORT,
         "dashboard_url": best["dashboard_url"] if best else None,
         "home_url": best["home_url"] if best else None,
+    })
+
+
+@app.route("/api/network-info", methods=["GET"])
+def network_info_simple():
+    ips = get_lan_ips()
+    return jsonify({
+        "network_ip": ips[0] if ips else None,
+    })
+
+
+@app.route("/api/version", methods=["GET"])
+def get_version():
+    return jsonify({
+        "main_version": APP_VERSION,
+        "version": APP_VERSION,
     })
 
 
@@ -1699,13 +1716,22 @@ def run_in_system_browser():
     a browser tab instead of a dedicated app window. The Exit button still
     works (it shuts down the local server); closing the tab just leaves the
     server running quietly in this console window until Exit is clicked or
-    the window is closed."""
-    print("Running in browser mode (no native window) - this avoids a class")
-    print("of WebView2 bugs some Windows setups hit with the native window.")
-    print("Opening http://127.0.0.1:5273/ in your default browser...")
-    import webbrowser
-    webbrowser.open(f"http://127.0.0.1:5273/")
-    print("You can close this window with Ctrl+C, or click Exit in the app.")
+    the window is closed.
+    
+    If TSW_HUD_NO_BROWSER is set (parent launcher will do this), skip opening
+    the browser and just run the server — the parent launcher will embed it."""
+    no_browser = os.environ.get("TSW_HUD_NO_BROWSER", "").lower() == "true"
+    if not no_browser:
+        print("Running in browser mode (no native window) - this avoids a class")
+        print("of WebView2 bugs some Windows setups hit with the native window.")
+        print("Opening http://127.0.0.1:5273/ in your default browser...")
+        import webbrowser
+        webbrowser.open(f"http://127.0.0.1:5273/")
+        print("You can close this window with Ctrl+C, or click Exit in the app.")
+    else:
+        print("Running in headless server mode (parent launcher will embed the UI).")
+        print("TSW Hud server running on http://127.0.0.1:5273/")
+        print("Press Ctrl+C to stop.")
     while True:
         time.sleep(1)
 
