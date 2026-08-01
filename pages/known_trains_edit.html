@@ -229,7 +229,7 @@ async function load() {
   }
   try {
     const [tcRes, groupsRes] = await Promise.all([
-      fetch(`/api/train_classes/${trainClassId}`),
+      fetch(`/api/known_trains/classes/${trainClassId}`),
       fetch('/api/known_trains/groups'),
     ]);
     if (!tcRes.ok || !groupsRes.ok) throw new Error();

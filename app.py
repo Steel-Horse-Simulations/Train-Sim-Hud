@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.0.8"
+APP_VERSION = "7.1.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1541,19 +1541,39 @@ def known_trains_list():
     })
 
 
+@app.route("/api/known_trains/classes/<int:train_class_id>", methods=["GET"])
+def known_trains_get(train_class_id):
+    """Get a single train class."""
+    tc = train_classes_db.get_train_class(train_class_id)
+    if not tc:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(tc)
+
+
 @app.route("/api/known_trains/classes/<int:train_class_id>", methods=["PATCH"])
 def known_trains_update(train_class_id):
     """Update a single train class."""
     try:
+        # Check if record exists
+        tc_before = train_classes_db.get_train_class(train_class_id)
+        if not tc_before:
+            return jsonify({"error": "not_found"}), 404
+        
         body = request.get_json(force=True, silent=True) or {}
+        if not body:
+            return jsonify({"error": "no_fields"}), 400
+            
         applied = train_classes_db.update_train_class(train_class_id, body)
         if not applied:
             return jsonify({"error": "update_failed"}), 400
+            
         tc = train_classes_db.get_train_class(train_class_id)
         if not tc:
             return jsonify({"error": "not_found"}), 404
         return jsonify(tc)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
