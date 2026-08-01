@@ -5,40 +5,70 @@
   "main_patch": 1,
   "release_date": "2025-08-01",
   "git_tag": "v1.0.1",
-  "main_branch": false,
-  "dev_notes": "Dashboard HUD for tablet with fullscreen toggle, landscape layout, hidden nav",
+  "main_branch": true,
+  "dev_notes": "Merged dashboard (v1.0.1) and settings (v0.1.1) pages",
   "pages": {
-    "index": {
-      "name": "Setup",
-      "version": "0.1.0",
-      "major": 0,
-      "minor": 1,
-      "patch": 0,
-      "last_modified": "2025-08-01"
-    },
-    "settings": {
-      "name": "Settings",
-      "version": "0.1.0",
-      "major": 0,
-      "minor": 1,
-      "patch": 0,
-      "last_modified": "2025-08-01"
-    },
-    "dev_settings": {
-      "name": "Dev Settings",
-      "version": "0.1.0",
-      "major": 0,
-      "minor": 1,
-      "patch": 0,
-      "last_modified": "2025-08-01"
-    },
     "dashboard": {
       "name": "Dashboard",
       "version": "1.0.1",
       "major": 1,
       "minor": 0,
       "patch": 1,
-      "last_modified": "2025-08-01"
+      "last_modified": "2025-08-01",
+      "show_in_nav": false,
+      "dev_only": false,
+      "order": 1,
+      "features": [
+        "Full-screen HUD layout optimized for 1340x800 tablet landscape display",
+        "Speed gauge with animated ring indicator (0 to max speed ratio)",
+        "Speed limit badge in top-center of gauge cluster",
+        "Signal aspect display with colored lamp indicator (Clear/Caution/Danger)",
+        "Route information panel: locomotive class, gradient, distance to signal",
+        "Weather display with temperature and conditions (bottom-right)",
+        "Upcoming speed limits panel with distances (bottom-left, auto-hidden)",
+        "Real-time data polling from TSW6 API (300ms interval)",
+        "Fullscreen toggle on HUD click",
+        "Escape key to exit fullscreen",
+        "No navigation bar shown",
+        "No exit button on dashboard",
+        "Purple theme with accent colors and status indicators"
+      ],
+      "api_endpoints": [
+        "GET /get/CurrentDrivableActor.Function.HUD_GetSpeed",
+        "GET /get/DriverAid.Data",
+        "GET /get/CurrentFormation/0.Function.IS_GetVehicleInfo",
+        "GET /get/WeatherManager.Data"
+      ]
+    },
+    "settings": {
+      "name": "Settings",
+      "version": "0.1.1",
+      "major": 0,
+      "minor": 1,
+      "patch": 1,
+      "last_modified": "2025-08-01",
+      "show_in_nav": true,
+      "dev_only": false,
+      "order": 0,
+      "features": [
+        "API Key detection and configuration",
+        "TSW API key auto-detection",
+        "Connection status monitoring",
+        "Game connection status",
+        "Local and network address display",
+        "App version display",
+        "Dynamic navigation loading",
+        "Real-time status polling"
+      ],
+      "api_endpoints": [
+        "/api/config",
+        "/api/autodetect",
+        "/api/network-info",
+        "/api/version",
+        "/api/proxy/get/info",
+        "/api/shutdown",
+        "/api/pages"
+      ]
     }
   }
 }

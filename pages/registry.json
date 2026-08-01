@@ -1,4 +1,16 @@
 [
-  {"id": "setup", "name": "Setup", "url": "/", "dev_only": false, "order": 0},
-  {"id": "dashboard", "name": "Dashboard", "url": "/pages/dashboard.html", "show_in_nav": false, "dev_only": false, "order": 1}
+  {
+    "id": "settings",
+    "name": "Settings",
+    "url": "/pages/settings.html",
+    "dev_only": false,
+    "order": 0
+  },
+  {
+    "id": "dashboard",
+    "name": "Dashboard",
+    "url": "/pages/dashboard.html",
+    "dev_only": false,
+    "order": 1
+  }
 ]
