@@ -58,18 +58,21 @@
   .train-pill-thumb { 
     width: 420px; height: 156px; flex-shrink: 0; overflow: hidden; background: #1c1a20; 
     display: flex; align-items: center; justify-content: center; position: relative;
+    border-radius: 0; /* square corners on thumbnail */
   }
-  .train-pill-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .train-pill-thumb img { width: 100%; height: 100%; object-fit: contain; } /* contain = no cropping */
   .train-pill-thumb.none { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
 
-  /* Fade the last 20% of the thumbnail: solid on right, transparent on left */
+  /* Mask overlay: hides the right-side livery colour that bleeds beyond the thumbnail.
+     Dark panel-coloured mask covers everything right of the inner pill's left edge + thumbnail width. */
   .train-pill-thumb::after {
     content: '';
     position: absolute;
     right: 0; top: 0; bottom: 0;
-    width: 84px;
-    background: linear-gradient(to left, rgba(28,26,32,1), transparent);
+    width: 100%; /* covers full width */
+    background: linear-gradient(to right, transparent 0%, rgba(20,18,24,0.95) 80%, rgba(20,18,24,0.95) 100%);
     pointer-events: none;
+    z-index: 2;
   }
 
   .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 16px; align-items: flex-start; }
