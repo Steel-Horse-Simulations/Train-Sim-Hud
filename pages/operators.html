@@ -6,54 +6,41 @@
 <link rel="stylesheet" href="/pages/style.css">
 <script src="/pages/theme.js"></script>
 <style>
-  main { max-width: 1600px; margin: 0 auto; padding-top: 10px; }
+  main { max-width: none; padding: 8px; padding-top: 10px; }
 
   .groups-container { display: flex; flex-direction: column; gap: 12px; }
-  .group-pill { background: var(--panel); border: 1px solid var(--hairline); border-radius: 8px; padding: 14px; }
-  .group-pill-header { font-family: var(--heading); font-weight: 700; font-size: 14px; color: var(--accent-bright); margin-bottom: 10px; }
-
   .trains-grid { display: flex; flex-direction: column; gap: 10px; }
   .op-item { display: flex; flex-direction: column; }
 
+  /* pill-wrap IS the colored border — same approach as known trains.
+     Logo is 156px square. Fade end = 16 (bar) + 156 (logo) = 172px. */
+  .pill-wrap {
+    border-radius: 20px;
+    padding: 4px 4px 4px 16px;
+    background:
+      linear-gradient(to right, var(--livery-color) 16px, transparent 16px),
+      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 172px) 0 0 / 100% 4px no-repeat,
+      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 172px) 0 100% / 100% 4px no-repeat,
+      rgba(255,255,255,0.13);
+  }
+
   .train-pill {
     background: var(--panel-raised);
-    border: 2px solid rgba(255,255,255,0.13);
-    border-radius: 10px;
-    height: 96px;
+    border-radius: 14px;
+    height: 156px;
     display: flex; align-items: stretch;
-    position: relative; overflow: hidden; cursor: pointer;
+    overflow: hidden; position: relative; cursor: pointer;
   }
-  .train-pill:hover { border-color: var(--accent); }
+  .train-pill:hover { background: rgba(30,28,36,0.95); }
 
-  /* Same multi-layer bar as known trains */
-  .train-pill-livery-line {
-    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
-    pointer-events: none; z-index: 1;
-    background-image:
-      linear-gradient(to right, var(--livery-color), transparent 150px),
-      linear-gradient(to right, var(--livery-color), transparent 150px);
-    background-size:    100% 2px, 100% 2px;
-    background-position: 0 0,     0 100%;
-    background-repeat: no-repeat;
-  }
-  .train-pill-livery-line::before {
-    content: '';
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 16px;
-    border-radius: 0 100px 100px 0;
-    background: var(--livery-color);
-  }
-
-  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 10px 14px; align-items: flex-start; }
-  .train-pill-name { font-weight: 600; font-size: 22px; color: var(--text); word-wrap: break-word; line-height: 1.3; }
-  .train-pill-meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 16px; align-items: flex-start; }
+  .train-pill-name { font-weight: 600; font-size: 26px; color: var(--text); word-wrap: break-word; line-height: 1.2; }
+  .train-pill-meta { font-size: 13px; color: var(--text-dim); display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
   .train-pill-actions { display: flex; gap: 6px; align-self: flex-end; }
-  .train-pill-actions .edit-btn { padding: 4px 10px; font-size: 11px; flex-shrink: 0; }
 
-  .op-logo-pill { width: 96px; height: 96px; flex-shrink: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
+  .op-logo-pill { width: 156px; height: 156px; flex-shrink: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
   .op-logo-pill img { width: 100%; height: 100%; object-fit: contain; }
-  .op-logo-pill span { font-size: 13px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
+  .op-logo-pill span { font-size: 15px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
 
   .edit-btn { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; text-decoration: none; display: inline-block; }
   .edit-btn:hover { border-color: var(--accent); color: var(--accent-bright); }
@@ -82,7 +69,7 @@
   .livery-edit-form input[type=text] { flex: 1; min-width: 100px; }
   .livery-edit-form .save-btn { background: var(--accent); color: #1a1013; border: none; padding: 4px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; font-family: var(--heading); font-weight: 700; }
 
-  .op-edit-form { display: none; padding: 12px 12px 0; border: 2px solid rgba(255,255,255,0.13); border-top: none; border-radius: 0 0 10px 10px; background: rgba(255,255,255,0.02); gap: 10px; flex-direction: column; margin-top: -2px; }
+  .op-edit-form { display: none; padding: 12px 12px 0; border: 2px solid rgba(255,255,255,0.13); border-top: none; border-radius: 0 0 14px 14px; background: rgba(255,255,255,0.02); gap: 10px; flex-direction: column; }
   .op-edit-form.open { display: flex; }
   .op-edit-form input { padding: 6px 8px; background: rgba(255,255,255,0.06); border: 1px solid var(--hairline); border-radius: 4px; color: var(--text); font-family: var(--sans); font-size: 13px; }
   .op-edit-form label { font-size: 12px; color: var(--text-dim); font-family: var(--heading); }
@@ -173,18 +160,19 @@ function render() {
   document.getElementById('emptyState').style.display = 'none';
   container.innerHTML = `<div class="trains-grid">${operators.map(op => `
     <div class="op-item">
-      <div class="train-pill" id="op-pill-${op.id}" style="--livery-color: ${op.colour || '#a06bf0'};">
-        <div class="train-pill-livery-line"></div>
-        <div class="op-logo-pill">${logoHtml(op)}</div>
-        <div class="train-pill-content" onclick="toggleOp(${op.id})">
-          <div>
-            <div class="train-pill-name">${esc(op.name)}</div>
-            <div class="train-pill-meta">${op.short_code || '(no code)'}</div>
+      <div class="pill-wrap" style="--livery-color: ${op.colour || '#a06bf0'};">
+        <div class="train-pill" id="op-pill-${op.id}">
+          <div class="op-logo-pill">${logoHtml(op)}</div>
+          <div class="train-pill-content" onclick="toggleOp(${op.id})">
+            <div>
+              <div class="train-pill-name">${esc(op.name)}</div>
+              <div class="train-pill-meta">${op.short_code || '(no code)'}</div>
+            </div>
           </div>
-        </div>
-        <div class="train-pill-actions">
-          <button class="edit-btn" onclick="event.stopPropagation(); toggleEdit(${op.id})">Edit</button>
-          <button class="del-btn" onclick="event.stopPropagation(); deleteOperator(${op.id}, '${esc(op.name)}')">Delete</button>
+          <div class="train-pill-actions">
+            <button class="edit-btn" onclick="event.stopPropagation(); toggleEdit(${op.id})">Edit</button>
+            <button class="del-btn" onclick="event.stopPropagation(); deleteOperator(${op.id}, '${esc(op.name)}')">Delete</button>
+          </div>
         </div>
       </div>
       <div class="op-edit-form" id="op-edit-${op.id}">

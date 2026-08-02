@@ -7,7 +7,7 @@
 <script src="/pages/theme.js"></script>
 
 <style>
-  main { max-width: 1600px; margin: 0 auto; padding-top: 10px; }
+  main { max-width: none; padding: 8px; padding-top: 10px; }
 
   .attention-panel { border-color: rgba(232,183,74,0.4); background: rgba(232,183,74,0.06); }
   .attention-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--hairline); }
@@ -24,49 +24,49 @@
 
   .trains-grid { display: flex; flex-direction: column; gap: 10px; }
 
+  /* The pill-wrap IS the colored border. Its background creates:
+     - Left: 16px solid bar (the bar is ~4× the top/bottom border thickness)
+     - Top/bottom: 4px, fading from livery color to hairline at x=436 (end of thumbnail)
+     - Right/base: hairline color
+     The outer border-radius (20px) and inner pill border-radius (14px) together create the
+     natural geometry shown in the reference image: both the outer and inner edges start curving
+     at the same vertical position, with the outer edge following a 20px arc and the inner edge
+     following a 14px arc — exactly because border-radius on two concentric rounded rectangles
+     with different padding creates this effect automatically. */
+  .pill-wrap {
+    border-radius: 20px;
+    padding: 4px 4px 4px 16px;
+    background:
+      /* Bar: left 16px, full height, solid livery colour */
+      linear-gradient(to right, var(--livery-color) 16px, transparent 16px),
+      /* Top 4px: livery → hairline, fades over 436px (bar 16 + thumb 420) */
+      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 436px) 0 0 / 100% 4px no-repeat,
+      /* Bottom 4px: same */
+      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 436px) 0 100% / 100% 4px no-repeat,
+      /* Base: hairline fills the right border + any uncovered area */
+      rgba(255,255,255,0.13);
+  }
+
+  /* Inner content area — sits inside the pill-wrap padding, clips thumbnail corners */
   .train-pill {
     background: var(--panel-raised);
-    border: 2px solid rgba(255,255,255,0.13);
-    border-radius: 10px;
-    height: 96px;
+    border-radius: 14px;
+    height: 156px;
     display: flex; align-items: stretch;
-    position: relative; overflow: hidden;
+    overflow: hidden;
+    position: relative;
   }
 
-  /* Full-width overlay: provides the 1px top/bottom fade lines only.
-     The actual D-shaped bar is drawn by ::before. */
-  .train-pill-livery-line {
-    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
-    pointer-events: none; z-index: 1;
-    background-image:
-      linear-gradient(to right, var(--livery-color), transparent 150px),
-      linear-gradient(to right, var(--livery-color), transparent 150px);
-    background-size:    100% 2px, 100% 2px;
-    background-position: 0 0,     0 100%;
-    background-repeat: no-repeat;
-  }
-
-  /* D-shaped bar: border-radius on the right side creates a convex curve.
-     The pill's overflow:hidden + border-radius clips the left corners to
-     match the pill shape, so no left radius is needed here. */
-  .train-pill-livery-line::before {
-    content: '';
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 16px;
-    border-radius: 0 100px 100px 0;
-    background: var(--livery-color);
-  }
-
-  .train-pill-thumb { width: 240px; height: 96px; flex-shrink: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
+  .train-pill-thumb { width: 420px; height: 156px; flex-shrink: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
   .train-pill-thumb img { width: 100%; height: 100%; object-fit: cover; }
-  .train-pill-thumb.none { font-size: 9px; color: var(--text-dim); text-transform: uppercase; }
+  .train-pill-thumb.none { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
 
-  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 10px 14px; align-items: flex-start; }
-  .train-pill-name { font-weight: 600; font-size: 22px; color: var(--text); word-wrap: break-word; line-height: 1.3; }
-  .train-pill-meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 16px; align-items: flex-start; }
+  .train-pill-name { font-weight: 600; font-size: 26px; color: var(--text); word-wrap: break-word; line-height: 1.2; }
+  .train-pill-meta { font-size: 13px; color: var(--text-dim); display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
   .train-pill-actions { display: flex; gap: 6px; align-self: flex-end; }
-  .train-pill-actions .edit-btn { padding: 4px 10px; font-size: 11px; flex-shrink: 0; }
+  .train-pill-actions .edit-btn { padding: 5px 12px; font-size: 12px; flex-shrink: 0; }
+
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .dot.red { background: var(--status-red); box-shadow: 0 0 5px var(--status-red); }
   .dot.amber { background: var(--status-amber); box-shadow: 0 0 5px var(--status-amber); }
@@ -235,19 +235,20 @@ async function renderTable(classes) {
         ? `<img src="/known_train_pictures/${photoFilename}.png" alt="" onerror="this.parentElement.innerHTML='<div class=&quot;none&quot;>no<br>photo</div>'" style="width:100%;height:100%;object-fit:cover;">`
         : `<div class="none">no<br>photo</div>`;
       
-      html += `<div class="train-pill" style="--livery-color: ${liveryColor};">
-        <div class="train-pill-livery-line"></div>
-        <div class="train-pill-thumb">${thumb}</div>
-        <div class="train-pill-content">
-          <div style="flex: 1; width: 100%;">
-            <div class="train-pill-name">${c.display_name || c.source_name}</div>
-            <div class="train-pill-meta">
-              <span><span class="dot ${c.status.color}"></span> Seen ${c.times_seen}</span>
-              <span>${Math.round(c.resolved_max_speed_mph)} mph</span>
+      html += `<div class="pill-wrap" style="--livery-color: ${liveryColor};">
+        <div class="train-pill">
+          <div class="train-pill-thumb">${thumb}</div>
+          <div class="train-pill-content">
+            <div style="flex: 1; width: 100%;">
+              <div class="train-pill-name">${c.display_name || c.source_name}</div>
+              <div class="train-pill-meta">
+                <span><span class="dot ${c.status.color}"></span> Seen ${c.times_seen}</span>
+                <span>${Math.round(c.resolved_max_speed_mph)} mph</span>
+              </div>
             </div>
-          </div>
-          <div class="train-pill-actions">
-            <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
+            <div class="train-pill-actions">
+              <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
+            </div>
           </div>
         </div>
       </div>`;
@@ -284,19 +285,20 @@ async function renderTableFromCache(classes) {
       const thumb = photoFilename 
         ? `<img src="/known_train_pictures/${photoFilename}.png" alt="" onerror="this.parentElement.innerHTML='<div class=&quot;none&quot;>no<br>photo</div>'" style="width:100%;height:100%;object-fit:cover;">`
         : `<div class="none">no<br>photo</div>`;
-      html += `<div class="train-pill" style="--livery-color: ${liveryColor};">
-        <div class="train-pill-livery-line"></div>
-        <div class="train-pill-thumb">${thumb}</div>
-        <div class="train-pill-content">
-          <div style="flex: 1; width: 100%;">
-            <div class="train-pill-name">${c.display_name || c.source_name}</div>
-            <div class="train-pill-meta">
-              <span>Seen ${c.times_seen}</span>
-              <span>${c.max_speed_mph ? Math.round(c.max_speed_mph) + ' mph' : '—'}</span>
+      html += `<div class="pill-wrap" style="--livery-color: ${liveryColor};">
+        <div class="train-pill">
+          <div class="train-pill-thumb">${thumb}</div>
+          <div class="train-pill-content">
+            <div style="flex: 1; width: 100%;">
+              <div class="train-pill-name">${c.display_name || c.source_name}</div>
+              <div class="train-pill-meta">
+                <span>Seen ${c.times_seen}</span>
+                <span>${c.max_speed_mph ? Math.round(c.max_speed_mph) + ' mph' : '—'}</span>
+              </div>
             </div>
-          </div>
-          <div class="train-pill-actions">
-            <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
+            <div class="train-pill-actions">
+              <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
+            </div>
           </div>
         </div>
       </div>`;
