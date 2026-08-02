@@ -5,6 +5,67 @@
 <title>TSW Hud - Operators</title>
 <link rel="stylesheet" href="/pages/style.css">
 <script src="/pages/theme.js"></script>
+<style>
+  main { max-width: 860px; margin: 0 auto; }
+  .back { color: var(--text-dim); text-decoration: none; font-size: 13px; }
+  .item-pill {
+    background: var(--panel-raised); border: 1px solid var(--hairline); border-radius: 6px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .item-header {
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer;
+    user-select: none;
+  }
+  .item-header:hover { background: rgba(255,255,255,0.03); }
+  .op-logo { width: 36px; height: 36px; border-radius: 4px; background: #1c1a20; border: 1px solid var(--hairline); display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
+  .op-logo img { width: 100%; height: 100%; object-fit: contain; }
+  .op-logo span { font-size: 10px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
+  .item-name { font-family: var(--heading); font-weight: 600; font-size: 15px; flex: 1; }
+  .item-meta { font-size: 12px; color: var(--text-dim); }
+  .item-chevron { font-size: 11px; color: var(--text-dim); transition: transform .2s; }
+  .item-pill.open .item-chevron { transform: rotate(90deg); }
+  .item-body { display: none; padding: 0 16px 16px; border-top: 1px solid var(--hairline); }
+  .item-pill.open .item-body { display: block; }
+
+  form label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; margin-top: 14px; }
+  form label:first-child { margin-top: 0; }
+
+  .livery-list { margin-top: 14px; }
+  .livery-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--hairline); border-radius: 5px; margin-bottom: 6px; }
+  .livery-swatch { width: 18px; height: 18px; border-radius: 3px; border: 1px solid var(--hairline); flex-shrink: 0; }
+  .livery-name { flex: 1; font-size: 13px; font-weight: 600; }
+  .livery-code { font-size: 11px; color: var(--text-dim); font-family: monospace; }
+  .livery-default { font-size: 10px; color: var(--accent-bright); border: 1px solid var(--accent); border-radius: 10px; padding: 1px 7px; }
+  .del-btn { background: transparent; border: 1px solid rgba(224,90,78,0.4); color: var(--status-red); padding: 3px 9px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .del-btn:hover { background: rgba(224,90,78,0.15); }
+
+  .add-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+  .add-form h4 { font-family: var(--heading); font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-dim); margin: 0 0 10px; }
+  .btn-row { display: flex; gap: 8px; margin-top: 14px; align-items: center; }
+  .del-op-btn { margin-left: auto; background: transparent; border: 1px solid rgba(224,90,78,0.4); color: var(--status-red); padding: 6px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; }
+  .del-op-btn:hover { background: rgba(224,90,78,0.15); }
+
+  .colour-row { display: flex; gap: 10px; align-items: center; }
+  .colour-row input[type="color"] { width: 40px; height: 34px; padding: 2px; border-radius: 4px; border: 1px solid var(--hairline); background: #0d1116; cursor: pointer; }
+  .colour-row input[type="text"] { flex: 1; }
+
+  .power-chip {
+    display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--hairline); border-radius: 20px;
+    padding: 0 14px; height: 30px; box-sizing: border-box; cursor: pointer;
+  }
+  .power-chip:has(input:checked) { border-color: var(--accent); background: rgba(255,255,255,0.08); color: var(--accent-bright); }
+  .power-chip input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none; width: 15px; height: 15px; flex: none; margin: 0; padding: 0;
+    border: 1.5px solid var(--hairline); border-radius: 3px; background: rgba(255,255,255,0.06);
+    position: relative; cursor: pointer; box-sizing: border-box;
+  }
+  .power-chip input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+  .power-chip input[type="checkbox"]:checked::after {
+    content: ''; position: absolute; left: 4px; top: 0.5px; width: 4px; height: 8px;
+    border: solid #1a1013; border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+</style>
 </head>
 <body>
   <div class="topbar">
@@ -14,16 +75,220 @@
   </div>
 
   <main>
-    <a href="/pages/known_trains.html" style="color:var(--text-dim); text-decoration:none; font-size:13px;">&larr; Back to Known Trains</a>
-    <div class="panel" style="margin-top: 16px;">
-      <h2>Operators</h2>
-      <p class="small dim">Manage operators and their liveries. (To be implemented)</p>
+    <a class="back" href="/pages/known_trains.html">&larr; Back to Known Trains</a>
+    <div class="titlebar" style="display:flex;align-items:center;gap:12px;margin:10px 0 20px;">
+      <h1 style="font-family:var(--heading);font-size:22px;margin:0;">Operators</h1>
+    </div>
+
+    <div id="operatorsList"></div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h2>Add Operator</h2>
+      <form onsubmit="createOperator(event)">
+        <label>Operator name</label>
+        <input type="text" id="new-op-name" placeholder="e.g. ScotRail" style="width:100%;" required>
+        <label>Short code (used to build photo filenames)</label>
+        <input type="text" id="new-op-code" placeholder="e.g. ScR" style="width:100%;">
+        <div style="margin-top:14px;">
+          <button class="btn primary" type="submit">Add Operator</button>
+        </div>
+      </form>
     </div>
   </main>
 
-  <script src="/pages/nav.js"></script>
-  <script>
-    function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
-  </script>
+<script>
+let operators = [];
+
+async function load() {
+  try {
+    const res = await fetch('/api/operators');
+    const data = await res.json();
+    operators = data.operators || [];
+    render();
+  } catch(e) {
+    document.getElementById('operatorsList').innerHTML = '<p class="small dim">Could not load operators.</p>';
+  }
+}
+
+function logoHtml(op) {
+  if (op.logo_path) return `<img src="${op.logo_path}" alt="${esc(op.name)}">`;
+  return `<span>${esc((op.short_code || op.name).substring(0,3).toUpperCase())}</span>`;
+}
+
+function render() {
+  const container = document.getElementById('operatorsList');
+  if (!operators.length) {
+    container.innerHTML = '<p class="small dim" style="text-align:center;margin-bottom:16px;">No operators yet — create one below.</p>';
+    return;
+  }
+  container.innerHTML = operators.map(op => `
+    <div class="item-pill" id="op-pill-${op.id}">
+      <div class="item-header" onclick="togglePill('op-pill-${op.id}')">
+        <div class="op-logo">${logoHtml(op)}</div>
+        <span class="item-name">${esc(op.name)}</span>
+        <span class="item-meta">${op.short_code ? op.short_code : ''}</span>
+        <span class="item-chevron">&#9654;</span>
+      </div>
+      <div class="item-body">
+        <form onsubmit="saveOperator(event, ${op.id})">
+          <label>Operator name</label>
+          <input type="text" id="opname-${op.id}" value="${esc(op.name)}" style="width:100%;" required>
+          <label>Short code</label>
+          <input type="text" id="opcode-${op.id}" value="${esc(op.short_code || '')}" style="width:100%;" placeholder="e.g. ScR">
+          <div class="btn-row">
+            <button class="btn primary" type="submit">Save</button>
+            <button class="del-op-btn" type="button" onclick="deleteOperator(${op.id}, '${esc(op.name)}')">Delete operator</button>
+          </div>
+        </form>
+
+        <div class="livery-list">
+          <h4 style="font-family:var(--heading);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin:14px 0 10px;">Liveries</h4>
+          <div id="liveries-${op.id}">Loading…</div>
+        </div>
+
+        <div class="add-form">
+          <h4>Add livery</h4>
+          <form onsubmit="addLivery(event, ${op.id})">
+            <label>Livery name</label>
+            <input type="text" id="lname-${op.id}" placeholder="e.g. ScotRail Saltire" style="width:100%;" required>
+            <label>Livery code (appended to class name for photo lookup)</label>
+            <input type="text" id="lcode-${op.id}" placeholder="e.g. ScR" style="width:100%;" required>
+            <label>Livery colour (shown as border on Known Trains list)</label>
+            <div class="colour-row">
+              <input type="color" id="lcolour-picker-${op.id}" value="#a06bf0" oninput="document.getElementById('lcolour-${op.id}').value=this.value">
+              <input type="text" id="lcolour-${op.id}" value="#a06bf0" placeholder="#a06bf0" oninput="document.getElementById('lcolour-picker-${op.id}').value=this.value">
+            </div>
+            <div style="margin-top:10px;">
+              <label class="power-chip" style="width:fit-content;"><input type="checkbox" id="ldefault-${op.id}"> Set as default livery</label>
+            </div>
+            <div style="margin-top:12px;">
+              <button class="btn primary" type="submit">Add Livery</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderLiveries(operatorId, liveries) {
+  const container = document.getElementById(`liveries-${operatorId}`);
+  if (!liveries.length) { container.innerHTML = '<p class="small dim">No liveries yet — add one below.</p>'; return; }
+  container.innerHTML = liveries.map(liv => `
+    <div class="livery-item" id="livery-item-${liv.id}">
+      <div class="livery-swatch" style="background:${liv.colour || 'var(--hairline)'}"></div>
+      <span class="livery-name">${esc(liv.name)}</span>
+      <span class="livery-code">${esc(liv.code)}</span>
+      ${liv.is_default ? '<span class="livery-default">Default</span>' : `<button class="del-btn" style="font-size:10px;padding:2px 7px;" onclick="setDefault(${liv.id}, ${operatorId})">Set default</button>`}
+      <button class="del-btn" onclick="deleteLivery(${liv.id}, '${esc(liv.name)}', ${operatorId})">Remove</button>
+    </div>
+  `).join('');
+}
+
+function togglePill(id) {
+  document.getElementById(id).classList.toggle('open');
+  if (document.getElementById(id).classList.contains('open')) {
+    const opId = parseInt(id.replace('op-pill-', ''));
+    loadLiveries(opId);
+  }
+}
+
+async function loadLiveries(operatorId) {
+  try {
+    const res = await fetch(`/api/operators/${operatorId}/liveries`);
+    const data = await res.json();
+    renderLiveries(operatorId, data.liveries || []);
+  } catch(e) {
+    document.getElementById(`liveries-${operatorId}`).innerHTML = '<p class="small dim">Could not load liveries.</p>';
+  }
+}
+
+async function saveOperator(e, operatorId) {
+  e.preventDefault();
+  const name = document.getElementById(`opname-${operatorId}`).value.trim();
+  const code = document.getElementById(`opcode-${operatorId}`).value.trim();
+  try {
+    await fetch(`/api/operators/${operatorId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, short_code: code || null })
+    });
+    await load();
+  } catch(e) { alert('Save failed'); }
+}
+
+async function createOperator(e) {
+  e.preventDefault();
+  const name = document.getElementById('new-op-name').value.trim();
+  const code = document.getElementById('new-op-code').value.trim();
+  try {
+    await fetch('/api/operators', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, short_code: code || null })
+    });
+    document.getElementById('new-op-name').value = '';
+    document.getElementById('new-op-code').value = '';
+    await load();
+  } catch(e) { alert('Create failed'); }
+}
+
+async function deleteOperator(operatorId, name) {
+  if (!confirm(`Delete operator "${name}"? All associated liveries will also be removed.`)) return;
+  try {
+    await fetch(`/api/operators/${operatorId}`, { method: 'DELETE' });
+    await load();
+  } catch(e) { alert('Delete failed'); }
+}
+
+async function addLivery(e, operatorId) {
+  e.preventDefault();
+  const name = document.getElementById(`lname-${operatorId}`).value.trim();
+  const code = document.getElementById(`lcode-${operatorId}`).value.trim();
+  const colour = document.getElementById(`lcolour-${operatorId}`).value.trim();
+  const isDefault = document.getElementById(`ldefault-${operatorId}`).checked ? 1 : 0;
+  try {
+    await fetch(`/api/operators/${operatorId}/liveries`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, code, colour, is_default: isDefault })
+    });
+    document.getElementById(`lname-${operatorId}`).value = '';
+    document.getElementById(`lcode-${operatorId}`).value = '';
+    document.getElementById(`lcolour-${operatorId}`).value = '#a06bf0';
+    document.getElementById(`lcolour-picker-${operatorId}`).value = '#a06bf0';
+    document.getElementById(`ldefault-${operatorId}`).checked = false;
+    await loadLiveries(operatorId);
+  } catch(e) { alert('Add failed'); }
+}
+
+async function setDefault(liveryId, operatorId) {
+  try {
+    await fetch(`/api/operators/liveries/${liveryId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ is_default: 1 })
+    });
+    await loadLiveries(operatorId);
+  } catch(e) { alert('Failed'); }
+}
+
+async function deleteLivery(liveryId, name, operatorId) {
+  if (!confirm(`Remove livery "${name}"?`)) return;
+  try {
+    await fetch(`/api/operators/liveries/${liveryId}`, { method: 'DELETE' });
+    await loadLiveries(operatorId);
+  } catch(e) { alert('Delete failed'); }
+}
+
+function esc(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
+
+load();
+</script>
+<script src="/pages/nav.js"></script>
 </body>
 </html>

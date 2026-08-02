@@ -75,6 +75,8 @@
         <button onclick="downloadData()">⬇ Download</button>
         <button onclick="document.getElementById('uploadInput').click()">⬆ Upload</button>
         <input type="file" id="uploadInput" accept=".json" style="display:none;" onchange="uploadData(event)">
+        <button onclick="location.href='/pages/groups.html'">&#9881; Groups</button>
+        <button onclick="location.href='/pages/operators.html'">&#9881; Operators</button>
       </div>
     </div>
 
@@ -115,12 +117,7 @@ async function load() {
     renderAttention(data.needs_attention);
     renderTable(data.classes);
   } catch (e) {
-    // Offline fallback: read train_classes from IndexedDB and render a
-    // simplified grouped view (no server-resolved speeds/status - just cached data)
-    const cached = await TSWOfflineDB.getAll('train_classes');
-    const visible = cached.filter(c => showHidden || c.is_visible);
-    renderAttention(visible.filter(c => !c.display_name || !c.group_id || !c.subclass_id));
-    renderTableFromCache(visible);
+    document.getElementById('groupsContainer').innerHTML = '<p class="small dim" style="text-align:center;">Could not load — is the app running?</p>';
   }
 }
 
@@ -309,7 +306,6 @@ async function uploadData(event) {
 
 load();
 </script>
-<script src="/pages/install-prompt.js"></script>
 <script src="/pages/nav.js"></script>
 </body>
 </html>

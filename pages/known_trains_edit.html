@@ -210,7 +210,6 @@
         <div class="save-bar">
           <button class="btn primary" id="saveBtn" onclick="save()">Save</button>
           <button class="btn primary" onclick="location.href='/pages/known_trains.html'">Cancel</button>
-          <button class="btn" id="hideBtn" onclick="hideTrain()" style="margin-left: auto;">Hide from Known Trains</button>
         </div>
       </div>
     </div>
@@ -232,32 +231,26 @@ async function load() {
       fetch(`/api/known_trains/classes/${trainClassId}`),
       fetch('/api/known_trains/groups'),
     ]);
-    if (!tcRes.ok || !groupsRes.ok) throw new Error();
-    trainClass = await tcRes.json();
-    allGroups = (await groupsRes.json()).groups;
-  } catch (e) {
-    // Offline: pull from IndexedDB
-    const cached = await TSWOfflineDB.getAll('train_classes');
-    trainClass = cached.find(c => String(c.id) === String(trainClassId));
-    if (!trainClass) {
-      document.getElementById('titleText').textContent = 'Not available offline';
+    if (!tcRes.ok) {
+      document.getElementById('titleText').textContent = 'Train not found';
       return;
     }
-    allGroups = [];
+    trainClass = await tcRes.json();
+    allGroups = groupsRes.ok ? (await groupsRes.json()).groups : [];
+  } catch (e) {
+    document.getElementById('titleText').textContent = 'Error loading train';
+    return;
   }
 
   document.getElementById('titleText').textContent = trainClass.display_name || trainClass.source_name;
   document.getElementById('sourceNameReadonly').textContent = trainClass.source_name;
   
-  // Parse display_name to extract class and livery
+  // Parse display_name to extract train class and livery (format: "Class X - LiveryName")
   const displayName = trainClass.display_name || '';
-  const parts = displayName.split(' - ');
-  const trainClassName = parts[0] || '';
-  const liveryName = parts[1] || '';
+  const dashIdx = displayName.indexOf(' - ');
+  const trainClassName = dashIdx >= 0 ? displayName.substring(0, dashIdx) : displayName;
   
   document.getElementById('f-trainClass').value = trainClassName;
-  document.getElementById('f-liveryName').value = liveryName;
-  document.getElementById('f-operator').value = trainClass.livery_id || '';
   document.getElementById('f-photoOverride').value = trainClass.photo_override || '';
   
   const speedometer = trainClass.speedometer || 'analogue';
@@ -274,12 +267,8 @@ async function load() {
   try { elecTypes = JSON.parse(trainClass.electrification_types || '[]'); } catch (e) { elecTypes = []; }
   document.querySelectorAll('.elec-type').forEach(cb => { cb.checked = elecTypes.includes(cb.value); });
 
-  const imgSlot = document.getElementById('imgSlot');
-  if (trainClass.thumbnail_path) {
-    imgSlot.innerHTML = `<img src="${trainClass.thumbnail_path}" alt="" onerror="this.parentElement.innerHTML='Photo not found for<br><span style=&quot;font-family:ui-monospace,monospace;font-size:10.5px;&quot;>${trainClass.source_name}</span>'">`;
-  } else {
-    imgSlot.innerHTML = `Photo not found for<br><span style="font-family:ui-monospace,monospace; font-size:10.5px;">${trainClass.source_name}</span><br><br>Copy a matching PNG into<br><code>images/train_classes/</code>`;
-  }
+  // Photo: try photo_override first, then auto-detect from source_name
+  updatePhotoSlot();
 
   populateGroupDropdown();
   await onGroupChange(true);
@@ -287,6 +276,27 @@ async function load() {
 
   refreshPower();
   refreshCompletion();
+}
+
+function updatePhotoSlot() {
+  const imgSlot = document.getElementById('imgSlot');
+  const override = document.getElementById('f-photoOverride').value.trim();
+  const trainClassName = document.getElementById('f-trainClass').value.trim();
+  const liveryCode = document.getElementById('f-livery').value;
+  
+  // Build auto filename: "Class 170" -> "Class_170_" + liveryCode
+  const autoName = trainClassName.replace(/\s+/g, '_') + '_' + liveryCode;
+  const filename = override || autoName;
+  
+  if (!filename || filename === '_') {
+    imgSlot.innerHTML = `<span>No photo — set Train Class and Livery, or enter a photo override</span>`;
+    return;
+  }
+  const img = new Image();
+  img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+  img.src = `/known_train_pictures/${filename}.png`;
+  img.onload = () => { imgSlot.innerHTML = ''; imgSlot.appendChild(img); };
+  img.onerror = () => { imgSlot.innerHTML = `<span>No photo<br><span style="font-size:10px;font-family:monospace;">${filename}.png</span></span>`; };
 }
 
 function populateGroupDropdown() {
@@ -304,11 +314,11 @@ async function populateOperatorDropdown() {
     sel.innerHTML = '<option value="">(none)</option>' + 
       (data.operators || []).map(op => `<option value="${op.id}">${op.name}</option>`).join('');
     sel.value = trainClass.livery_id || '';
-    sel.addEventListener('change', () => { populateLiveryDropdown(); updateOperatorLogo(); });
+    sel.addEventListener('change', () => { populateLiveryDropdown(); updateOperatorLogo(); refreshCompletion(); });
     await populateLiveryDropdown();
     updateOperatorLogo();
   } catch (e) {
-    console.log('Operators not available');
+    // No operators endpoint yet - that's ok
   }
 }
 
@@ -316,20 +326,29 @@ async function populateLiveryDropdown() {
   const operatorId = document.getElementById('f-operator').value;
   const sel = document.getElementById('f-livery');
   if (!operatorId) {
-    sel.innerHTML = '<option value="">(none)</option>';
+    sel.innerHTML = '<option value="">(select operator first)</option>';
     sel.disabled = true;
+    updatePhotoSlot();
     return;
   }
   try {
     const res = await fetch(`/api/operators/${operatorId}/liveries`);
     const data = await res.json();
-    sel.innerHTML = (data.liveries || []).map(liv => `<option value="${liv.code}">${liv.name}</option>`).join('');
-    sel.value = trainClass.livery_name || '';
-    sel.disabled = false;
+    const liveries = data.liveries || [];
+    if (liveries.length === 0) {
+      sel.innerHTML = '<option value="">(no liveries set up)</option>';
+      sel.disabled = true;
+    } else {
+      sel.innerHTML = liveries.map(liv => `<option value="${liv.code}">${liv.name}</option>`).join('');
+      sel.value = trainClass.livery_name || '';
+      sel.disabled = false;
+    }
   } catch (e) {
     sel.innerHTML = '<option value="">(none)</option>';
     sel.disabled = true;
   }
+  sel.addEventListener('change', () => { updatePhotoSlot(); refreshCompletion(); });
+  updatePhotoSlot();
 }
 
 async function updateOperatorLogo() {
@@ -470,6 +489,8 @@ function refreshCompletion() {
 
 document.querySelectorAll('#f-trainClass, #f-operator, #f-livery').forEach(el => el.addEventListener('input', refreshCompletion));
 document.querySelectorAll('#f-speedometer-analogue, #f-speedometer-digital').forEach(el => el.addEventListener('change', refreshCompletion));
+document.getElementById('f-trainClass').addEventListener('input', updatePhotoSlot);
+document.getElementById('f-photoOverride').addEventListener('input', updatePhotoSlot);
 
 function toggleSpeedometer(selected) {
   document.getElementById('f-speedometer-analogue').checked = (selected === 'analogue');
@@ -495,13 +516,15 @@ async function save() {
   btn.textContent = 'Saving…';
   btn.disabled = true;
   try {
-    const trainClass = document.getElementById('f-trainClass').value;
-    const livery = document.getElementById('f-livery').value;
-    const displayName = trainClass && livery ? `${trainClass} - ${livery}` : (trainClass || '');
+    const trainClassVal = document.getElementById('f-trainClass').value.trim();
+    const liveryEl = document.getElementById('f-livery');
+    const liveryCode = liveryEl.value;
+    const liveryText = liveryEl.options[liveryEl.selectedIndex] ? liveryEl.options[liveryEl.selectedIndex].text : '';
+    const displayName = trainClassVal && liveryText ? `${trainClassVal} - ${liveryText}` : (trainClassVal || '');
     
     const body = {
       display_name: displayName,
-      livery_name: livery,
+      livery_name: liveryCode,
       livery_id: document.getElementById('f-operator').value,
       group_id: document.getElementById('f-group').value ? Number(document.getElementById('f-group').value) : null,
       subclass_id: document.getElementById('f-subclass').value ? Number(document.getElementById('f-subclass').value) : null,
@@ -509,14 +532,14 @@ async function save() {
       is_diesel: document.getElementById('f-diesel').checked ? 1 : 0,
       is_electric: document.getElementById('f-electric').checked ? 1 : 0,
       electrification_types: JSON.stringify(Array.from(document.querySelectorAll('.elec-type:checked')).map(cb => cb.value)),
-      photo_override: document.getElementById('f-photoOverride').value || null,
+      photo_override: document.getElementById('f-photoOverride').value.trim() || null,
       speedometer: document.getElementById('f-speedometer-analogue').checked ? 'analogue' : (document.getElementById('f-speedometer-digital').checked ? 'digital' : null),
       is_visible: document.getElementById('f-visible').checked ? 1 : 0,
     };
     const maxSpeedInput = document.getElementById('f-maxSpeed');
     const dialMaxInput = document.getElementById('f-dialMax');
-    body.max_speed_override_mph = (maxSpeedInput.value !== String(maxSpeedInput.dataset.default)) ? Number(maxSpeedInput.value) : null;
-    body.dial_max_override_mph = (dialMaxInput.value !== String(dialMaxInput.dataset.default)) ? Number(dialMaxInput.value) : null;
+    body.max_speed_override_mph = maxSpeedInput.value !== String(maxSpeedInput.dataset.default) && maxSpeedInput.value.trim() !== '' ? Number(maxSpeedInput.value) : null;
+    body.dial_max_override_mph = dialMaxInput.value !== String(dialMaxInput.dataset.default) && dialMaxInput.value.trim() !== '' ? Number(dialMaxInput.value) : null;
 
     const res = await fetch(`/api/known_trains/classes/${trainClassId}`, {
       method: 'PATCH',
@@ -526,9 +549,10 @@ async function save() {
     if (res.ok) {
       location.href = '/pages/known_trains.html';
     } else {
+      const err = await res.json().catch(() => ({}));
       btn.textContent = 'Save';
       btn.disabled = false;
-      alert('Save failed: ' + res.statusText);
+      alert('Save failed: ' + (err.error || res.statusText));
     }
   } catch (e) {
     btn.textContent = 'Save';

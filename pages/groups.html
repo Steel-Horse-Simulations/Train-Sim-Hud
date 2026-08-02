@@ -5,6 +5,60 @@
 <title>TSW Hud - Groups</title>
 <link rel="stylesheet" href="/pages/style.css">
 <script src="/pages/theme.js"></script>
+<style>
+  main { max-width: 860px; margin: 0 auto; }
+  .back { color: var(--text-dim); text-decoration: none; font-size: 13px; }
+  .item-pill {
+    background: var(--panel-raised); border: 1px solid var(--hairline); border-radius: 6px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .item-header {
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer;
+    user-select: none;
+  }
+  .item-header:hover { background: rgba(255,255,255,0.03); }
+  .item-name { font-family: var(--heading); font-weight: 600; font-size: 15px; flex: 1; }
+  .item-meta { font-size: 12px; color: var(--text-dim); }
+  .item-chevron { font-size: 11px; color: var(--text-dim); transition: transform .2s; }
+  .item-pill.open .item-chevron { transform: rotate(90deg); }
+  .item-body { display: none; padding: 0 16px 16px; border-top: 1px solid var(--hairline); }
+  .item-pill.open .item-body { display: block; }
+
+  form label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; margin-top: 14px; }
+  form label:first-child { margin-top: 0; }
+  .field-row { display: flex; gap: 8px; margin-top: 4px; align-items: flex-start; }
+  .field-row input { flex: 1; }
+
+  .sub-list { margin-top: 14px; }
+  .sub-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--hairline); border-radius: 5px; margin-bottom: 6px; }
+  .sub-item .sub-name { flex: 1; font-size: 13px; font-weight: 600; }
+  .sub-item .sub-speed { font-size: 12px; color: var(--text-dim); }
+  .sub-item .del-btn { background: transparent; border: 1px solid rgba(224,90,78,0.4); color: var(--status-red); padding: 3px 9px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .sub-item .del-btn:hover { background: rgba(224,90,78,0.15); }
+
+  .add-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+  .add-form h4 { font-family: var(--heading); font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-dim); margin: 0 0 10px; }
+  .btn-row { display: flex; gap: 8px; margin-top: 14px; align-items: center; }
+  .del-group-btn { margin-left: auto; background: transparent; border: 1px solid rgba(224,90,78,0.4); color: var(--status-red); padding: 6px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; }
+  .del-group-btn:hover { background: rgba(224,90,78,0.15); }
+
+  .power-chip {
+    display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--hairline); border-radius: 20px;
+    padding: 0 14px; height: 30px; box-sizing: border-box; cursor: pointer;
+  }
+  .power-chip:has(input:checked) { border-color: var(--accent); background: rgba(255,255,255,0.08); color: var(--accent-bright); }
+  .power-chip input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none; width: 15px; height: 15px; flex: none; margin: 0; padding: 0;
+    border: 1.5px solid var(--hairline); border-radius: 3px; background: rgba(255,255,255,0.06);
+    position: relative; cursor: pointer; box-sizing: border-box;
+  }
+  .power-chip input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+  .power-chip input[type="checkbox"]:checked::after {
+    content: ''; position: absolute; left: 4px; top: 0.5px; width: 4px; height: 8px;
+    border: solid #1a1013; border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+</style>
 </head>
 <body>
   <div class="topbar">
@@ -14,16 +68,201 @@
   </div>
 
   <main>
-    <a href="/pages/known_trains.html" style="color:var(--text-dim); text-decoration:none; font-size:13px;">&larr; Back to Known Trains</a>
-    <div class="panel" style="margin-top: 16px;">
-      <h2>Groups</h2>
-      <p class="small dim">Manage train groups and subclasses. (To be implemented)</p>
+    <a class="back" href="/pages/known_trains.html">&larr; Back to Known Trains</a>
+    <div class="titlebar" style="display:flex;align-items:center;gap:12px;margin:10px 0 20px;">
+      <h1 style="font-family:var(--heading);font-size:22px;margin:0;">Groups</h1>
+    </div>
+
+    <div id="groupsList"></div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h2>Add Group</h2>
+      <form onsubmit="createGroup(event)">
+        <label>Group name</label>
+        <input type="text" id="new-group-name" placeholder="e.g. Class 170" style="width:100%;" required>
+        <label>Default max speed (mph)</label>
+        <input type="text" id="new-group-speed" placeholder="e.g. 100">
+        <label>Default dial max (mph)</label>
+        <input type="text" id="new-group-dial" placeholder="e.g. 120">
+        <div style="margin-top:14px;">
+          <button class="btn primary" type="submit">Add Group</button>
+        </div>
+      </form>
     </div>
   </main>
 
-  <script src="/pages/nav.js"></script>
-  <script>
-    function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
-  </script>
+<script>
+let groups = [];
+
+async function load() {
+  try {
+    const res = await fetch('/api/known_trains/groups');
+    const data = await res.json();
+    groups = data.groups || [];
+    render();
+  } catch(e) {
+    document.getElementById('groupsList').innerHTML = '<p class="small dim">Could not load groups.</p>';
+  }
+}
+
+function render() {
+  const container = document.getElementById('groupsList');
+  if (!groups.length) {
+    container.innerHTML = '<p class="small dim" style="text-align:center;margin-bottom:16px;">No groups yet — create one below.</p>';
+    return;
+  }
+  container.innerHTML = groups.map(g => `
+    <div class="item-pill" id="group-pill-${g.id}">
+      <div class="item-header" onclick="togglePill('group-pill-${g.id}')">
+        <span class="item-name">${g.name}</span>
+        <span class="item-meta">${g.default_max_speed_mph ? g.default_max_speed_mph + ' mph' : 'no default speed'}</span>
+        <span class="item-chevron">&#9654;</span>
+      </div>
+      <div class="item-body">
+        <form onsubmit="saveGroup(event, ${g.id})">
+          <label>Group name</label>
+          <input type="text" id="gname-${g.id}" value="${esc(g.name)}" style="width:100%;" required>
+          <label>Default max speed (mph)</label>
+          <input type="text" id="gspeed-${g.id}" value="${g.default_max_speed_mph ?? ''}" placeholder="e.g. 100">
+          <label>Default dial max (mph)</label>
+          <input type="text" id="gdial-${g.id}" value="${g.default_dial_max_mph ?? ''}" placeholder="e.g. 120">
+          <div class="btn-row">
+            <button class="btn primary" type="submit">Save</button>
+            <button class="del-group-btn" type="button" onclick="deleteGroup(${g.id}, '${esc(g.name)}')">Delete group</button>
+          </div>
+        </form>
+
+        <div class="sub-list">
+          <h4 style="font-family:var(--heading);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin:14px 0 10px;">Subclasses</h4>
+          <div id="subs-${g.id}">${renderSubclasses(g)}</div>
+        </div>
+
+        <div class="add-form">
+          <h4>Add subclass</h4>
+          <form onsubmit="addSubclass(event, ${g.id})">
+            <label>Subclass name</label>
+            <input type="text" id="sub-name-${g.id}" placeholder="e.g. 170/1" style="width:100%;" required>
+            <label>Max speed override (mph) — leave blank to use group default</label>
+            <input type="text" id="sub-speed-${g.id}" placeholder="optional">
+            <div style="margin-top:12px;">
+              <button class="btn primary" type="submit">Add Subclass</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderSubclasses(g) {
+  if (!g.subclasses || !g.subclasses.length) return '<p class="small dim">No subclasses yet.</p>';
+  return g.subclasses.map(s => `
+    <div class="sub-item" id="sub-item-${s.id}">
+      <span class="sub-name">${esc(s.name)}</span>
+      <span class="sub-speed">${s.max_speed_override_mph ? s.max_speed_override_mph + ' mph' : 'group default'}</span>
+      <button class="del-btn" onclick="deleteSubclass(${s.id}, '${esc(s.name)}', ${g.id})">Remove</button>
+    </div>
+  `).join('');
+}
+
+function togglePill(id) {
+  document.getElementById(id).classList.toggle('open');
+  if (document.getElementById(id).classList.contains('open')) {
+    loadGroupDetail(parseInt(id.replace('group-pill-', '')));
+  }
+}
+
+async function loadGroupDetail(groupId) {
+  try {
+    const res = await fetch(`/api/known_trains/groups/${groupId}`);
+    const g = await res.json();
+    const group = groups.find(x => x.id === groupId);
+    if (group) { group.subclasses = g.subclasses || []; }
+    document.getElementById(`subs-${groupId}`).innerHTML = renderSubclasses(group || g);
+  } catch(e) {}
+}
+
+async function saveGroup(e, groupId) {
+  e.preventDefault();
+  const name = document.getElementById(`gname-${groupId}`).value.trim();
+  const speed = document.getElementById(`gspeed-${groupId}`).value.trim();
+  const dial = document.getElementById(`gdial-${groupId}`).value.trim();
+  try {
+    await fetch(`/api/known_trains/groups/${groupId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name,
+        default_max_speed_mph: speed ? Number(speed) : null,
+        default_dial_max_mph: dial ? Number(dial) : null,
+      })
+    });
+    await load();
+  } catch(e) { alert('Save failed'); }
+}
+
+async function createGroup(e) {
+  e.preventDefault();
+  const name = document.getElementById('new-group-name').value.trim();
+  const speed = document.getElementById('new-group-speed').value.trim();
+  const dial = document.getElementById('new-group-dial').value.trim();
+  try {
+    await fetch('/api/known_trains/groups', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name,
+        default_max_speed_mph: speed ? Number(speed) : null,
+        default_dial_max_mph: dial ? Number(dial) : null,
+      })
+    });
+    document.getElementById('new-group-name').value = '';
+    document.getElementById('new-group-speed').value = '';
+    document.getElementById('new-group-dial').value = '';
+    await load();
+  } catch(e) { alert('Create failed'); }
+}
+
+async function deleteGroup(groupId, name) {
+  if (!confirm(`Delete group "${name}"? All trains in this group will be ungrouped.`)) return;
+  try {
+    await fetch(`/api/known_trains/groups/${groupId}`, { method: 'DELETE' });
+    await load();
+  } catch(e) { alert('Delete failed'); }
+}
+
+async function addSubclass(e, groupId) {
+  e.preventDefault();
+  const name = document.getElementById(`sub-name-${groupId}`).value.trim();
+  const speed = document.getElementById(`sub-speed-${groupId}`).value.trim();
+  try {
+    await fetch(`/api/known_trains/groups/${groupId}/subclasses`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, max_speed_override_mph: speed ? Number(speed) : null })
+    });
+    document.getElementById(`sub-name-${groupId}`).value = '';
+    document.getElementById(`sub-speed-${groupId}`).value = '';
+    await loadGroupDetail(groupId);
+  } catch(e) { alert('Add failed'); }
+}
+
+async function deleteSubclass(subclassId, name, groupId) {
+  if (!confirm(`Remove subclass "${name}"?`)) return;
+  try {
+    await fetch(`/api/known_trains/subclasses/${subclassId}`, { method: 'DELETE' });
+    await loadGroupDetail(groupId);
+  } catch(e) { alert('Delete failed'); }
+}
+
+function esc(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
+
+load();
+</script>
+<script src="/pages/nav.js"></script>
 </body>
 </html>

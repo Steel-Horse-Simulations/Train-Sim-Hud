@@ -118,22 +118,11 @@ function updateUpcomingLimits(nextSpeedLimits, currentLimitMph) {
   `).join('');
 }
 
-let pollInFlight = false;
 let currentSpeedMph = null;
 let currentLimitMph = null;
-let currentMaxSpeedMph = 100; // per-loco max speed - updated by pollLoco() once /api/loco responds
+let currentMaxSpeedMph = 100;
 
-// TEMPORARY: the app only stores ONE speed value per loco right now
-// (currentMaxSpeedMph above), used directly as the dial's 100% scale.
-// The "real" design (approved, not yet built - see Known Trains v2 in
-// PROJECT_NOTES.md) has TWO independent values: max train speed (where
-// the tick goes) and a separate speedometer dial max (where the ring
-// itself ends, can be higher - like a real speedo having room past top
-// speed). Until that field exists, this multiplies the one value we do
-// have to fake that headroom. Replace DIAL_HEADROOM_MULTIPLIER's use
-// entirely once Known Trains v2 ships its own real dial-max field -
-// search for this comment.
-const DIAL_HEADROOM_MULTIPLIER = 1.2;
+let speedPollInFlight = false;
 
 function updateGaugeRing() {
   const ring = document.getElementById('gauge-ring');
@@ -143,19 +132,19 @@ function updateGaugeRing() {
   const dialMax = currentMaxSpeedMph * DIAL_HEADROOM_MULTIPLIER;
   if (tick) {
     const tickFrac = currentMaxSpeedMph / dialMax;
-    const tickRotation = 135 + (tickFrac * 271);
+    const tickRotation = 135.5 + (tickFrac * 271);
     tick.setAttribute('transform', `rotate(${tickRotation} 60 60)`);
   }
 
   if (currentSpeedMph === null || currentSpeedMph <= 0) {
-    ring.setAttribute('stroke-dasharray', '0 471');
+    ring.setAttribute('stroke-dasharray', '0 314.16');
     ring.setAttribute('stroke', 'none');
     if (overMaxBadge) overMaxBadge.classList.remove('show');
     return;
   }
   const frac = Math.max(0, Math.min(1, currentSpeedMph / dialMax));
-  const arcLength = frac * 471;
-  ring.setAttribute('stroke-dasharray', arcLength.toFixed(1) + ' 471');
+  const arcLength = frac * 236.49;
+  ring.setAttribute('stroke-dasharray', arcLength.toFixed(1) + ' 314.16');
 
   const overMax = currentSpeedMph > currentMaxSpeedMph;
   ring.setAttribute('stroke', overMax ? 'var(--status-red)' : speedRingColor(currentSpeedMph, currentLimitMph));
@@ -176,8 +165,6 @@ function findFirstNumber(obj, depth) {
   }
   return undefined;
 }
-
-let speedPollInFlight = false;
 
 async function pollSpeed() {
   if (speedPollInFlight) return;
@@ -212,27 +199,23 @@ async function pollSpeed() {
   }
 }
 
-async function poll() {
-  if (pollInFlight) return;
-  pollInFlight = true;
+let driverPollInFlight = false;
+let auxPollInFlight = false;
+
+async function pollDriver() {
+  if (driverPollInFlight) return;
+  driverPollInFlight = true;
   const statusEl = document.getElementById('poll-status');
   try {
     const aid = await proxyGet('DriverAid.Data');
     const v = aid.Values || {};
-    // Gradient comes back already as a percentage value (e.g. 0.2 = 0.2%),
-    // not a 0-1 fraction - multiplying by 100 was the bug that turned 0.2%
-    // into 20.0%.
     if (v.gradient !== undefined) {
       document.getElementById('v-gradient').textContent = v.gradient.toFixed(1) + ' %';
     } else {
       document.getElementById('v-gradient').textContent = '—';
     }
-    // Before a service is selected, TSW can report the speed limit as an
-    // enormous placeholder ("unset float") value rather than omitting it -
-    // that showed up as a giant string of digits. Treat anything above a
-    // realistic real-world train speed as "not set yet".
     const rawLimitMs = v.speedLimit && v.speedLimit.value;
-    const limitIsSane = typeof rawLimitMs === 'number' && isFinite(rawLimitMs) && rawLimitMs >= 0 && rawLimitMs < 112; // ~250mph
+    const limitIsSane = typeof rawLimitMs === 'number' && isFinite(rawLimitMs) && rawLimitMs >= 0 && rawLimitMs < 112;
     currentLimitMph = limitIsSane ? parseFloat(mps_to_mph(rawLimitMs)) : null;
     document.getElementById('v-limit').textContent = (currentLimitMph !== null) ? currentLimitMph.toFixed(0) : '—';
     document.getElementById('v-dist').textContent = fmtDistance(v.distanceToSignal);
@@ -240,7 +223,18 @@ async function poll() {
     updateUpcomingLimits(v.nextSpeedLimits, currentLimitMph);
     document.getElementById('signal-lamp').style.background = signalColor(v.signalAspectClass);
     updateGaugeRing();
+    if (statusEl) statusEl.textContent = '· connected';
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '· waiting for game…';
+  } finally {
+    driverPollInFlight = false;
+  }
+}
 
+async function pollAux() {
+  if (auxPollInFlight) return;
+  auxPollInFlight = true;
+  try {
     const weather = await proxyGet('WeatherManager.Data');
     const w = weather.Values || weather;
     document.getElementById('w-temp').textContent = (w.Temperature !== undefined) ? w.Temperature.toFixed(1) + ' °C' : '—';
@@ -248,7 +242,6 @@ async function poll() {
     document.getElementById('w-cloud').textContent = (w.Cloudiness !== undefined) ? (w.Cloudiness * 100).toFixed(0) + ' %' : '—';
     document.getElementById('w-fog').textContent = (w.FogDensity !== undefined) ? (w.FogDensity * 100).toFixed(0) + ' %' : '—';
 
-    // HUD weather chip: prefer live Real Weather sync data, fall back to in-game weather
     try {
       const wsResponse = await fetch('/api/weather/status');
       const ws = await wsResponse.json();
@@ -275,12 +268,10 @@ async function poll() {
     document.getElementById('t-local').textContent = t.LocalTimeISO8601 ? t.LocalTimeISO8601.substr(11, 8) : '—';
     document.getElementById('t-sunrise').textContent = t.SunriseTime || '—';
     document.getElementById('t-sunset').textContent = t.SunsetTime || '—';
-
-    statusEl.textContent = '· connected';
   } catch (e) {
-    statusEl.textContent = '· waiting for game…';
+    // aux data not critical
   } finally {
-    pollInFlight = false;
+    auxPollInFlight = false;
   }
 }
 
@@ -326,8 +317,10 @@ function startDashboard() {
   setWeatherIcon('overcast');
   pollSpeed();
   setInterval(pollSpeed, 300);
-  poll();
-  setInterval(poll, 300);
+  pollDriver();
+  setInterval(pollDriver, 300);
+  pollAux();
+  setInterval(pollAux, 5000);
   pollLoco();
   setInterval(pollLoco, 10000);
 }

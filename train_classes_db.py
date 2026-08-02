@@ -157,6 +157,172 @@ def init_db():
                 conn.execute(f"ALTER TABLE train_classes ADD COLUMN {col} {col_type}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_train_classes_group ON train_classes(group_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_train_classes_subclass ON train_classes(subclass_id)")
+
+        # Operators tables
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS operators (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                short_code TEXT,
+                logo_path TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS operator_liveries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operator_id INTEGER NOT NULL REFERENCES operators(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                code TEXT NOT NULL,
+                colour TEXT,
+                is_default INTEGER DEFAULT 0,
+                created_at TEXT,
+                updated_at TEXT
+            );
+        """)
+
+        # Migration: add photo_override and speedometer to train_classes
+        existing_cols2 = {row["name"] for row in conn.execute("PRAGMA table_info(train_classes)")}
+        extra_cols = {"photo_override": "TEXT", "speedometer": "TEXT"}
+        for col, col_type in extra_cols.items():
+            if col not in existing_cols2:
+                conn.execute(f"ALTER TABLE train_classes ADD COLUMN {col} {col_type}")
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---- Operator CRUD --------------------------------------------------------
+
+def list_operators():
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM operators ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_operator(operator_id):
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM operators WHERE id = ?", (operator_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def create_operator(name, short_code=None, logo_path=None):
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "INSERT INTO operators (name, short_code, logo_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (name, short_code, logo_path, now, now)
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def update_operator(operator_id, fields):
+    allowed = {"name", "short_code", "logo_path"}
+    safe = {k: v for k, v in fields.items() if k in allowed}
+    if not safe:
+        return False
+    safe["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    conn = _connect()
+    try:
+        set_clause = ", ".join(f"{k} = ?" for k in safe)
+        conn.execute(f"UPDATE operators SET {set_clause} WHERE id = ?", list(safe.values()) + [operator_id])
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def delete_operator(operator_id):
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM operators WHERE id = ?", (operator_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_liveries(operator_id):
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM operator_liveries WHERE operator_id = ? ORDER BY is_default DESC, name",
+            (operator_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def create_livery(operator_id, name, code, colour=None, is_default=0):
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = _connect()
+    try:
+        if is_default:
+            conn.execute("UPDATE operator_liveries SET is_default = 0 WHERE operator_id = ?", (operator_id,))
+        cur = conn.execute(
+            "INSERT INTO operator_liveries (operator_id, name, code, colour, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (operator_id, name, code, colour, 1 if is_default else 0, now, now)
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def update_livery(livery_id, fields):
+    allowed = {"name", "code", "colour", "is_default"}
+    safe = {k: v for k, v in fields.items() if k in allowed}
+    if not safe:
+        return False
+    safe["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    conn = _connect()
+    try:
+        if safe.get("is_default"):
+            row = conn.execute("SELECT operator_id FROM operator_liveries WHERE id = ?", (livery_id,)).fetchone()
+            if row:
+                conn.execute("UPDATE operator_liveries SET is_default = 0 WHERE operator_id = ?", (row["operator_id"],))
+        set_clause = ", ".join(f"{k} = ?" for k in safe)
+        conn.execute(f"UPDATE operator_liveries SET {set_clause} WHERE id = ?", list(safe.values()) + [livery_id])
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def delete_livery(livery_id):
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM operator_liveries WHERE id = ?", (livery_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---- Group delete ---------------------------------------------------------
+
+def delete_group(group_id):
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM loco_groups WHERE id = ?", (group_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_subclass(subclass_id):
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM loco_subclasses WHERE id = ?", (subclass_id,))
         conn.commit()
     finally:
         conn.close()
@@ -315,6 +481,15 @@ def get_train_class(train_class_id):
     conn = _connect()
     try:
         row = conn.execute("SELECT * FROM train_classes WHERE id = ?", (train_class_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_train_class_by_source_name(source_name):
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM train_classes WHERE source_name = ?", (source_name,)).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()

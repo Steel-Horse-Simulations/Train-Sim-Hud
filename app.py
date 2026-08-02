@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.1.0"
+APP_VERSION = "7.2.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -975,12 +975,14 @@ def home():
 
 @app.route("/images/train_classes/<path:filename>")
 def train_class_image(filename):
-    # Images aren't bundled with the app - copy the ones you already have
-    # (matching thumbnail_path values from train_classes_db) into
-    # images/train_classes/ next to app.py, and they'll be served here
-    # under the exact path already stored in the database.
     images_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "train_classes")
     return send_from_directory(images_dir, filename)
+
+
+@app.route("/known_train_pictures/<path:filename>")
+def known_train_pictures(filename):
+    pics_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "known_train_pictures")
+    return send_from_directory(pics_dir, filename)
 
 
 @app.route("/api/pages", methods=["GET"])
@@ -1510,6 +1512,88 @@ def known_trains_update_subclass(subclass_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/known_trains/subclasses/<int:subclass_id>", methods=["DELETE"])
+def known_trains_delete_subclass(subclass_id):
+    train_classes_db.delete_subclass(subclass_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/known_trains/groups/<int:group_id>", methods=["DELETE"])
+def known_trains_delete_group(group_id):
+    train_classes_db.delete_group(group_id)
+    return jsonify({"ok": True})
+
+
+# ---- Operators ------------------------------------------------------------
+
+@app.route("/api/operators", methods=["GET"])
+def operators_list():
+    return jsonify({"operators": train_classes_db.list_operators()})
+
+
+@app.route("/api/operators", methods=["POST"])
+def operators_create():
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name_required"}), 400
+    op_id = train_classes_db.create_operator(name, body.get("short_code"), body.get("logo_path"))
+    return jsonify(train_classes_db.get_operator(op_id)), 201
+
+
+@app.route("/api/operators/<int:operator_id>", methods=["GET"])
+def operators_get(operator_id):
+    op = train_classes_db.get_operator(operator_id)
+    if not op:
+        return jsonify({"error": "not_found"}), 404
+    op["liveries"] = train_classes_db.list_liveries(operator_id)
+    return jsonify(op)
+
+
+@app.route("/api/operators/<int:operator_id>", methods=["PATCH"])
+def operators_update(operator_id):
+    body = request.get_json(force=True, silent=True) or {}
+    train_classes_db.update_operator(operator_id, body)
+    return jsonify(train_classes_db.get_operator(operator_id))
+
+
+@app.route("/api/operators/<int:operator_id>", methods=["DELETE"])
+def operators_delete(operator_id):
+    train_classes_db.delete_operator(operator_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/operators/<int:operator_id>/liveries", methods=["GET"])
+def operators_list_liveries(operator_id):
+    return jsonify({"liveries": train_classes_db.list_liveries(operator_id)})
+
+
+@app.route("/api/operators/<int:operator_id>/liveries", methods=["POST"])
+def operators_create_livery(operator_id):
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    code = (body.get("code") or "").strip()
+    if not name or not code:
+        return jsonify({"error": "name_and_code_required"}), 400
+    livery_id = train_classes_db.create_livery(
+        operator_id, name, code, body.get("colour"), body.get("is_default", 0)
+    )
+    return jsonify({"id": livery_id, "operator_id": operator_id, "name": name, "code": code}), 201
+
+
+@app.route("/api/operators/liveries/<int:livery_id>", methods=["PATCH"])
+def operators_update_livery(livery_id):
+    body = request.get_json(force=True, silent=True) or {}
+    train_classes_db.update_livery(livery_id, body)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/operators/liveries/<int:livery_id>", methods=["DELETE"])
+def operators_delete_livery(livery_id):
+    train_classes_db.delete_livery(livery_id)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/known_trains/list", methods=["GET"])
 def known_trains_list():
     """The main list view: every train class with its resolved speeds,
@@ -1548,6 +1632,36 @@ def known_trains_get(train_class_id):
     if not tc:
         return jsonify({"error": "not_found"}), 404
     return jsonify(tc)
+
+
+@app.route("/api/known_trains/restore", methods=["POST"])
+def known_trains_restore():
+    """Restore known trains data from a backup JSON."""
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        classes = body.get("classes", [])
+        restored = 0
+        for tc in classes:
+            if not tc.get("source_name"):
+                continue
+            # Try to update existing by source_name, or insert new
+            existing = train_classes_db.get_train_class_by_source_name(tc["source_name"])
+            fields = {k: v for k, v in tc.items() if k not in ("id", "source_id", "times_seen", "imported_at")}
+            if existing:
+                train_classes_db.update_train_class(existing["id"], fields)
+            else:
+                train_classes_db.record_live_sighting(
+                    {"source_name": tc["source_name"], "max_speed_ms": None},
+                    clean_name=tc.get("display_name") or tc["source_name"]
+                )
+                new_tc = train_classes_db.get_train_class_by_source_name(tc["source_name"])
+                if new_tc:
+                    train_classes_db.update_train_class(new_tc["id"], fields)
+            restored += 1
+        return jsonify({"ok": True, "restored": restored})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/known_trains/classes/<int:train_class_id>", methods=["PATCH"])
