@@ -16,13 +16,51 @@
      Logo is 156px square. Fade end = 16 (bar) + 156 (logo) = 172px. */
   .pill-wrap {
     border-radius: 20px;
-    padding: 4px 4px 4px 16px;
-    background:
-      linear-gradient(to right, var(--livery-color) 16px, transparent 16px),
-      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 172px) 0 0 / 100% 4px no-repeat,
-      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 172px) 0 100% / 100% 4px no-repeat,
-      rgba(255,255,255,0.13);
+    padding: 0;
+    background: rgba(255,255,255,0.13);
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
   }
+
+  /* Colored bar: 20px solid left, smooth D-curve via radial gradient */
+  .pill-wrap::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 20px;
+    background: radial-gradient(circle at 20px 50%, var(--livery-color) 0%, var(--livery-color) 99%, transparent 100%);
+    pointer-events: none;
+  }
+
+  .train-pill {
+    background: var(--panel-raised);
+    border-radius: 0 20px 20px 0;
+    height: 156px;
+    display: flex; align-items: stretch;
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .op-logo-pill { 
+    width: 156px; height: 156px; flex-shrink: 0; overflow: hidden; background: #1c1a20; 
+    display: flex; align-items: center; justify-content: center; position: relative;
+  }
+  .op-logo-pill img { width: 100%; height: 100%; object-fit: contain; }
+  .op-logo-pill span { font-size: 15px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
+  
+  /* Fade last 20% of logo: solid on right to transparent on left */
+  .op-logo-pill::after {
+    content: '';
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    width: 31px;
+    background: linear-gradient(to left, rgba(28,26,32,1), transparent);
+    pointer-events: none;
+  }
+
 
   .train-pill {
     background: var(--panel-raised);
