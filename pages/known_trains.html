@@ -26,33 +26,35 @@
 
   .pill-wrap {
     border-radius: 20px;
-    padding: 0;
-    background: rgba(255,255,255,0.13);
+    padding: 4px 4px 4px 16px;
+    background:
+      /* Top 4px fade: starts at x=16px (end of left bar), fades to transparent at x=436px */
+      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 436px) 16px 0 / calc(100% - 16px) 4px no-repeat,
+      /* Bottom 4px fade: same */
+      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 436px) 16px 100% / calc(100% - 16px) 4px no-repeat,
+      /* Base: hairline for right and bottom borders */
+      rgba(255,255,255,0.13);
     position: relative;
-    display: flex;
-    align-items: stretch;
     overflow: hidden;
   }
 
-  /* The colored bar: 20px solid on left, smooth D-curve via radial gradient */
+  /* D-shaped inner curve on the left bar: 16px wide with smooth convex curve on the right (inner) edge */
   .pill-wrap::before {
     content: '';
     position: absolute;
     left: 0; top: 0; bottom: 0;
-    width: 20px;
-    background: 
-      radial-gradient(circle at 20px 50%, var(--livery-color) 0%, var(--livery-color) 99%, transparent 100%);
+    width: 16px;
+    border-radius: 0 100px 100px 0;
+    background: var(--livery-color);
     pointer-events: none;
   }
 
   .train-pill {
     background: var(--panel-raised);
-    border-radius: 0 20px 20px 0;
+    border-radius: 14px;
     height: 156px;
     display: flex; align-items: stretch;
-    flex: 1;
-    position: relative;
-    overflow: hidden;
+    position: relative; overflow: hidden;
   }
 
   .train-pill-thumb { 

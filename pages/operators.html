@@ -16,32 +16,35 @@
      Logo is 156px square. Fade end = 16 (bar) + 156 (logo) = 172px. */
   .pill-wrap {
     border-radius: 20px;
-    padding: 0;
-    background: rgba(255,255,255,0.13);
+    padding: 4px 4px 4px 16px;
+    background:
+      /* Top 4px fade: starts at x=16px, fades to transparent at x=172px (bar 16 + logo 156) */
+      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 172px) 16px 0 / calc(100% - 16px) 4px no-repeat,
+      /* Bottom 4px fade: same */
+      linear-gradient(to right, var(--livery-color), rgba(255,255,255,0.13) 172px) 16px 100% / calc(100% - 16px) 4px no-repeat,
+      /* Base: hairline for right and bottom borders */
+      rgba(255,255,255,0.13);
     position: relative;
-    display: flex;
-    align-items: stretch;
     overflow: hidden;
   }
 
-  /* Colored bar: 20px solid left, smooth D-curve via radial gradient */
+  /* D-shaped inner curve on the left bar: 16px wide with smooth convex curve on the right (inner) edge */
   .pill-wrap::before {
     content: '';
     position: absolute;
     left: 0; top: 0; bottom: 0;
-    width: 20px;
-    background: radial-gradient(circle at 20px 50%, var(--livery-color) 0%, var(--livery-color) 99%, transparent 100%);
+    width: 16px;
+    border-radius: 0 100px 100px 0;
+    background: var(--livery-color);
     pointer-events: none;
   }
 
   .train-pill {
     background: var(--panel-raised);
-    border-radius: 0 20px 20px 0;
+    border-radius: 14px;
     height: 156px;
     display: flex; align-items: stretch;
-    flex: 1;
-    position: relative;
-    overflow: hidden;
+    position: relative; overflow: hidden;
   }
 
   .op-logo-pill { 
@@ -50,35 +53,14 @@
   }
   .op-logo-pill img { width: 100%; height: 100%; object-fit: contain; }
   .op-logo-pill span { font-size: 15px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
-  
-  /* Fade last 20% of logo: solid on right to transparent on left */
-  .op-logo-pill::after {
-    content: '';
-    position: absolute;
-    right: 0; top: 0; bottom: 0;
-    width: 31px;
-    background: linear-gradient(to left, rgba(28,26,32,1), transparent);
-    pointer-events: none;
-  }
 
-
-  .train-pill {
-    background: var(--panel-raised);
-    border-radius: 14px;
-    height: 156px;
-    display: flex; align-items: stretch;
-    overflow: hidden; position: relative; cursor: pointer;
-  }
+  .train-pill { cursor: pointer; }
   .train-pill:hover { background: rgba(30,28,36,0.95); }
 
   .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 16px; align-items: flex-start; }
   .train-pill-name { font-weight: 600; font-size: 26px; color: var(--text); word-wrap: break-word; line-height: 1.2; }
   .train-pill-meta { font-size: 13px; color: var(--text-dim); display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
   .train-pill-actions { display: flex; gap: 6px; align-self: flex-end; }
-
-  .op-logo-pill { width: 156px; height: 156px; flex-shrink: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
-  .op-logo-pill img { width: 100%; height: 100%; object-fit: contain; }
-  .op-logo-pill span { font-size: 15px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
 
   .edit-btn { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; text-decoration: none; display: inline-block; }
   .edit-btn:hover { border-color: var(--accent); color: var(--accent-bright); }
