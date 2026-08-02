@@ -26,32 +26,33 @@
 
   .pill-wrap {
     border-radius: 20px;
-    padding: 4px 4px 4px 16px;
+    padding: 4px 16px 4px 4px;
     background: var(--livery-color);
     position: relative;
     overflow: hidden;
   }
 
-  /* Top/bottom/right border fade: only visible in the 4px strips; z-index 0 sits behind inner pill */
+  /* Top/bottom/left border fade: only visible in the 4px strips; z-index 0 sits behind inner pill */
   .pill-wrap::after {
     content: '';
     position: absolute;
-    left: 16px; right: 0; top: 0; bottom: 0;
+    left: 0; right: 16px; top: 0; bottom: 0;
     pointer-events: none;
     z-index: 0;
     background:
-      linear-gradient(to right, transparent, rgba(11,10,16,0.92) 420px, rgba(11,10,16,0.92) 100%) 0 0    / 100% 4px no-repeat,
-      linear-gradient(to right, transparent, rgba(11,10,16,0.92) 420px, rgba(11,10,16,0.92) 100%) 0 100% / 100% 4px no-repeat,
-      rgba(11,10,16,0.92) 100% 0 / 4px 100% no-repeat;
+      linear-gradient(to left, transparent, rgba(11,10,16,0.92) 420px, rgba(11,10,16,0.92) 100%) 0 0    / 100% 4px no-repeat,
+      linear-gradient(to left, transparent, rgba(11,10,16,0.92) 420px, rgba(11,10,16,0.92) 100%) 0 100% / 100% 4px no-repeat,
+      rgba(11,10,16,0.92) 0 0 / 4px 100% no-repeat;
   }
 
-  /* Inner pill: large left border-radius cuts a concave arc into the livery background,
-     producing the curved inner edge. z-index 1 sits above ::after. */
+  /* Inner pill: large right border-radius cuts a concave arc into the livery background,
+     producing the curved inner edge. z-index 1 sits above ::after. Row-reverse puts
+     the thumbnail on the right, content on the left. */
   .train-pill {
     background: var(--panel-raised);
-    border-radius: 20px 8px 8px 20px;
+    border-radius: 8px 20px 20px 8px;
     height: 156px;
-    display: flex; align-items: stretch;
+    display: flex; flex-direction: row-reverse; align-items: stretch;
     position: relative; overflow: hidden;
     z-index: 1;
   }
@@ -64,14 +65,14 @@
   .train-pill-thumb img { width: 100%; height: 100%; object-fit: contain; } /* contain = no cropping */
   .train-pill-thumb.none { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
 
-  /* Mask overlay: hides the right-side livery colour that bleeds beyond the thumbnail.
-     Dark panel-coloured mask covers everything right of the inner pill's left edge + thumbnail width. */
+  /* Mask overlay: hides the left-side livery colour that bleeds beyond the thumbnail.
+     Dark panel-coloured mask covers everything left of the thumbnail's right edge. */
   .train-pill-thumb::after {
     content: '';
     position: absolute;
-    right: 0; top: 0; bottom: 0;
+    left: 0; top: 0; bottom: 0;
     width: 100%; /* covers full width */
-    background: linear-gradient(to right, transparent 0%, rgba(20,18,24,0.95) 80%, rgba(20,18,24,0.95) 100%);
+    background: linear-gradient(to left, transparent 0%, rgba(20,18,24,0.95) 80%, rgba(20,18,24,0.95) 100%);
     pointer-events: none;
     z-index: 2;
   }
