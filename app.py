@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.7.0"
+APP_VERSION = "7.8.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1741,6 +1741,12 @@ def known_trains_list():
     show_hidden = request.args.get("show_hidden") == "1"
     classes = train_classes_db.list_train_classes(visible_only=not show_hidden)
     groups_by_id = {g["id"]: g for g in train_classes_db.list_groups()}
+    operators_by_id = {}
+    for op in train_classes_db.list_operators():
+        try:
+            operators_by_id[int(op["id"])] = op
+        except (ValueError, TypeError):
+            pass
 
     results = []
     for tc in classes:
@@ -1748,6 +1754,12 @@ def known_trains_list():
         resolved = train_classes_db.resolve_speeds(tc, group=group)
         status = train_classes_db.compute_completion(tc)
         power = train_classes_db.compute_power_label(tc.get("is_steam"), tc.get("is_diesel"), tc.get("is_electric"))
+        # livery_id stores the operator_id; pull that operator's colour so the
+        # client can colour the pill bar without any extra per-train API calls
+        try:
+            op = operators_by_id.get(int(tc.get("livery_id") or 0))
+        except (ValueError, TypeError):
+            op = None
         results.append({
             **tc,
             "resolved_max_speed_mph": resolved["max_speed_mph"],
@@ -1755,6 +1767,7 @@ def known_trains_list():
             "status": status,
             "power_label": power,
             "group_name": group["name"] if group else None,
+            "operator_colour": op["colour"] if op and op.get("colour") else None,
         })
 
     return jsonify({
