@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.3.3"
+APP_VERSION = "7.4.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1319,7 +1319,100 @@ def proxy_raw(subpath):
     return jsonify(body), status
 
 
-# ---- discovery ----------------------------------------------------------
+# ---- safety systems --------------------------------------------------
+
+# Known TSW safety system node fragments — the crawl searches CurrentDrivableActor
+# children for any node whose name contains one of these (case-insensitive).
+# Paths that contain these strings in their full dotted name are candidates.
+_SAFETY_KEYWORDS = [
+    "safety", "aws", "tpws", "pzb", "sifa", "vigilance", "deadman",
+    "deadmanshandle", "cruisecontrol", "cruise", "afb", "afc",
+    "interventionbrake", "overspeed", "ato", "atc",
+]
+
+# Candidate writable paths: try GET first to confirm they exist, then write.
+# These are the most commonly seen writable safety properties in TSW locos.
+_SAFETY_CANDIDATE_PATHS = [
+    # AWS / TPWS (UK)
+    "CurrentDrivableActor.AWSEnabled",
+    "CurrentDrivableActor.SafetySystemEnabled",
+    "CurrentDrivableActor.SafetySystems.AWSEnabled",
+    "CurrentDrivableActor.SafetySystems.TPWSEnabled",
+    "CurrentDrivableActor.SafetySystems.Enabled",
+    # PZB / Sifa (DE)
+    "CurrentDrivableActor.PZBEnabled",
+    "CurrentDrivableActor.SifaEnabled",
+    "CurrentDrivableActor.SafetySystems.PZBEnabled",
+    "CurrentDrivableActor.SafetySystems.SifaEnabled",
+    # AFB cruise (DE)
+    "CurrentDrivableActor.AFBEnabled",
+    "CurrentDrivableActor.CruiseControlEnabled",
+    # Vigilance (generic)
+    "CurrentDrivableActor.VigilanceEnabled",
+    "CurrentDrivableActor.DeadMansHandleEnabled",
+    # Function-style toggles
+    "CurrentDrivableActor.Function.SetSafetySystemEnabled",
+    "CurrentDrivableActor.Function.EnableSafetySystems",
+    "CurrentDrivableActor.Function.SetAWSEnabled",
+]
+
+
+@app.route("/api/safety/scan", methods=["GET"])
+def safety_scan():
+    """Crawls CurrentDrivableActor for nodes whose names suggest safety systems,
+    and also checks a hard-coded list of common writable safety paths.
+    Returns: found_paths (responded to GET), writable_paths (responded to PATCH Value=1)."""
+    results = {"crawl_hits": [], "candidate_results": []}
+
+    # 1. Crawl list/CurrentDrivableActor for safety-related node names
+    body, status = api_get("list/CurrentDrivableActor")
+    if status == 200 and isinstance(body, dict):
+        nodes = _get_ci(body, ["Nodes", "nodes"], [])
+        if isinstance(nodes, list):
+            for n in nodes:
+                name = _get_ci(n, ["Name", "NodeName", "name", "nodename"]) if isinstance(n, dict) else str(n)
+                if not name:
+                    continue
+                lower = name.lower().replace(".", "").replace("_", "").replace(" ", "")
+                if any(kw in lower for kw in _SAFETY_KEYWORDS):
+                    results["crawl_hits"].append(name)
+
+    # 2. Try the candidate hard-coded paths
+    for path in _SAFETY_CANDIDATE_PATHS:
+        get_body, get_status = api_get(f"get/{path}", timeout=(1, 2))
+        responded = get_status == 200 and isinstance(get_body, dict) and get_body.get("Result") == "Success"
+        results["candidate_results"].append({
+            "path": path,
+            "get_status": get_status,
+            "responded": responded,
+            "value": get_body.get("Values") if responded else None,
+        })
+
+    return jsonify(results)
+
+
+@app.route("/api/safety/enable_all", methods=["POST"])
+def safety_enable_all():
+    """Attempts to write Value=1 (enable) to every candidate safety path that
+    responded to a prior GET with Result=Success. Returns per-path outcomes."""
+    outcomes = []
+    for path in _SAFETY_CANDIDATE_PATHS:
+        get_body, get_status = api_get(f"get/{path}", timeout=(1, 2))
+        if not (get_status == 200 and isinstance(get_body, dict) and get_body.get("Result") == "Success"):
+            outcomes.append({"path": path, "skipped": True, "reason": "no response to GET"})
+            continue
+        # Try writing true/1 — TSW accepts either depending on the property type
+        patch_body, patch_status = api_patch(f"set/{path}", {"Value": "true"})
+        outcomes.append({
+            "path": path,
+            "patch_status": patch_status,
+            "ok": patch_status in (200, 204),
+            "response": patch_body,
+        })
+    return jsonify({"outcomes": outcomes})
+
+
+
 
 @app.route("/api/discover", methods=["GET"])
 def discover():

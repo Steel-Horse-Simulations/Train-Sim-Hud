@@ -15,6 +15,23 @@
 
   <main>
     <div class="panel">
+      <h2>Safety systems</h2>
+      <p class="small dim">
+        Scans <span class="mono">CurrentDrivableActor</span> for any node whose name looks like a
+        safety system (AWS, TPWS, PZB, Sifa, vigilance, cruise control, etc.) and also probes a
+        list of known candidate paths to see which ones this loco responds to. Run while in an
+        active driving session with a loco loaded. Once you've found the right paths, "Enable all
+        found" sends <span class="mono">Value=true</span> to each one that responded.
+      </p>
+      <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn primary" onclick="scanSafety()">Scan for safety systems</button>
+        <button class="btn" id="enable-btn" onclick="enableSafety()" disabled>Enable all found</button>
+      </div>
+      <p class="small" id="safety-status" style="margin-top:8px;"></p>
+      <div id="safety-results" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
       <h2>Scan the game's API</h2>
       <p class="small dim">
         This walks every node the game currently exposes (via <span class="mono">/info</span> and
@@ -55,6 +72,57 @@
   </main>
 
 <script>
+let lastSafetyResults = null;
+
+async function scanSafety() {
+  const status = document.getElementById('safety-status');
+  const results = document.getElementById('safety-results');
+  const btn = document.getElementById('enable-btn');
+  status.textContent = 'Scanning… (needs an active driving session)';
+  results.innerHTML = '';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/safety/scan');
+    const data = await res.json();
+    lastSafetyResults = data;
+    let html = '';
+    if (data.crawl_hits && data.crawl_hits.length) {
+      html += `<p class="small" style="color:var(--accent-bright);margin-bottom:6px;">Crawl found ${data.crawl_hits.length} safety-related node(s):</p>`;
+      html += `<ul style="margin:0 0 12px;padding-left:18px;">${data.crawl_hits.map(h => `<li class="small mono">${h}</li>`).join('')}</ul>`;
+    } else {
+      html += `<p class="small dim" style="margin-bottom:8px;">Crawl found no safety nodes in CurrentDrivableActor.</p>`;
+    }
+    const responded = (data.candidate_results || []).filter(r => r.responded);
+    html += `<p class="small" style="color:var(--accent-bright);margin-bottom:6px;">Candidate path results (${responded.length}/${data.candidate_results.length} responded):</p>`;
+    html += `<div style="font-size:12px;font-family:var(--mono);">`;
+    for (const r of data.candidate_results) {
+      const dot = r.responded ? `<span style="color:var(--status-green)">●</span>` : `<span style="color:var(--hairline)">●</span>`;
+      html += `<div style="padding:3px 0;border-bottom:1px solid var(--hairline);">${dot} ${r.path} <span style="color:var(--text-dim)">[${r.get_status}]</span></div>`;
+    }
+    html += `</div>`;
+    results.innerHTML = html;
+    status.textContent = `Scan complete. ${responded.length} path(s) found.`;
+    btn.disabled = responded.length === 0;
+  } catch(e) {
+    status.textContent = 'Scan failed: ' + e;
+  }
+}
+
+async function enableSafety() {
+  const status = document.getElementById('safety-status');
+  status.textContent = 'Enabling…';
+  try {
+    const res = await fetch('/api/safety/enable_all', { method: 'POST' });
+    const data = await res.json();
+    const ok = (data.outcomes || []).filter(o => o.ok).length;
+    const skipped = (data.outcomes || []).filter(o => o.skipped).length;
+    const failed = (data.outcomes || []).filter(o => !o.ok && !o.skipped).length;
+    status.textContent = `Done. ${ok} enabled, ${failed} failed, ${skipped} skipped (path not found on this loco).`;
+  } catch(e) {
+    status.textContent = 'Enable failed: ' + e;
+  }
+}
+
 async function fetchRaw() {
   const path = document.getElementById('raw-path').value.trim() || 'list';
   const dump = document.getElementById('raw-dump');
