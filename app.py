@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.2.4"
+APP_VERSION = "7.3.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -635,11 +635,18 @@ def get_loco_identity():
     (stable DB key), the clean class name when available, and the
     formation's max speed (DriverAid.Data.formationMaxSpeed, confirmed
     real from earlier captures) for the database's speed suggestion.
-    Always attempts all three rather than stopping at first success."""
+    Always attempts all three rather than stopping at first success.
+
+    Only trusts a response when Result == "Success" - outside an active
+    driving session the API still returns HTTP 200 but with
+    {"Result": "Error", "Message": "..."}, which has no "Values" key.
+    Without this check, body.get("Values", body) fell back to the whole
+    error object and picked up "Error" or the message text as a fake
+    train name, silently recording sightings while sat in the main menu."""
     raw = None
     body, status = api_get("get/CurrentDrivableActor.ObjectClass")
-    if status == 200 and isinstance(body, dict):
-        values = body.get("Values", body)
+    if status == 200 and isinstance(body, dict) and body.get("Result") == "Success":
+        values = body.get("Values")
         if isinstance(values, dict):
             for v in values.values():
                 if isinstance(v, str) and v.strip():
@@ -648,7 +655,7 @@ def get_loco_identity():
 
     clean = None
     body, status = api_get("get/CurrentFormation/0.Function.IS_GetVehicleInfo")
-    if status == 200 and isinstance(body, dict):
+    if status == 200 and isinstance(body, dict) and body.get("Result") == "Success":
         output = _get_ci(body.get("Values", {}) if isinstance(body.get("Values"), dict) else {}, ["Output", "output"])
         cls = _find_by_key_prefix(output, "class_")
         if isinstance(cls, str) and cls.strip():
@@ -656,8 +663,8 @@ def get_loco_identity():
 
     formation_max_speed_ms = None
     body, status = api_get("get/DriverAid.Data")
-    if status == 200 and isinstance(body, dict):
-        values = body.get("Values", body)
+    if status == 200 and isinstance(body, dict) and body.get("Result") == "Success":
+        values = body.get("Values")
         fms = _get_ci(values, ["formationMaxSpeed"]) if isinstance(values, dict) else None
         if isinstance(fms, dict):
             v = fms.get("value")

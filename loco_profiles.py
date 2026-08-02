@@ -144,3 +144,12 @@ def list_profiles():
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
+
+
+def clear_all():
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM loco_profiles")
+        conn.commit()
+    finally:
+        conn.close()

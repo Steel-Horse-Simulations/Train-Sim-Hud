@@ -329,9 +329,20 @@ def delete_subclass(subclass_id):
 
 
 def clear_all():
+    """Wipes every piece of Known Trains data: sighted/imported train
+    classes, groups, subclasses, operators, and liveries - a full reset.
+    Also resets AUTOINCREMENT counters so new records start at id 1 again."""
     conn = _connect()
     try:
         conn.execute("DELETE FROM train_classes")
+        conn.execute("DELETE FROM loco_subclasses")
+        conn.execute("DELETE FROM loco_groups")
+        conn.execute("DELETE FROM operator_liveries")
+        conn.execute("DELETE FROM operators")
+        conn.execute(
+            "DELETE FROM sqlite_sequence WHERE name IN "
+            "('train_classes','loco_groups','loco_subclasses','operators','operator_liveries')"
+        )
         conn.commit()
     finally:
         conn.close()
