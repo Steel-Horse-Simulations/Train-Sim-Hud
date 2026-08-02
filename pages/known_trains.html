@@ -35,8 +35,8 @@
   .train-pill-thumb.none { font-size: 9px; color: var(--text-dim); text-transform: uppercase; }
   
   .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 12px; align-items: flex-start; }
-  .train-pill-name { font-weight: 600; font-size: 13px; color: var(--text); word-wrap: break-word; }
-  .train-pill-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .train-pill-name { font-weight: 600; font-size: 15px; color: var(--text); word-wrap: break-word; line-height: 1.3; }
+  .train-pill-meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
   .train-pill-actions { display: flex; gap: 6px; align-self: flex-end; }
   .train-pill-actions .edit-btn { padding: 4px 10px; font-size: 11px; flex-shrink: 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -155,7 +155,24 @@ function getRandomColor() {
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
-function renderTable(classes) {
+async function getLiveryColor(operatorId, liveryCode) {
+  if (!operatorId || !liveryCode) return '#ffffff';
+  try {
+    const res = await fetch(`/api/operators/${operatorId}/liveries`);
+    const data = await res.json();
+    const livery = (data.liveries || []).find(l => l.code === liveryCode);
+    return livery && livery.colour ? livery.colour : '#ffffff';
+  } catch(e) {
+    return '#ffffff';
+  }
+}
+
+function buildPhotoFilename(trainClass, liveryCode) {
+  if (!trainClass || !liveryCode) return null;
+  return trainClass.replace(/\s+/g, '_') + '_' + liveryCode;
+}
+
+async function renderTable(classes) {
   const container = document.getElementById('groupsContainer');
   const empty = document.getElementById('emptyState');
   
@@ -183,11 +200,22 @@ function renderTable(classes) {
     html += `<div class="group-pill">
       <div class="group-pill-header">${groupName}${settingsLink}</div>
       <div class="trains-grid">`;
+    
     for (const c of items) {
-      const thumb = c.thumbnail_path
-        ? `<img src="${c.thumbnail_path}" alt="">`
+      // Extract train class from display_name
+      const dashIdx = (c.display_name || '').indexOf(' - ');
+      const trainClass = dashIdx >= 0 ? (c.display_name || '').substring(0, dashIdx) : (c.display_name || '');
+      
+      // Get livery colour or white if no livery
+      const liveryColor = c.livery_id && c.livery_name ? 
+        await getLiveryColor(c.livery_id, c.livery_name) : '#ffffff';
+      
+      // Build photo filename and try to load it
+      const photoFilename = buildPhotoFilename(trainClass, c.livery_name);
+      const thumb = photoFilename 
+        ? `<img src="/known_train_pictures/${photoFilename}.png" alt="" onerror="this.parentElement.innerHTML='<div class=&quot;none&quot;>no<br>photo</div>'" style="width:100%;height:100%;object-fit:cover;">`
         : `<div class="none">no<br>photo</div>`;
-      const liveryColor = getRandomColor();
+      
       html += `<div class="train-pill" style="--livery-color: ${liveryColor};">
         <div class="train-pill-livery-line"></div>
         <div class="train-pill-thumb">${thumb}</div>
@@ -212,7 +240,7 @@ function renderTable(classes) {
 
 document.getElementById('showHidden').addEventListener('change', load);
 
-function renderTableFromCache(classes) {
+async function renderTableFromCache(classes) {
   const filtered = classes.filter(c => c.times_seen > 0 && c.source_name !== 'Error');
   const container = document.getElementById('groupsContainer');
   const empty = document.getElementById('emptyState');
@@ -230,10 +258,14 @@ function renderTableFromCache(classes) {
       <div class="group-pill-header">${key === '(Ungrouped)' ? key : 'Group ' + key}</div>
       <div class="trains-grid">`;
     for (const c of items) {
-      const thumb = c.thumbnail_path
-        ? `<img src="${c.thumbnail_path}" alt="">`
+      const dashIdx = (c.display_name || '').indexOf(' - ');
+      const trainClass = dashIdx >= 0 ? (c.display_name || '').substring(0, dashIdx) : (c.display_name || '');
+      const liveryColor = c.livery_id && c.livery_name ? 
+        await getLiveryColor(c.livery_id, c.livery_name) : '#ffffff';
+      const photoFilename = buildPhotoFilename(trainClass, c.livery_name);
+      const thumb = photoFilename 
+        ? `<img src="/known_train_pictures/${photoFilename}.png" alt="" onerror="this.parentElement.innerHTML='<div class=&quot;none&quot;>no<br>photo</div>'" style="width:100%;height:100%;object-fit:cover;">`
         : `<div class="none">no<br>photo</div>`;
-      const liveryColor = getRandomColor();
       html += `<div class="train-pill" style="--livery-color: ${liveryColor};">
         <div class="train-pill-livery-line"></div>
         <div class="train-pill-thumb">${thumb}</div>

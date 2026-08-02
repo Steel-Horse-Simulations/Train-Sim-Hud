@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.2.0"
+APP_VERSION = "7.2.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -983,6 +983,12 @@ def train_class_image(filename):
 def known_train_pictures(filename):
     pics_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "known_train_pictures")
     return send_from_directory(pics_dir, filename)
+
+
+@app.route("/company_logos/<path:filename>")
+def company_logos(filename):
+    logos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "company_logos")
+    return send_from_directory(logos_dir, filename)
 
 
 @app.route("/api/pages", methods=["GET"])

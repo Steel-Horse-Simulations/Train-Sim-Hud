@@ -111,8 +111,9 @@ async function load() {
 }
 
 function logoHtml(op) {
-  if (op.logo_path) return `<img src="${op.logo_path}" alt="${esc(op.name)}">`;
-  return `<span>${esc((op.short_code || op.name).substring(0,3).toUpperCase())}</span>`;
+  if (!op.short_code) return `<span>${esc(op.name.substring(0,3).toUpperCase())}</span>`;
+  // Try to load logo from company_logos/{short_code}.png
+  return `<img src="/company_logos/${esc(op.short_code)}.png" alt="${esc(op.name)}" onerror="this.parentElement.innerHTML='<span>${esc(op.short_code.substring(0,3).toUpperCase())}</span>'">`;
 }
 
 function render() {
