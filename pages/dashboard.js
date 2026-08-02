@@ -122,6 +122,18 @@ let currentSpeedMph = null;
 let currentLimitMph = null;
 let currentMaxSpeedMph = 100;
 
+// TEMPORARY: the app only stores ONE speed value per loco right now
+// (currentMaxSpeedMph above), used directly as the dial's 100% scale.
+// The "real" design (approved, not yet built - see Known Trains v2 in
+// PROJECT_NOTES.md) has TWO independent values: max train speed (where
+// the tick goes) and a separate speedometer dial max (where the ring
+// itself ends, can be higher - like a real speedo having room past top
+// speed). Until that field exists, this multiplies the one value we do
+// have to fake that headroom. Replace DIAL_HEADROOM_MULTIPLIER's use
+// entirely once Known Trains v2 ships its own real dial-max field -
+// search for this comment.
+const DIAL_HEADROOM_MULTIPLIER = 1.2;
+
 let speedPollInFlight = false;
 
 function updateGaugeRing() {

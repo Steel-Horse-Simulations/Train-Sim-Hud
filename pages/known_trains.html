@@ -77,6 +77,7 @@
         <input type="file" id="uploadInput" accept=".json" style="display:none;" onchange="uploadData(event)">
         <button onclick="location.href='/pages/groups.html'">&#9881; Groups</button>
         <button onclick="location.href='/pages/operators.html'">&#9881; Operators</button>
+        <button onclick="wipeAllData()" style="border-color:rgba(224,90,78,0.4); color:var(--status-red);">&#128465; Wipe all data</button>
       </div>
     </div>
 
@@ -339,6 +340,22 @@ async function uploadData(event) {
     alert('Upload failed: ' + e.message);
   }
   event.target.value = '';
+}
+
+async function wipeAllData() {
+  if (!confirm('This will permanently delete every train, group, subclass, operator, and livery on this machine. This cannot be undone. Continue?')) return;
+  if (!confirm('Are you absolutely sure? Consider using Download first to keep a backup.')) return;
+  try {
+    const res = await fetch('/api/known_trains/wipe_all', { method: 'POST' });
+    if (res.ok) {
+      alert('All data wiped.');
+      load();
+    } else {
+      alert('Wipe failed: ' + res.statusText);
+    }
+  } catch (e) {
+    alert('Wipe failed: ' + e.message);
+  }
 }
 
 load();

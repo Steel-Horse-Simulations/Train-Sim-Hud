@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.3.0"
+APP_VERSION = "7.3.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1672,6 +1672,22 @@ def known_trains_restore():
                     train_classes_db.update_train_class(new_tc["id"], fields)
             restored += 1
         return jsonify({"ok": True, "restored": restored})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/known_trains/wipe_all", methods=["POST"])
+def known_trains_wipe_all():
+    """Deletes every train class, group, subclass, operator, and livery -
+    a full reset of all Known Trains data on THIS machine. Also clears the
+    separate loco_profiles.db sighting cache so old classes can't reappear
+    from it. Irreversible - the download/backup button should be used first
+    if any of this data is worth keeping."""
+    try:
+        train_classes_db.clear_all()
+        loco_profiles.clear_all()
+        return jsonify({"ok": True})
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
