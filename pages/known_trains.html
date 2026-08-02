@@ -125,13 +125,17 @@ function renderAttention(items) {
   const panel = document.getElementById('attentionPanel');
   const heading = document.getElementById('attentionHeading');
   const rows = document.getElementById('attentionRows');
-  if (!items.length) {
+  const showHidden = document.getElementById('showHidden').checked;
+  
+  const filtered = items.filter(item => showHidden || item.is_visible !== 0);
+  
+  if (!filtered.length) {
     panel.style.display = 'none';
     return;
   }
   panel.style.display = 'block';
-  heading.innerHTML = `&#9888; Needs attention (${items.length})`;
-  rows.innerHTML = items.map(item => {
+  heading.innerHTML = `&#9888; Needs attention (${filtered.length})`;
+  rows.innerHTML = filtered.map(item => {
     const status = missingReason(item);
     const dotColor = item.display_name ? 'amber' : 'red';
     return `
