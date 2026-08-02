@@ -6,32 +6,50 @@
 <link rel="stylesheet" href="/pages/style.css">
 <script src="/pages/theme.js"></script>
 <style>
-  main { max-width: 1200px; margin: 0 auto; padding-top: 10px; }
+  main { max-width: 1600px; margin: 0 auto; padding-top: 10px; }
 
   .groups-container { display: flex; flex-direction: column; gap: 12px; }
-  .group-pill { background: var(--panel); border: 1px solid var(--hairline); border-radius: 6px; padding: 14px; }
+  .group-pill { background: var(--panel); border: 1px solid var(--hairline); border-radius: 8px; padding: 14px; }
   .group-pill-header { font-family: var(--heading); font-weight: 700; font-size: 14px; color: var(--accent-bright); margin-bottom: 10px; }
-  .group-pill-header a { font-size: 11.5px; color: var(--text-dim); text-decoration: none; margin-left: 10px; }
-  .group-pill-header a:hover { color: var(--accent-bright); }
 
-  .trains-grid { display: flex; flex-direction: column; gap: 10px; }
-  .train-pill { background: var(--panel-raised); border: 1px solid var(--hairline); border-radius: 6px; height: 72px; display: flex; align-items: stretch; position: relative; overflow: hidden; cursor: pointer; }
-  .train-pill:hover { border-color: var(--accent); }
-  .train-pill.expanded { height: auto; flex-direction: column; }
+  /* 2-column grid; each op-item is one cell, containing pill + edit form + expand section */
+  .trains-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  @media (max-width: 860px) { .trains-grid { grid-template-columns: 1fr; } }
+  .op-item { display: flex; flex-direction: column; }
 
-  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 12px; align-items: flex-start; }
-  .train-pill-livery-line { 
-    width: 4px; height: 100%; position: absolute; left: 0; top: 0; 
-    background: var(--livery-color, transparent);
+  .train-pill {
+    background: var(--panel-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    height: 84px;
+    display: flex; align-items: stretch;
+    position: relative; overflow: hidden; cursor: pointer;
   }
-  .train-pill-name { font-weight: 600; font-size: 20px; color: var(--text); word-wrap: break-word; line-height: 1.3; }
+  .train-pill:hover { border-color: var(--accent); }
+
+  /* Same multi-layer bar as known trains: left solid strip + top/bottom 1px fades.
+     --livery-color is set on the pill from the operator's colour setting. */
+  .train-pill-livery-line {
+    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+    pointer-events: none; z-index: 1;
+    background-image:
+      linear-gradient(to right, var(--livery-color) 6px, transparent 6px),
+      linear-gradient(to right, var(--livery-color), transparent 130px),
+      linear-gradient(to right, var(--livery-color), transparent 130px);
+    background-size:    100% 100%, 100% 1px, 100% 1px;
+    background-position: 0 0,      0 0,      0 100%;
+    background-repeat: no-repeat;
+  }
+
+  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 9px 14px; align-items: flex-start; }
+  .train-pill-name { font-weight: 600; font-size: 21px; color: var(--text); word-wrap: break-word; line-height: 1.3; }
   .train-pill-meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
   .train-pill-actions { display: flex; gap: 6px; align-self: flex-end; }
   .train-pill-actions .edit-btn { padding: 4px 10px; font-size: 11px; flex-shrink: 0; }
 
-  .op-logo-pill { width: 72px; height: 72px; flex-shrink: 0; border-radius: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
+  .op-logo-pill { width: 84px; height: 84px; flex-shrink: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
   .op-logo-pill img { width: 100%; height: 100%; object-fit: contain; }
-  .op-logo-pill span { font-size: 11px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
+  .op-logo-pill span { font-size: 12px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
 
   .edit-btn { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; text-decoration: none; display: inline-block; }
   .edit-btn:hover { border-color: var(--accent); color: var(--accent-bright); }
@@ -60,7 +78,7 @@
   .livery-edit-form input[type=text] { flex: 1; min-width: 100px; }
   .livery-edit-form .save-btn { background: var(--accent); color: #1a1013; border: none; padding: 4px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; font-family: var(--heading); font-weight: 700; }
 
-  .op-edit-form { display: none; padding: 12px 12px 0; border-top: 1px solid var(--hairline); background: rgba(255,255,255,0.02); gap: 10px; flex-direction: column; }
+  .op-edit-form { display: none; padding: 12px 12px 0; border: 1px solid var(--hairline); border-top: none; border-radius: 0 0 10px 10px; background: rgba(255,255,255,0.02); gap: 10px; flex-direction: column; margin-top: -1px; }
   .op-edit-form.open { display: flex; }
   .op-edit-form input { padding: 6px 8px; background: rgba(255,255,255,0.06); border: 1px solid var(--hairline); border-radius: 4px; color: var(--text); font-family: var(--sans); font-size: 13px; }
   .op-edit-form label { font-size: 12px; color: var(--text-dim); font-family: var(--heading); }
@@ -150,50 +168,57 @@ function render() {
   }
   document.getElementById('emptyState').style.display = 'none';
   container.innerHTML = `<div class="trains-grid">${operators.map(op => `
-    <div class="train-pill" id="op-pill-${op.id}" style="--livery-color: transparent;">
-      <div class="train-pill-livery-line"></div>
-      <div class="op-logo-pill">${logoHtml(op)}</div>
-      <div class="train-pill-content" onclick="toggleOp(${op.id})">
-        <div>
-          <div class="train-pill-name">${esc(op.name)}</div>
-          <div class="train-pill-meta">${op.short_code || '(no code)'}</div>
+    <div class="op-item">
+      <div class="train-pill" id="op-pill-${op.id}" style="--livery-color: ${op.colour || '#a06bf0'};">
+        <div class="train-pill-livery-line"></div>
+        <div class="op-logo-pill">${logoHtml(op)}</div>
+        <div class="train-pill-content" onclick="toggleOp(${op.id})">
+          <div>
+            <div class="train-pill-name">${esc(op.name)}</div>
+            <div class="train-pill-meta">${op.short_code || '(no code)'}</div>
+          </div>
+        </div>
+        <div class="train-pill-actions">
+          <button class="edit-btn" onclick="event.stopPropagation(); toggleEdit(${op.id})">Edit</button>
+          <button class="del-btn" onclick="event.stopPropagation(); deleteOperator(${op.id}, '${esc(op.name)}')">Delete</button>
         </div>
       </div>
-      <div class="train-pill-actions">
-        <button class="edit-btn" onclick="event.stopPropagation(); toggleEdit(${op.id})">Edit</button>
-        <button class="del-btn" onclick="event.stopPropagation(); deleteOperator(${op.id}, '${esc(op.name)}')">Delete</button>
+      <div class="op-edit-form" id="op-edit-${op.id}">
+        <label>Operator name</label>
+        <input type="text" id="opname-${op.id}" value="${esc(op.name)}" required>
+        <label>Short code</label>
+        <input type="text" id="opcode-${op.id}" value="${esc(op.short_code || '')}" placeholder="e.g. ScR">
+        <label>Colour (used on pill and as default for new liveries)</label>
+        <div style="display:flex;gap:8px;">
+          <input type="color" id="opcolour-picker-${op.id}" value="${op.colour || '#a06bf0'}" oninput="document.getElementById('opcolour-${op.id}').value=this.value" style="width:36px;height:32px;padding:2px;border-radius:4px;border:1px solid var(--hairline);background:transparent;cursor:pointer;">
+          <input type="text" id="opcolour-${op.id}" value="${op.colour || '#a06bf0'}" placeholder="#a06bf0" oninput="document.getElementById('opcolour-picker-${op.id}').value=this.value" style="flex:1;">
+        </div>
+        <div class="op-form-row">
+          <button type="button" class="btn primary" onclick="saveOperator(${op.id})">Save</button>
+          <button type="button" class="edit-btn" onclick="toggleEdit(${op.id})">Cancel</button>
+        </div>
       </div>
-    </div>
-    <div class="op-edit-form" id="op-edit-${op.id}">
-      <label>Operator name</label>
-      <input type="text" id="opname-${op.id}" value="${esc(op.name)}" required>
-      <label>Short code</label>
-      <input type="text" id="opcode-${op.id}" value="${esc(op.short_code || '')}" placeholder="e.g. ScR">
-      <div class="op-form-row">
-        <button type="button" class="btn primary" onclick="saveOperator(${op.id})">Save</button>
-        <button type="button" class="edit-btn" onclick="toggleEdit(${op.id})">Cancel</button>
-      </div>
-    </div>
-    <div class="op-expanded-content" id="op-expand-${op.id}" style="display:none;">
-      <div style="margin-bottom:14px;">
-        <h4 style="font-family:var(--heading);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin:0 0 10px;">Liveries</h4>
-        <div id="liveries-${op.id}">Loading…</div>
-      </div>
-      <div style="border-top:1px solid var(--hairline);padding-top:14px;">
-        <h4 style="font-family:var(--heading);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin:0 0 10px;">Add livery</h4>
-        <form onsubmit="addLivery(event, ${op.id})">
-          <label>Livery name</label>
-          <input type="text" id="lname-${op.id}" placeholder="e.g. ScotRail Saltire" required style="width:100%;margin-bottom:8px;">
-          <label>Code (for photo lookup)</label>
-          <input type="text" id="lcode-${op.id}" placeholder="e.g. ScR" required style="width:100%;margin-bottom:8px;">
-          <label>Colour</label>
-          <div style="display:flex;gap:8px;margin-bottom:10px;">
-            <input type="color" id="lcolour-picker-${op.id}" value="#a06bf0" oninput="document.getElementById('lcolour-${op.id}').value=this.value" style="width:36px;height:32px;padding:2px;border-radius:4px;border:1px solid var(--hairline);background:transparent;cursor:pointer;">
-            <input type="text" id="lcolour-${op.id}" value="#a06bf0" placeholder="#a06bf0" oninput="document.getElementById('lcolour-picker-${op.id}').value=this.value" style="flex:1;">
-          </div>
-          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);margin-bottom:10px;"><input type="checkbox" id="ldefault-${op.id}"> Set as default</label>
-          <button type="submit" class="btn primary">Add Livery</button>
-        </form>
+      <div class="op-expanded-content" id="op-expand-${op.id}" style="display:none;">
+        <div style="margin-bottom:14px;">
+          <h4 style="font-family:var(--heading);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin:0 0 10px;">Liveries</h4>
+          <div id="liveries-${op.id}">Loading…</div>
+        </div>
+        <div style="border-top:1px solid var(--hairline);padding-top:14px;">
+          <h4 style="font-family:var(--heading);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin:0 0 10px;">Add livery</h4>
+          <form onsubmit="addLivery(event, ${op.id})">
+            <label>Livery name</label>
+            <input type="text" id="lname-${op.id}" placeholder="e.g. ScotRail Saltire" required style="width:100%;margin-bottom:8px;">
+            <label>Code (for photo lookup)</label>
+            <input type="text" id="lcode-${op.id}" placeholder="e.g. ScR" required style="width:100%;margin-bottom:8px;">
+            <label>Colour</label>
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
+              <input type="color" id="lcolour-picker-${op.id}" value="${op.colour || '#a06bf0'}" oninput="document.getElementById('lcolour-${op.id}').value=this.value" style="width:36px;height:32px;padding:2px;border-radius:4px;border:1px solid var(--hairline);background:transparent;cursor:pointer;">
+              <input type="text" id="lcolour-${op.id}" value="${op.colour || '#a06bf0'}" placeholder="#a06bf0" oninput="document.getElementById('lcolour-picker-${op.id}').value=this.value" style="flex:1;">
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);margin-bottom:10px;"><input type="checkbox" id="ldefault-${op.id}"> Set as default</label>
+            <button type="submit" class="btn primary">Add Livery</button>
+          </form>
+        </div>
       </div>
     </div>
   `).join('')}</div>`;
@@ -258,11 +283,12 @@ async function loadLiveries(operatorId) {
 async function saveOperator(operatorId) {
   const name = document.getElementById(`opname-${operatorId}`).value.trim();
   const code = document.getElementById(`opcode-${operatorId}`).value.trim();
+  const colour = document.getElementById(`opcolour-${operatorId}`).value.trim();
   try {
     await fetch(`/api/operators/${operatorId}`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ name, short_code: code || null })
+      body: JSON.stringify({ name, short_code: code || null, colour })
     });
     await load();
   } catch(e) { alert('Save failed'); }
@@ -294,6 +320,8 @@ async function deleteOperator(operatorId, name) {
 
 async function addLivery(e, operatorId) {
   e.preventDefault();
+  const op = operators.find(o => o.id === operatorId);
+  const defaultColour = op ? (op.colour || '#a06bf0') : '#a06bf0';
   const name = document.getElementById(`lname-${operatorId}`).value.trim();
   const code = document.getElementById(`lcode-${operatorId}`).value.trim();
   const colour = document.getElementById(`lcolour-${operatorId}`).value.trim();
@@ -306,8 +334,8 @@ async function addLivery(e, operatorId) {
     });
     document.getElementById(`lname-${operatorId}`).value = '';
     document.getElementById(`lcode-${operatorId}`).value = '';
-    document.getElementById(`lcolour-${operatorId}`).value = '#a06bf0';
-    document.getElementById(`lcolour-picker-${operatorId}`).value = '#a06bf0';
+    document.getElementById(`lcolour-${operatorId}`).value = defaultColour;
+    document.getElementById(`lcolour-picker-${operatorId}`).value = defaultColour;
     document.getElementById(`ldefault-${operatorId}`).checked = false;
     await loadLiveries(operatorId);
   } catch(e) { alert('Add failed'); }

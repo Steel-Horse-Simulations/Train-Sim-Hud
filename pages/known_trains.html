@@ -7,7 +7,7 @@
 <script src="/pages/theme.js"></script>
 
 <style>
-  main { max-width: 1200px; margin: 0 auto; padding-top: 10px; }
+  main { max-width: 1600px; margin: 0 auto; padding-top: 10px; }
 
   .attention-panel { border-color: rgba(232,183,74,0.4); background: rgba(232,183,74,0.06); }
   .attention-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--hairline); }
@@ -17,25 +17,48 @@
   .setup-btn { background: var(--accent); color: #1a1013; border: none; padding: 5px 12px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; }
 
   .groups-container { display: flex; flex-direction: column; gap: 12px; }
-  .group-pill { background: var(--panel); border: 1px solid var(--hairline); border-radius: 6px; padding: 14px; }
+  .group-pill { background: var(--panel); border: 1px solid var(--hairline); border-radius: 8px; padding: 14px; }
   .group-pill-header { font-family: var(--heading); font-weight: 700; font-size: 14px; color: var(--accent-bright); margin-bottom: 10px; }
   .group-pill-header a { font-size: 11.5px; color: var(--text-dim); text-decoration: none; margin-left: 10px; }
   .group-pill-header a:hover { color: var(--accent-bright); }
 
-  .trains-grid { display: flex; flex-direction: column; gap: 10px; }
-  .train-pill { background: var(--panel-raised); border: 1px solid var(--hairline); border-radius: 6px; height: 72px; display: flex; align-items: stretch; position: relative; overflow: hidden; }
-  
-  .train-pill-livery-line { 
-    width: 4px; height: 100%; position: absolute; left: 0; top: 0; 
-    background: var(--livery-color);
+  .trains-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  @media (max-width: 860px) { .trains-grid { grid-template-columns: 1fr; } }
+
+  .train-pill {
+    background: var(--panel-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    height: 84px;
+    display: flex; align-items: stretch;
+    position: relative; overflow: hidden;
   }
-  
-  .train-pill-thumb { width: 181px; height: 72px; flex-shrink: 0; border-radius: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
+
+  /* Coloured bar: solid left strip + horizontal top/bottom fades matching the pill's rounded edge.
+     The left strip is 6px wide. The top/bottom 1px fades extend along the inner border edge
+     and taper off over 130px. overflow:hidden on .train-pill clips the corners automatically,
+     giving rounded ends that perfectly follow the pill's border-radius. */
+  .train-pill-livery-line {
+    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+    pointer-events: none; z-index: 1;
+    background-image:
+      /* Left solid bar */
+      linear-gradient(to right, var(--livery-color) 6px, transparent 6px),
+      /* Top 1px fade: livery colour → transparent over 130px */
+      linear-gradient(to right, var(--livery-color), transparent 130px),
+      /* Bottom 1px fade: same */
+      linear-gradient(to right, var(--livery-color), transparent 130px);
+    background-size:    100% 100%, 100% 1px, 100% 1px;
+    background-position: 0 0,      0 0,      0 100%;
+    background-repeat: no-repeat;
+  }
+
+  .train-pill-thumb { width: 210px; height: 84px; flex-shrink: 0; overflow: hidden; background: #1c1a20; display: flex; align-items: center; justify-content: center; }
   .train-pill-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .train-pill-thumb.none { font-size: 9px; color: var(--text-dim); text-transform: uppercase; }
-  
-  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 12px; align-items: flex-start; }
-  .train-pill-name { font-weight: 600; font-size: 20px; color: var(--text); word-wrap: break-word; line-height: 1.3; }
+
+  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 9px 14px; align-items: flex-start; }
+  .train-pill-name { font-weight: 600; font-size: 21px; color: var(--text); word-wrap: break-word; line-height: 1.3; }
   .train-pill-meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
   .train-pill-actions { display: flex; gap: 6px; align-self: flex-end; }
   .train-pill-actions .edit-btn { padding: 4px 10px; font-size: 11px; flex-shrink: 0; }
@@ -52,8 +75,6 @@
   .toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
   .toolbar button { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
   .toolbar button:hover { border-color: var(--accent); color: var(--accent-bright); }
-
-
 </style>
 </head>
 <body>

@@ -180,6 +180,11 @@ def init_db():
             );
         """)
 
+        # Migration: add colour to operators table
+        existing_op_cols = {row["name"] for row in conn.execute("PRAGMA table_info(operators)")}
+        if "colour" not in existing_op_cols:
+            conn.execute("ALTER TABLE operators ADD COLUMN colour TEXT")
+
         # Migration: add photo_override and speedometer to train_classes
         existing_cols2 = {row["name"] for row in conn.execute("PRAGMA table_info(train_classes)")}
         extra_cols = {"photo_override": "TEXT", "speedometer": "TEXT"}
@@ -227,7 +232,7 @@ def create_operator(name, short_code=None, logo_path=None):
 
 
 def update_operator(operator_id, fields):
-    allowed = {"name", "short_code", "logo_path"}
+    allowed = {"name", "short_code", "logo_path", "colour"}
     safe = {k: v for k, v in fields.items() if k in allowed}
     if not safe:
         return False
