@@ -132,20 +132,19 @@ function updateGaugeRing() {
   const dialMax = currentMaxSpeedMph * DIAL_HEADROOM_MULTIPLIER;
   if (tick) {
     const tickFrac = currentMaxSpeedMph / dialMax;
-    const tickRotation = 135.5 + (tickFrac * 271);
+    const tickRotation = 224.5 + (tickFrac * 271);
     tick.setAttribute('transform', `rotate(${tickRotation} 60 60)`);
   }
 
   if (currentSpeedMph === null || currentSpeedMph <= 0) {
-    ring.setAttribute('stroke-dasharray', '0 314.16');
+    ring.setAttribute('stroke-dasharray', '0 999');
     ring.setAttribute('stroke', 'none');
     if (overMaxBadge) overMaxBadge.classList.remove('show');
     return;
   }
   const frac = Math.max(0, Math.min(1, currentSpeedMph / dialMax));
   const arcLength = frac * 236.49;
-  ring.setAttribute('stroke-dasharray', arcLength.toFixed(1) + ' 314.16');
-
+  ring.setAttribute('stroke-dasharray', arcLength.toFixed(2) + ' 314.16');
   const overMax = currentSpeedMph > currentMaxSpeedMph;
   ring.setAttribute('stroke', overMax ? 'var(--status-red)' : speedRingColor(currentSpeedMph, currentLimitMph));
   if (overMaxBadge) overMaxBadge.classList.toggle('show', overMax);
