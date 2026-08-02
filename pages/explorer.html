@@ -17,11 +17,15 @@
     <div class="panel">
       <h2>Safety systems</h2>
       <p class="small dim">
-        Scans <span class="mono">CurrentDrivableActor</span> for any node whose name looks like a
-        safety system (AWS, TPWS, PZB, Sifa, vigilance, cruise control, etc.) and also probes a
-        list of known candidate paths to see which ones this loco responds to. Run while in an
-        active driving session with a loco loaded. Once you've found the right paths, "Enable all
-        found" sends <span class="mono">Value=true</span> to each one that responded.
+        Walks the <span class="mono">CurrentDrivableActor</span> node tree looking for any endpoint or property
+        whose name contains a safety keyword (AWS, TPWS, PZB, Sifa, vigilance, cruise, deadman, etc.).
+        For each match, attempts a <span class="mono">GET</span> to see if this loco actually exposes it.
+        Those that respond with readable data are listed below; "Enable all" sends <span class="mono">Value=true</span>
+        to each. Run this while in an active driving session with a loco loaded.
+      </p>
+      <p class="small dim">
+        If this finds nothing but the full "Scan endpoints" below finds safety nodes, copy that
+        scan and paste it to Claude — the exact paths can be extracted and enabled manually.
       </p>
       <div class="field-row" style="gap:8px;flex-wrap:wrap;">
         <button class="btn primary" onclick="scanSafety()">Scan for safety systems</button>
@@ -29,6 +33,13 @@
       </div>
       <p class="small" id="safety-status" style="margin-top:8px;"></p>
       <div id="safety-results" style="margin-top:12px;"></div>
+      
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--hairline);">
+        <p class="small dim" style="margin-bottom:8px;">Or test specific paths manually (one per line):</p>
+        <textarea id="manual-paths" placeholder="e.g.&#10;CurrentDrivableActor.AVIs&#10;CurrentDrivableActor.Cab_UK_TPWS.TPWS_BrakeOverride" style="width:100%;height:100px;font-family:var(--mono);font-size:12px;"></textarea>
+        <button class="btn" onclick="testManualPaths()" style="margin-top:8px;">Test these paths</button>
+        <div id="manual-results" style="margin-top:8px;"></div>
+      </div>
     </div>
 
     <div class="panel">
@@ -78,7 +89,7 @@ async function scanSafety() {
   const status = document.getElementById('safety-status');
   const results = document.getElementById('safety-results');
   const btn = document.getElementById('enable-btn');
-  status.textContent = 'Scanning… (needs an active driving session)';
+  status.textContent = 'Scanning CurrentDrivableActor… (needs an active driving session)';
   results.innerHTML = '';
   btn.disabled = true;
   try {
@@ -86,40 +97,99 @@ async function scanSafety() {
     const data = await res.json();
     lastSafetyResults = data;
     let html = '';
-    if (data.crawl_hits && data.crawl_hits.length) {
-      html += `<p class="small" style="color:var(--accent-bright);margin-bottom:6px;">Crawl found ${data.crawl_hits.length} safety-related node(s):</p>`;
-      html += `<ul style="margin:0 0 12px;padding-left:18px;">${data.crawl_hits.map(h => `<li class="small mono">${h}</li>`).join('')}</ul>`;
+    const nodes = data.safety_nodes || [];
+    if (!nodes.length) {
+      html = `<p class="small dim">No safety-related nodes found. This may mean your loco doesn't expose safety systems via the API.</p>`;
+      status.textContent = 'Scan complete: 0 paths found.';
     } else {
-      html += `<p class="small dim" style="margin-bottom:8px;">Crawl found no safety nodes in CurrentDrivableActor.</p>`;
+      const responding = nodes.filter(n => n.responded);
+      html = `<p class="small" style="color:var(--accent-bright);margin-bottom:8px;">${responding.length} of ${nodes.length} paths responded with readable data:</p>`;
+      html += `<div style="font-size:12px;font-family:var(--mono);max-height:300px;overflow-y:auto;border:1px solid var(--hairline);border-radius:4px;padding:8px;background:rgba(0,0,0,0.2);">`;
+      for (const n of nodes) {
+        const dot = n.responded ? `<span style="color:var(--status-green)">●</span>` : `<span style="color:var(--text-dim)">○</span>`;
+        const val = n.value ? ` = ${JSON.stringify(n.value).substring(0,60)}` : '';
+        html += `<div style="padding:2px 0;border-bottom:1px solid var(--hairline);">${dot} ${n.path}${val}</div>`;
+      }
+      html += `</div>`;
+      status.textContent = `Scan complete: ${responding.length} path(s) can be read.`;
+      btn.disabled = responding.length === 0;
     }
-    const responded = (data.candidate_results || []).filter(r => r.responded);
-    html += `<p class="small" style="color:var(--accent-bright);margin-bottom:6px;">Candidate path results (${responded.length}/${data.candidate_results.length} responded):</p>`;
-    html += `<div style="font-size:12px;font-family:var(--mono);">`;
-    for (const r of data.candidate_results) {
-      const dot = r.responded ? `<span style="color:var(--status-green)">●</span>` : `<span style="color:var(--hairline)">●</span>`;
-      html += `<div style="padding:3px 0;border-bottom:1px solid var(--hairline);">${dot} ${r.path} <span style="color:var(--text-dim)">[${r.get_status}]</span></div>`;
-    }
-    html += `</div>`;
     results.innerHTML = html;
-    status.textContent = `Scan complete. ${responded.length} path(s) found.`;
-    btn.disabled = responded.length === 0;
   } catch(e) {
     status.textContent = 'Scan failed: ' + e;
   }
 }
 
 async function enableSafety() {
+  if (!lastSafetyResults || !lastSafetyResults.safety_nodes) { alert('Run scan first'); return; }
+  const paths = lastSafetyResults.safety_nodes.filter(n => n.responded).map(n => n.path);
+  if (!paths.length) { alert('No paths responded'); return; }
   const status = document.getElementById('safety-status');
   status.textContent = 'Enabling…';
   try {
-    const res = await fetch('/api/safety/enable_all', { method: 'POST' });
+    const res = await fetch('/api/safety/enable_all', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ paths })
+    });
     const data = await res.json();
     const ok = (data.outcomes || []).filter(o => o.ok).length;
-    const skipped = (data.outcomes || []).filter(o => o.skipped).length;
     const failed = (data.outcomes || []).filter(o => !o.ok && !o.skipped).length;
-    status.textContent = `Done. ${ok} enabled, ${failed} failed, ${skipped} skipped (path not found on this loco).`;
+    const skipped = (data.outcomes || []).filter(o => o.skipped).length;
+    status.textContent = `Enabled ${ok} systems, ${failed} failed, ${skipped} skipped.`;
   } catch(e) {
     status.textContent = 'Enable failed: ' + e;
+  }
+}
+
+async function testManualPaths() {
+  const textarea = document.getElementById('manual-paths');
+  const paths = textarea.value.trim().split('\n').filter(p => p.trim()).map(p => p.trim());
+  if (!paths.length) { alert('Enter at least one path'); return; }
+  const results = document.getElementById('manual-results');
+  results.innerHTML = 'Testing…';
+  try {
+    const res = await fetch('/api/safety/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ test_paths: paths })
+    });
+    const data = await res.json();
+    const responding = (data.test_results || []).filter(r => r.responded);
+    let html = `<p class="small" style="color:var(--accent-bright);">Tested ${paths.length}, ${responding.length} responded:</p>`;
+    html += `<div style="font-size:12px;font-family:var(--mono);">`;
+    for (const r of (data.test_results || [])) {
+      const dot = r.responded ? `<span style="color:var(--status-green)">●</span>` : `<span style="color:var(--text-dim)">○</span>`;
+      const val = r.value ? ` = ${JSON.stringify(r.value).substring(0,50)}` : '';
+      html += `<div style="padding:2px 0;">${dot} ${r.path} [${r.status}]${val}</div>`;
+    }
+    html += `</div>`;
+    if (responding.length > 0) {
+      const pathsJson = JSON.stringify(responding.map(r => r.path));
+      html += `<button class="btn primary" style="margin-top:8px;" onclick="enableTestPathsHelper('${pathsJson.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">Enable these ${responding.length} path(s)</button>`;
+    }
+    results.innerHTML = html;
+  } catch(e) {
+    results.innerHTML = 'Test failed: ' + e;
+  }
+}
+
+async function enableTestPathsHelper(pathsJson) {
+  const paths = JSON.parse(pathsJson);
+  if (!paths.length) return;
+  const results = document.getElementById('manual-results');
+  results.innerHTML = 'Enabling…';
+  try {
+    const res = await fetch('/api/safety/enable_all', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ paths })
+    });
+    const data = await res.json();
+    const ok = (data.outcomes || []).filter(o => o.ok).length;
+    results.innerHTML = `<p class="small" style="color:var(--status-green);">Enabled ${ok}/${paths.length} systems.</p>`;
+  } catch(e) {
+    results.innerHTML = 'Enable failed: ' + e;
   }
 }
 

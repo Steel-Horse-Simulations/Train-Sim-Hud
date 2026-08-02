@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.4.0"
+APP_VERSION = "7.4.2"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1321,94 +1321,123 @@ def proxy_raw(subpath):
 
 # ---- safety systems --------------------------------------------------
 
-# Known TSW safety system node fragments — the crawl searches CurrentDrivableActor
-# children for any node whose name contains one of these (case-insensitive).
-# Paths that contain these strings in their full dotted name are candidates.
 _SAFETY_KEYWORDS = [
     "safety", "aws", "tpws", "pzb", "sifa", "vigilance", "deadman",
     "deadmanshandle", "cruisecontrol", "cruise", "afb", "afc",
-    "interventionbrake", "overspeed", "ato", "atc",
-]
-
-# Candidate writable paths: try GET first to confirm they exist, then write.
-# These are the most commonly seen writable safety properties in TSW locos.
-_SAFETY_CANDIDATE_PATHS = [
-    # AWS / TPWS (UK)
-    "CurrentDrivableActor.AWSEnabled",
-    "CurrentDrivableActor.SafetySystemEnabled",
-    "CurrentDrivableActor.SafetySystems.AWSEnabled",
-    "CurrentDrivableActor.SafetySystems.TPWSEnabled",
-    "CurrentDrivableActor.SafetySystems.Enabled",
-    # PZB / Sifa (DE)
-    "CurrentDrivableActor.PZBEnabled",
-    "CurrentDrivableActor.SifaEnabled",
-    "CurrentDrivableActor.SafetySystems.PZBEnabled",
-    "CurrentDrivableActor.SafetySystems.SifaEnabled",
-    # AFB cruise (DE)
-    "CurrentDrivableActor.AFBEnabled",
-    "CurrentDrivableActor.CruiseControlEnabled",
-    # Vigilance (generic)
-    "CurrentDrivableActor.VigilanceEnabled",
-    "CurrentDrivableActor.DeadMansHandleEnabled",
-    # Function-style toggles
-    "CurrentDrivableActor.Function.SetSafetySystemEnabled",
-    "CurrentDrivableActor.Function.EnableSafetySystems",
-    "CurrentDrivableActor.Function.SetAWSEnabled",
+    "interventionbrake", "overspeed", "ato", "atc", "avis", "device",
 ]
 
 
-@app.route("/api/safety/scan", methods=["GET"])
+@app.route("/api/safety/scan", methods=["GET", "POST"])
 def safety_scan():
-    """Crawls CurrentDrivableActor for nodes whose names suggest safety systems,
-    and also checks a hard-coded list of common writable safety paths.
-    Returns: found_paths (responded to GET), writable_paths (responded to PATCH Value=1)."""
-    results = {"crawl_hits": [], "candidate_results": []}
+    """GET: Crawls CurrentDrivableActor to find all safety-related nodes/endpoints
+    by name match. Then probes each one to see which respond with Result=Success.
+    
+    POST with {"test_paths": ["path1", "path2", ...]} to test specific paths manually
+    (useful when running a full discovery scan and finding paths manually)."""
+    
+    if request.method == "POST":
+        body = request.get_json(force=True, silent=True) or {}
+        test_paths = body.get("test_paths", [])
+        if not test_paths:
+            return jsonify({"error": "test_paths required"}), 400
+        results = []
+        for path in test_paths:
+            get_body, get_status = api_get(f"get/{path}", timeout=(1, 2))
+            responded = (
+                get_status == 200 and isinstance(get_body, dict) and
+                get_body.get("Result") == "Success"
+            )
+            results.append({
+                "path": path,
+                "status": get_status,
+                "responded": responded,
+                "value": get_body.get("Values") if responded else None,
+            })
+        return jsonify({"test_results": results, "total": len(results), "responding": sum(1 for r in results if r["responded"])})
+    
+    # GET: Auto-crawl for safety nodes
+    # Build a full discovery tree starting from CurrentDrivableActor
+    headers = api_headers()
+    if headers is None:
+        return jsonify({"error": "no_key"}), 400
 
-    # 1. Crawl list/CurrentDrivableActor for safety-related node names
-    body, status = api_get("list/CurrentDrivableActor")
-    if status == 200 and isinstance(body, dict):
-        nodes = _get_ci(body, ["Nodes", "nodes"], [])
-        if isinstance(nodes, list):
-            for n in nodes:
-                name = _get_ci(n, ["Name", "NodeName", "name", "nodename"]) if isinstance(n, dict) else str(n)
-                if not name:
-                    continue
-                lower = name.lower().replace(".", "").replace("_", "").replace(" ", "")
-                if any(kw in lower for kw in _SAFETY_KEYWORDS):
-                    results["crawl_hits"].append(name)
+    # Manual walk of CurrentDrivableActor tree to find safety nodes
+    safety_nodes = []  # (full_path, response_status, values)
+    visited = set()
+    queue = [("CurrentDrivableActor", None)]  # (path, parent_response)
 
-    # 2. Try the candidate hard-coded paths
-    for path in _SAFETY_CANDIDATE_PATHS:
-        get_body, get_status = api_get(f"get/{path}", timeout=(1, 2))
-        responded = get_status == 200 and isinstance(get_body, dict) and get_body.get("Result") == "Success"
-        results["candidate_results"].append({
-            "path": path,
-            "get_status": get_status,
-            "responded": responded,
-            "value": get_body.get("Values") if responded else None,
-        })
+    for _ in range(100):  # Limit iterations
+        if not queue:
+            break
+        path, _parent = queue.pop(0)
+        if path in visited or len(visited) > 200:
+            continue
+        visited.add(path)
 
-    return jsonify(results)
+        # Try to list children
+        body, status = api_get(f"list/{path}")
+        if status == 200 and isinstance(body, dict):
+            nodes = _get_ci(body, ["Nodes", "nodes"], [])
+            if isinstance(nodes, list):
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    child_name = _get_ci(node, ["NodeName", "nodename"])
+                    if not child_name:
+                        continue
+                    child_path = f"{path}.{child_name}" if path else child_name
+                    # Check if this node name matches safety keywords
+                    lower = child_name.lower().replace("_", "")
+                    if any(kw in lower for kw in _SAFETY_KEYWORDS):
+                        # Try to GET this path - see if it responds
+                        get_body, get_status = api_get(f"get/{child_path}", timeout=(1, 2))
+                        responded = (
+                            get_status == 200 and isinstance(get_body, dict) and
+                            get_body.get("Result") == "Success"
+                        )
+                        safety_nodes.append({
+                            "path": child_path,
+                            "name": child_name,
+                            "status": get_status,
+                            "responded": responded,
+                            "value": get_body.get("Values") if responded else None,
+                        })
+                    # Queue children
+                    queue.append((child_path, status))
+
+    return jsonify({
+        "safety_nodes": safety_nodes,
+        "total_found": len(safety_nodes),
+        "responding": sum(1 for n in safety_nodes if n["responded"]),
+    })
 
 
 @app.route("/api/safety/enable_all", methods=["POST"])
 def safety_enable_all():
-    """Attempts to write Value=1 (enable) to every candidate safety path that
-    responded to a prior GET with Result=Success. Returns per-path outcomes."""
+    """Attempts to write Value=true to every safety node path that responded
+    with Result=Success. Returns per-path outcomes."""
+    body = request.get_json(force=True, silent=True) or {}
+    paths = body.get("paths", [])
+    if not paths:
+        return jsonify({"error": "no paths provided"}), 400
+
     outcomes = []
-    for path in _SAFETY_CANDIDATE_PATHS:
+    for path in paths:
+        # Verify it still responds
         get_body, get_status = api_get(f"get/{path}", timeout=(1, 2))
         if not (get_status == 200 and isinstance(get_body, dict) and get_body.get("Result") == "Success"):
             outcomes.append({"path": path, "skipped": True, "reason": "no response to GET"})
             continue
-        # Try writing true/1 — TSW accepts either depending on the property type
+        # Try writing true
         patch_body, patch_status = api_patch(f"set/{path}", {"Value": "true"})
         outcomes.append({
             "path": path,
-            "patch_status": patch_status,
+            "status": patch_status,
             "ok": patch_status in (200, 204),
             "response": patch_body,
         })
+
     return jsonify({"outcomes": outcomes})
 
 
