@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.3.1"
+APP_VERSION = "7.3.3"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -952,6 +952,9 @@ timetable_db.init_db()
 
 import train_classes_db
 train_classes_db.init_db()
+_dedup_count = train_classes_db.dedup_train_classes()
+if _dedup_count:
+    print(f"[startup] deduped {_dedup_count} duplicate train class row(s)")
 
 import other_hud_sync
 

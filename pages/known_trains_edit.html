@@ -98,7 +98,6 @@
             <div class="row" data-field="operator"><span class="chk no">&#10005;</span> Operator</div>
             <div class="row" data-field="livery"><span class="chk no">&#10005;</span> Livery</div>
             <div class="row" data-field="group"><span class="chk no">&#10005;</span> Group</div>
-            <div class="row" data-field="subclass"><span class="chk no">&#10005;</span> Subclass</div>
             <div class="row" data-field="power"><span class="chk no">&#10005;</span> Power</div>
             <div class="row" data-field="speedometer"><span class="chk no">&#10005;</span> Speedometer</div>
           </div>
@@ -463,7 +462,6 @@ function isFieldFilled(fieldName) {
   if (fieldName === 'power') return primaryBoxIds.some(id => document.getElementById(id).checked);
   if (fieldName === 'speedometer') return document.getElementById('f-speedometer-analogue').checked || document.getElementById('f-speedometer-digital').checked;
   if (fieldName === 'group') return !!document.getElementById('f-group').value;
-  if (fieldName === 'subclass') return !!document.getElementById('f-subclass').value;
   const el = document.getElementById('f-' + fieldName);
   if (!el) return false;
   return el.value.trim() !== '';

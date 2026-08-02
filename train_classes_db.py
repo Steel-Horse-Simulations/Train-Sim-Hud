@@ -438,8 +438,14 @@ def record_live_sighting(raw_object_class, clean_name=None, formation_max_speed_
     catalogued yet) shows up in the Train Classes page right away, not
     hidden pending a UK/catalog check the way a fresh catalog import would
     default to. Just bumps times_seen if this class is already known,
-    whether that's from a prior sighting or a full catalog import."""
+    whether that's from a prior sighting or a full catalog import.
+
+    Deduplication searches by BOTH raw_object_class AND clean_name so that
+    a train first recorded via its raw API key ("RVM_BR_Class170_C") and
+    later seen again with a resolved clean name ("Class 170") does not
+    create two separate rows in the database."""
     name = (clean_name or raw_object_class or "").strip()
+    raw = (raw_object_class or "").strip()
     if not name:
         return
 
@@ -449,8 +455,18 @@ def record_live_sighting(raw_object_class, clean_name=None, formation_max_speed_
     conn = _connect()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT id, times_seen FROM train_classes WHERE source_name = ? COLLATE NOCASE", (name,))
-        row = cur.fetchone()
+
+        # Search by raw key first (most stable), then by clean name as fallback.
+        # This prevents a second row being created when TSW returns a clean name
+        # on a later poll for a train whose first sighting only had the raw key.
+        row = None
+        if raw:
+            cur.execute("SELECT id, times_seen FROM train_classes WHERE source_name = ? COLLATE NOCASE", (raw,))
+            row = cur.fetchone()
+        if not row and name and name != raw:
+            cur.execute("SELECT id, times_seen FROM train_classes WHERE source_name = ? COLLATE NOCASE", (name,))
+            row = cur.fetchone()
+
         if row:
             cur.execute(
                 "UPDATE train_classes SET times_seen = ?, updated_at = ? WHERE id = ?",
@@ -465,6 +481,67 @@ def record_live_sighting(raw_object_class, clean_name=None, formation_max_speed_
                 (name, name, max_speed_mph, now, now),
             )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def dedup_train_classes():
+    """Merges duplicate train_classes rows. Two passes:
+    1. Same display_name (case-insensitive) → keep highest times_seen row, sum counts.
+    2. Raw-API-key rows (source_name has underscores, no spaces, display_name == source_name,
+       meaning no human name was ever set) → delete if ANY clean-name row exists, since they
+       are earlier sightings of the same loco before TSW returned a readable class name.
+    Safe to call at startup — no-op if already clean."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT id, source_name, display_name, times_seen FROM train_classes ORDER BY id"
+        ).fetchall()
+
+        to_delete = []
+
+        # Pass 1: same display_name
+        seen_display = {}  # lower display_name -> primary id
+        for row in rows:
+            display = (row["display_name"] or row["source_name"] or "").strip()
+            key = display.lower()
+            if not key:
+                continue
+            if key in seen_display:
+                to_delete.append((seen_display[key], row["id"], row["times_seen"]))
+            else:
+                seen_display[key] = row["id"]
+
+        # Pass 2: raw-API-key rows where display_name was never set to anything readable
+        # (source_name == display_name AND no spaces, has underscores → still raw)
+        # Delete these if there are any other (clean-name) rows in the DB.
+        non_deleted_ids = {r["id"] for r in rows} - {d[1] for d in to_delete}
+        has_clean_rows = any(
+            " " in (r["display_name"] or "") or
+            (r["display_name"] and r["display_name"] != r["source_name"])
+            for r in rows if r["id"] in non_deleted_ids
+        )
+        if has_clean_rows:
+            for row in rows:
+                if row["id"] not in non_deleted_ids:
+                    continue
+                sn = (row["source_name"] or "")
+                dn = (row["display_name"] or "")
+                # Raw key: no spaces, contains underscores, display_name still equals source_name
+                if "_" in sn and " " not in sn and dn == sn:
+                    to_delete.append((None, row["id"], row["times_seen"]))
+
+        for primary_id, dupe_id, dupe_times in to_delete:
+            if primary_id is not None:
+                conn.execute(
+                    "UPDATE train_classes SET times_seen = times_seen + ? WHERE id = ?",
+                    (dupe_times, primary_id)
+                )
+            conn.execute("DELETE FROM train_classes WHERE id = ?", (dupe_id,))
+
+        if to_delete:
+            conn.commit()
+        return len(to_delete)
     finally:
         conn.close()
 
