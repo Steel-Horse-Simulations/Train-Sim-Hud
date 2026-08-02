@@ -20,7 +20,7 @@
     overflow: hidden;
   }
 
-  /* Top/bottom border fade: z-index 0 sits behind inner pill */
+  /* Top/bottom/right border fade: z-index 0 sits behind inner pill */
   .pill-wrap::after {
     content: '';
     position: absolute;
@@ -29,7 +29,8 @@
     z-index: 0;
     background:
       linear-gradient(to right, transparent, rgba(11,10,16,0.92) 156px, rgba(11,10,16,0.92) 100%) 0 0    / 100% 4px no-repeat,
-      linear-gradient(to right, transparent, rgba(11,10,16,0.92) 156px, rgba(11,10,16,0.92) 100%) 0 100% / 100% 4px no-repeat;
+      linear-gradient(to right, transparent, rgba(11,10,16,0.92) 156px, rgba(11,10,16,0.92) 100%) 0 100% / 100% 4px no-repeat,
+      rgba(11,10,16,0.92) 100% 0 / 4px 100% no-repeat;
   }
 
   /* Large left border-radius cuts concave arc into livery background */
