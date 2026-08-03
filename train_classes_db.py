@@ -60,7 +60,7 @@ EDITABLE_FIELDS = {
 # Known Trains v2: the field-completion checklist the status dot is based
 # on, per the approved design (7 fields, percentage-based so it's easy to
 # extend later without changing the colour thresholds themselves).
-COMPLETION_FIELDS = ["display_name", "livery_name", "livery_id", "group_id", "subclass_id", "power_set", "thumbnail_path"]
+COMPLETION_FIELDS = ["display_name", "livery_name", "livery_id", "group_id", "power_set", "thumbnail_path"]
 
 # Electrification sub-options, confirmed accurate via research when this
 # was designed - 6.25kV AC deliberately excluded as obsolete since the 1980s.
