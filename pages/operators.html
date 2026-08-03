@@ -12,12 +12,12 @@
   .trains-grid { display: flex; flex-direction: column; gap: 10px; }
   .op-item { display: flex; flex-direction: column; }
 
-  /* Solid coloured frame layer behind the inner pill; the inner pill's
-     border-radius carves a true curve out of it. Fade is via mask so the
-     shape of the curve is unaffected. */
   .pill-wrap {
     position: relative;
     padding: 4px 16px 4px 4px;
+    border: 4px solid rgba(255,255,255,0.13);
+    border-radius: 20px;
+    overflow: hidden;
   }
 
   .pill-wrap::before {

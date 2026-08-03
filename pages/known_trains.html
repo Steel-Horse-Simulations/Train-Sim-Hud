@@ -24,14 +24,12 @@
 
   .trains-grid { display: flex; flex-direction: column; gap: 10px; }
 
-  /* The coloured frame is a SOLID layer sitting behind the inner pill.
-     Because it is solid (not a hard-stopped gradient), the inner pill's
-     border-radius carves a true curve out of it at the corners instead of
-     leaving a square edge. The left-fade is done with a mask, which does not
-     affect the shape, so the curve survives. */
   .pill-wrap {
     position: relative;
     padding: 4px 16px 4px 4px;
+    border: 4px solid rgba(255,255,255,0.13);
+    border-radius: 20px;
+    overflow: hidden;
   }
 
   .pill-wrap::before {
@@ -40,7 +38,6 @@
     inset: 0;
     border-radius: 20px;
     background: var(--livery-color);
-    /* Opaque at the right edge, fading out by the left edge of the picture (420px) */
     -webkit-mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
             mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
     pointer-events: none;
