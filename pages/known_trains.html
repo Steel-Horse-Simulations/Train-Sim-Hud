@@ -40,8 +40,8 @@
     border-radius: 20px;
     pointer-events: none;
     z-index: 0;
-    -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 120px, #000 420px);
-            mask-image: linear-gradient(to left, transparent 0, transparent 120px, #000 420px);
+    -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 24px, #000 420px);
+            mask-image: linear-gradient(to left, transparent 0, transparent 24px, #000 420px);
   }
 
   /* Coloured frame on top of grey border */
@@ -51,8 +51,8 @@
     inset: 0;
     border-radius: 20px;
     background: var(--livery-color);
-    -webkit-mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
-            mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
+    -webkit-mask-image: linear-gradient(to left, #000 0, #000 24px, transparent 420px);
+            mask-image: linear-gradient(to left, #000 0, #000 24px, transparent 420px);
     pointer-events: none;
     z-index: 1;
   }
@@ -61,7 +61,7 @@
      Its right-side radius is what produces the concave curve in the frame. */
   .train-pill {
     background: color-mix(in srgb, var(--livery-color) 20%, transparent);
-    border-radius: 8px 20px 20px 8px;
+    border-radius: 16px 20px 20px 16px;
     height: 156px;
     display: flex; align-items: stretch;
     position: relative; z-index: 1;

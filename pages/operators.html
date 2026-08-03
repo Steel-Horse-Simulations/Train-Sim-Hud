@@ -28,8 +28,8 @@
     border-radius: 20px;
     pointer-events: none;
     z-index: 0;
-    -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 60px, #000 156px);
-            mask-image: linear-gradient(to left, transparent 0, transparent 60px, #000 156px);
+    -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 24px, #000 156px);
+            mask-image: linear-gradient(to left, transparent 0, transparent 24px, #000 156px);
   }
 
   /* Coloured frame on top of grey border */
@@ -39,8 +39,8 @@
     inset: 0;
     border-radius: 20px;
     background: var(--livery-color);
-    -webkit-mask-image: linear-gradient(to left, #000 0, #000 60px, transparent 156px);
-            mask-image: linear-gradient(to left, #000 0, #000 60px, transparent 156px);
+    -webkit-mask-image: linear-gradient(to left, #000 0, #000 24px, transparent 156px);
+            mask-image: linear-gradient(to left, #000 0, #000 24px, transparent 156px);
     pointer-events: none;
     z-index: 1;
   }
@@ -48,7 +48,7 @@
   /* Inner pill body: tinted with the operator colour at 20% opacity. */
   .train-pill {
     background: color-mix(in srgb, var(--livery-color) 20%, transparent);
-    border-radius: 8px 20px 20px 8px;
+    border-radius: 16px 20px 20px 16px;
     height: 156px;
     display: flex; align-items: stretch;
     position: relative; z-index: 1;
