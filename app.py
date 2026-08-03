@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.18.0"
+APP_VERSION = "7.18.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1514,11 +1514,14 @@ def loco_identity():
     # 1) Direct match: this raw/clean identity has its own train_classes row
     # (covers ordinary trains AND the new non-destructive Variants feature,
     # since a variant row keeps its own group_id/subclass_id once attached).
+    # Clean display name is tried first - it's the properly-configured row a
+    # user sets up in Known Trains; a raw ObjectClass string can still match
+    # an older, unconfigured duplicate row left over from before dedup ran.
     own_row = None
-    if raw:
-        own_row = train_classes_db.get_train_class_by_source_name(raw)
-    if not own_row and name:
+    if name:
         own_row = train_classes_db.get_train_class_by_source_name(name)
+    if not own_row and raw:
+        own_row = train_classes_db.get_train_class_by_source_name(raw)
     if own_row:
         group = train_classes_db.get_group(own_row["group_id"]) if own_row.get("group_id") else None
         subclass = train_classes_db.get_subclass(own_row["subclass_id"]) if own_row.get("subclass_id") else None
