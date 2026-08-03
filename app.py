@@ -1800,6 +1800,7 @@ def known_trains_list():
     show_hidden = request.args.get("show_hidden") == "1"
     classes = train_classes_db.list_train_classes(visible_only=not show_hidden)
     groups_by_id = {g["id"]: g for g in train_classes_db.list_groups()}
+    families_by_id = {f["id"]: f for f in train_classes_db.list_families()}
     operators_by_id = {}
     liveries_by_key = {}
     for op in train_classes_db.list_operators():
@@ -1836,6 +1837,7 @@ def known_trains_list():
                 op = operators_by_id.get(op_id)
                 if op and op.get("colour"):
                     colour = op["colour"]
+        family = families_by_id.get(group.get("family_id")) if group else None
         results.append({
             **tc,
             "resolved_max_speed_mph": resolved["max_speed_mph"],
@@ -1843,6 +1845,8 @@ def known_trains_list():
             "status": status,
             "power_label": power,
             "group_name": group["name"] if group else None,
+            "family_id": family["id"] if family else None,
+            "family_name": family["name"] if family else None,
             "operator_colour": colour,
         })
 

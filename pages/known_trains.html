@@ -228,16 +228,20 @@ async function renderTable(classes) {
 
   const groups = new Map();
   for (const c of filtered) {
-    const key = c.group_name || '(Ungrouped)';
-    if (!groups.has(key)) groups.set(key, { groupId: c.group_id, items: [] });
+    // Prefer the higher-level Group (family) name so multiple Classes that
+    // belong to the same family (e.g. Class 801/802/805/807 all under
+    // "Class 8xx") appear together in one section. Falls back to the
+    // Class name, then Ungrouped, for trains with no family assigned.
+    const key = c.family_name || c.group_name || '(Ungrouped)';
+    if (!groups.has(key)) groups.set(key, { groupId: c.group_id, familyId: c.family_id, items: [] });
     groups.get(key).items.push(c);
   }
 
   let html = '';
-  for (const [groupName, { groupId, items }] of groups) {
-    const settingsLink = groupId
-      ? `<a href="/pages/known_trains_group.html?id=${groupId}">&#9881; Group settings</a>`
-      : '';
+  for (const [groupName, { groupId, familyId, items }] of groups) {
+    const settingsLink = familyId
+      ? `<a href="/pages/groups.html">&#9881; Group settings</a>`
+      : (groupId ? `<a href="/pages/known_trains_group.html?id=${groupId}">&#9881; Group settings</a>` : '');
     html += `<div class="group-pill">
       <div class="group-pill-header">${groupName}${settingsLink}</div>
       <div class="trains-grid">`;
@@ -289,14 +293,14 @@ async function renderTableFromCache(classes) {
   empty.style.display = 'none';
   const grouped = new Map();
   for (const c of filtered) {
-    const key = c.group_id ? String(c.group_id) : '(Ungrouped)';
+    const key = c.family_name || c.group_name || '(Ungrouped)';
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(c);
   }
   let html = '';
   for (const [key, items] of grouped) {
     html += `<div class="group-pill">
-      <div class="group-pill-header">${key === '(Ungrouped)' ? key : 'Group ' + key}</div>
+      <div class="group-pill-header">${key}</div>
       <div class="trains-grid">`;
     for (const c of items) {
       const dashIdx = (c.display_name || '').indexOf(' - ');
