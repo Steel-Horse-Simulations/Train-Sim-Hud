@@ -206,6 +206,27 @@
           </p>
         </div>
 
+        <div class="panel" style="margin-top:16px;" id="mergePanel">
+          <h2>Merge into existing train</h2>
+          <p style="font-size:12.5px; color:var(--text-dim); margin:0 0 10px;">
+            This train is ungrouped. If it's really just a subclass variant of a train
+            you've already set up (the same class shows up under a few different names in
+            the menu), you can fold it into that train here. This row will disappear from
+            Known Trains and future sightings of it will count towards the train you pick
+            below. Everything about it - name, operator, livery, photo - will come from
+            that train; only the subclass you choose below can still give it its own speed.
+          </p>
+          <label>Merge into</label>
+          <select id="f-mergeTarget" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;">
+            <option value="">Choose a train…</option>
+          </select>
+          <label>Subclass (optional - gives this specific variant its own speed)</label>
+          <select id="f-mergeSubclass" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;">
+            <option value="">(none)</option>
+          </select>
+          <button class="btn primary" style="width: 100%;" onclick="mergeTrain()" id="mergeBtn">Merge and remove this entry</button>
+        </div>
+
         <div class="save-bar">
           <button class="btn primary" id="saveBtn" onclick="save()">Save</button>
           <button class="btn primary" onclick="location.href='/pages/known_trains.html'">Cancel</button>
@@ -257,6 +278,8 @@ async function load() {
   document.getElementById('f-speedometer-digital').checked = (speedometer === 'digital');
   
   document.getElementById('f-visible').checked = trainClass.is_visible !== 0;
+
+  setupMergePanel();
   
   document.getElementById('f-steam').checked = !!trainClass.is_steam;
   document.getElementById('f-diesel').checked = !!trainClass.is_diesel;
@@ -562,6 +585,92 @@ async function save() {
 
 
 function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
+
+async function setupMergePanel() {
+  const panel = document.getElementById('mergePanel');
+  // Only ungrouped trains can be merged into another train.
+  if (trainClass.group_id) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+
+  const targetSel = document.getElementById('f-mergeTarget');
+  try {
+    const res = await fetch('/api/known_trains/list?show_hidden=1');
+    const data = res.ok ? await res.json() : { classes: [] };
+    const candidates = (data.classes || []).filter(c => c.id !== Number(trainClassId) && c.group_id);
+    candidates.sort((a, b) => (a.display_name || a.source_name || '').localeCompare(b.display_name || b.source_name || ''));
+    targetSel.innerHTML = '<option value="">Choose a train…</option>' +
+      candidates.map(c => `<option value="${c.id}" data-group-id="${c.group_id}">${esc(c.display_name || c.source_name)}</option>`).join('');
+  } catch (e) {
+    targetSel.innerHTML = '<option value="">Could not load trains</option>';
+  }
+
+  targetSel.addEventListener('change', refreshMergeSubclasses);
+}
+
+async function refreshMergeSubclasses() {
+  const targetSel = document.getElementById('f-mergeTarget');
+  const subSel = document.getElementById('f-mergeSubclass');
+  const opt = targetSel.options[targetSel.selectedIndex];
+  const groupId = opt ? opt.dataset.groupId : '';
+  if (!groupId) {
+    subSel.innerHTML = '<option value="">(none)</option>';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/known_trains/groups/${groupId}`);
+    const group = res.ok ? await res.json() : { subclasses: [] };
+    subSel.innerHTML = '<option value="">(none)</option>' +
+      (group.subclasses || []).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  } catch (e) {
+    subSel.innerHTML = '<option value="">(none)</option>';
+  }
+}
+
+function esc(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+async function mergeTrain() {
+  const targetId = document.getElementById('f-mergeTarget').value;
+  if (!targetId) {
+    alert('Choose a train to merge into first.');
+    return;
+  }
+  const subclassId = document.getElementById('f-mergeSubclass').value;
+  if (!confirm('This will remove this entry from Known Trains and fold its sighting count into the train you chose. This cannot be undone. Continue?')) {
+    return;
+  }
+  const btn = document.getElementById('mergeBtn');
+  btn.textContent = 'Merging…';
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/known_trains/classes/${trainClassId}/merge_into`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        target_class_id: Number(targetId),
+        subclass_id: subclassId ? Number(subclassId) : null,
+      }),
+    });
+    if (res.ok) {
+      location.href = '/pages/known_trains.html';
+    } else {
+      const err = await res.json().catch(() => ({}));
+      btn.textContent = 'Merge and remove this entry';
+      btn.disabled = false;
+      alert('Merge failed: ' + (err.error || res.statusText));
+    }
+  } catch (e) {
+    btn.textContent = 'Merge and remove this entry';
+    btn.disabled = false;
+    alert('Error: ' + e.message);
+  }
+}
 
 load();
 </script>

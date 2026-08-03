@@ -192,6 +192,26 @@ def init_db():
             if col not in existing_cols2:
                 conn.execute(f"ALTER TABLE train_classes ADD COLUMN {col} {col_type}")
 
+        # Aliases: an ungrouped train class can be merged into an existing
+        # (target) train class. The merged row is deleted; this table
+        # remembers its raw identifiers so future live sightings are
+        # attributed to the target instead of recreating a stray row.
+        # subclass_id (optional) lets this specific variant resolve its own
+        # speed via the target's group/subclass even though every other
+        # attribute (name, livery, photo, etc.) comes from the target.
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS train_class_aliases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id TEXT,
+                source_name TEXT,
+                target_class_id INTEGER NOT NULL REFERENCES train_classes(id) ON DELETE CASCADE,
+                subclass_id INTEGER REFERENCES loco_subclasses(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_alias_source_id ON train_class_aliases(source_id);
+            CREATE INDEX IF NOT EXISTS idx_alias_source_name ON train_class_aliases(source_name);
+        """)
+
         conn.commit()
     finally:
         conn.close()
@@ -461,6 +481,23 @@ def record_live_sighting(raw_object_class, clean_name=None, formation_max_speed_
     try:
         cur = conn.cursor()
 
+        # Alias check: if this raw/clean name was merged into another train
+        # class, redirect the sighting there instead of recreating a row.
+        alias = None
+        if raw:
+            cur.execute("SELECT * FROM train_class_aliases WHERE source_name = ? COLLATE NOCASE", (raw,))
+            alias = cur.fetchone()
+        if not alias and name and name != raw:
+            cur.execute("SELECT * FROM train_class_aliases WHERE source_name = ? COLLATE NOCASE", (name,))
+            alias = cur.fetchone()
+        if alias:
+            cur.execute(
+                "UPDATE train_classes SET times_seen = times_seen + 1, updated_at = ? WHERE id = ?",
+                (now, alias["target_class_id"]),
+            )
+            conn.commit()
+            return
+
         # Search by raw key first (most stable), then by clean name as fallback.
         # This prevents a second row being created when TSW returns a clean name
         # on a later poll for a train whose first sighting only had the raw key.
@@ -718,6 +755,15 @@ def get_group(group_id):
         conn.close()
 
 
+def get_subclass(subclass_id):
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM loco_subclasses WHERE id = ?", (subclass_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def list_groups():
     conn = _connect()
     try:
@@ -858,16 +904,85 @@ def compute_completion(train_class_row):
 
 
 def needs_attention():
-    """Anything missing a display name, OR not assigned to a group, OR
-    not assigned to a subclass - per the approved design, not just "never
-    seen before"."""
+    """Anything missing one or more of the COMPLETION_FIELDS - i.e. anything
+    that would not show a green completion dot on the Known Trains list."""
     conn = _connect()
     try:
-        rows = conn.execute(
-            "SELECT * FROM train_classes WHERE display_name IS NULL OR display_name = '' "
-            "OR group_id IS NULL OR subclass_id IS NULL "
-            "ORDER BY times_seen DESC"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        rows = conn.execute("SELECT * FROM train_classes ORDER BY times_seen DESC").fetchall()
+        result = []
+        for r in rows:
+            row = dict(r)
+            status = compute_completion(row)
+            if status["percent"] < 100:
+                result.append(row)
+        return result
+    finally:
+        conn.close()
+
+
+# ---- Merge / aliasing ------------------------------------------------------
+
+def merge_train_class_into(source_class_id, target_class_id, subclass_id=None):
+    """Merges an ungrouped train class into an existing (target) class.
+    The source row's raw identifiers are remembered in train_class_aliases
+    so future live sightings are attributed to the target instead of
+    recreating a stray row. The source row is then deleted; its historic
+    times_seen count is folded into the target. subclass_id (optional) lets
+    this specific variant resolve its own speed via the target's group even
+    though every other attribute comes from the target."""
+    if source_class_id == target_class_id:
+        return False, "cannot merge a train into itself"
+
+    conn = _connect()
+    try:
+        source = conn.execute("SELECT * FROM train_classes WHERE id = ?", (source_class_id,)).fetchone()
+        target = conn.execute("SELECT * FROM train_classes WHERE id = ?", (target_class_id,)).fetchone()
+        if not source:
+            return False, "source train not found"
+        if not target:
+            return False, "target train not found"
+        if source["group_id"] is not None:
+            return False, "only ungrouped trains can be merged into another train"
+
+        now = datetime.now().isoformat(timespec="seconds")
+        conn.execute(
+            "INSERT INTO train_class_aliases (source_id, source_name, target_class_id, subclass_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (str(source["source_id"]) if source["source_id"] is not None else None,
+             source["source_name"], target_class_id, subclass_id, now),
+        )
+        conn.execute(
+            "UPDATE train_classes SET times_seen = times_seen + ?, updated_at = ? WHERE id = ?",
+            (source["times_seen"] or 0, now, target_class_id),
+        )
+        conn.execute("DELETE FROM train_classes WHERE id = ?", (source_class_id,))
+        conn.commit()
+        return True, None
+    finally:
+        conn.close()
+
+
+def get_alias_for_raw(raw_object_class, clean_name=None):
+    """Looks up whether the currently-detected loco is an alias merged into
+    another train class. Returns the alias row (with target_class_id and
+    optional subclass_id) or None. Used live so the HUD can resolve this
+    specific variant's speed via its assigned subclass while every other
+    attribute is drawn from the target class."""
+    raw = (raw_object_class or "").strip()
+    name = (clean_name or "").strip()
+    if not raw and not name:
+        return None
+    conn = _connect()
+    try:
+        row = None
+        if raw:
+            row = conn.execute(
+                "SELECT * FROM train_class_aliases WHERE source_name = ? COLLATE NOCASE", (raw,)
+            ).fetchone()
+        if not row and name and name != raw:
+            row = conn.execute(
+                "SELECT * FROM train_class_aliases WHERE source_name = ? COLLATE NOCASE", (name,)
+            ).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()

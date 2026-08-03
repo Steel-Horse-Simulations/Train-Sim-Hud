@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.13.0"
+APP_VERSION = "7.14.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1504,6 +1504,21 @@ def loco_identity():
     name = find_loco_class()
     raw = get_current_raw_object_class()
     max_speed = loco_profiles.get_effective_max_speed_mph(raw) if raw else loco_profiles.DEFAULT_MAX_SPEED_MPH
+
+    # If this raw/clean identity was merged into another train class, this
+    # specific variant may have its own subclass assigned - use that
+    # subclass's speed override instead of the generic profile value, while
+    # everything else about the train still comes from the target class.
+    alias = train_classes_db.get_alias_for_raw(raw, clean_name=name) if (raw or name) else None
+    if alias and alias.get("subclass_id"):
+        target = train_classes_db.get_train_class(alias["target_class_id"])
+        if target:
+            group = train_classes_db.get_group(target["group_id"]) if target.get("group_id") else None
+            subclass = train_classes_db.get_subclass(alias["subclass_id"])
+            resolved = train_classes_db.resolve_speeds(target, group=group, subclass=subclass)
+            if resolved.get("max_speed_mph") is not None:
+                max_speed = resolved["max_speed_mph"]
+
     return jsonify({"name": name, "raw_object_class": raw, "max_speed_mph": max_speed})
 
 
@@ -1869,6 +1884,31 @@ def known_trains_update(train_class_id):
         if not tc:
             return jsonify({"error": "not_found"}), 404
         return jsonify(tc)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/known_trains/classes/<int:train_class_id>/merge_into", methods=["POST"])
+def known_trains_merge(train_class_id):
+    """Merges an ungrouped train class into an existing target train class.
+    The source row is deleted; its raw identifiers are remembered so future
+    live sightings are attributed to the target. Optional subclass_id lets
+    this specific variant resolve its own speed via the target's group."""
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        target_class_id = body.get("target_class_id")
+        subclass_id = body.get("subclass_id")
+        if not target_class_id:
+            return jsonify({"error": "missing_target_class_id"}), 400
+        ok, error = train_classes_db.merge_train_class_into(
+            train_class_id, int(target_class_id),
+            int(subclass_id) if subclass_id else None,
+        )
+        if not ok:
+            return jsonify({"error": error}), 400
+        return jsonify({"ok": True})
     except Exception as e:
         import traceback
         traceback.print_exc()
