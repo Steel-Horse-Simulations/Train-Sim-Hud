@@ -24,58 +24,44 @@
 
   .trains-grid { display: flex; flex-direction: column; gap: 10px; }
 
+  /* pill-wrap: outer coloured frame. Its own background provides:
+       - a solid 16px vertical bar on the RIGHT edge (full height)
+       - top/bottom 4px strips that fade from solid livery (right) to
+         transparent, ending exactly at the left edge of the picture (420px)
+     The inner .train-pill sits inside the padding and paints over this
+     background; its large right-side border-radius carves a concave curve
+     into the coloured frame at the top-right/bottom-right corners. */
   .pill-wrap {
     border-radius: 20px;
     padding: 4px 16px 4px 4px;
-    background: var(--livery-color);
+    background:
+      linear-gradient(to left, var(--livery-color) 16px, transparent 16px),
+      linear-gradient(to left, var(--livery-color), transparent 420px) 0 0    / 100% 4px no-repeat,
+      linear-gradient(to left, var(--livery-color), transparent 420px) 0 100% / 100% 4px no-repeat;
     position: relative;
     overflow: hidden;
   }
 
-  /* Top/bottom/left border fade: only visible in the 4px strips; z-index 0 sits behind inner pill */
-  .pill-wrap::after {
-    content: '';
-    position: absolute;
-    left: 0; right: 16px; top: 0; bottom: 0;
-    pointer-events: none;
-    z-index: 0;
-    background:
-      linear-gradient(to left, transparent, rgba(11,10,16,0.92) 420px, rgba(11,10,16,0.92) 100%) 0 0    / 100% 4px no-repeat,
-      linear-gradient(to left, transparent, rgba(11,10,16,0.92) 420px, rgba(11,10,16,0.92) 100%) 0 100% / 100% 4px no-repeat,
-      rgba(11,10,16,0.92) 0 0 / 4px 100% no-repeat;
-  }
-
-  /* Inner pill: large right border-radius cuts a concave arc into the livery background,
-     producing the curved inner edge. z-index 1 sits above ::after. Row-reverse puts
-     the thumbnail on the right, content on the left. */
+  /* Inner pill body: tinted with the livery colour at 20% opacity.
+     Large right-side border-radius creates the concave inner curve. */
   .train-pill {
-    background: var(--panel-raised);
+    background: color-mix(in srgb, var(--livery-color) 20%, transparent);
     border-radius: 8px 20px 20px 8px;
     height: 156px;
-    display: flex; flex-direction: row-reverse; align-items: stretch;
+    display: flex; align-items: stretch;
     position: relative; overflow: hidden;
-    z-index: 1;
   }
 
-  .train-pill-thumb { 
-    width: 420px; height: 156px; flex-shrink: 0; overflow: hidden; background: #1c1a20; 
-    display: flex; align-items: center; justify-content: center; position: relative;
-    border-radius: 0; /* square corners on thumbnail */
+  /* Picture sits flush against the pill's right edge, and flush top/bottom -
+     no gap, no mask needed since overflow:hidden on .train-pill clips it to
+     the same curve as the coloured frame. */
+  .train-pill-thumb {
+    width: 420px; height: 156px; flex-shrink: 0; overflow: hidden; background: #1c1a20;
+    display: flex; align-items: center; justify-content: center;
+    margin-left: auto; /* pushes thumb to the right edge */
   }
-  .train-pill-thumb img { width: 100%; height: 100%; object-fit: contain; } /* contain = no cropping */
+  .train-pill-thumb img { width: 100%; height: 100%; object-fit: contain; }
   .train-pill-thumb.none { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
-
-  /* Mask overlay: hides the left-side livery colour that bleeds beyond the thumbnail.
-     Dark panel-coloured mask covers everything left of the thumbnail's right edge. */
-  .train-pill-thumb::after {
-    content: '';
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 100%; /* covers full width */
-    background: linear-gradient(to left, transparent 0%, rgba(20,18,24,0.95) 80%, rgba(20,18,24,0.95) 100%);
-    pointer-events: none;
-    z-index: 2;
-  }
 
   .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 16px; align-items: flex-start; }
   .train-pill-name { font-weight: 600; font-size: 26px; color: var(--text); word-wrap: break-word; line-height: 1.2; }
@@ -253,7 +239,6 @@ async function renderTable(classes) {
       
       html += `<div class="pill-wrap" style="--livery-color: ${liveryColor};">
         <div class="train-pill">
-          <div class="train-pill-thumb">${thumb}</div>
           <div class="train-pill-content">
             <div style="flex: 1; width: 100%;">
               <div class="train-pill-name">${c.display_name || c.source_name}</div>
@@ -266,6 +251,7 @@ async function renderTable(classes) {
               <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
             </div>
           </div>
+          <div class="train-pill-thumb">${thumb}</div>
         </div>
       </div>`;
     }
@@ -303,7 +289,6 @@ async function renderTableFromCache(classes) {
         : `<div class="none">no<br>photo</div>`;
       html += `<div class="pill-wrap" style="--livery-color: ${liveryColor};">
         <div class="train-pill">
-          <div class="train-pill-thumb">${thumb}</div>
           <div class="train-pill-content">
             <div style="flex: 1; width: 100%;">
               <div class="train-pill-name">${c.display_name || c.source_name}</div>
@@ -316,6 +301,7 @@ async function renderTableFromCache(classes) {
               <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
             </div>
           </div>
+          <div class="train-pill-thumb">${thumb}</div>
         </div>
       </div>`;
     }
