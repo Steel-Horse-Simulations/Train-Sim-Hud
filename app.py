@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.12.10"
+APP_VERSION = "7.13.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1742,11 +1742,17 @@ def known_trains_list():
     classes = train_classes_db.list_train_classes(visible_only=not show_hidden)
     groups_by_id = {g["id"]: g for g in train_classes_db.list_groups()}
     operators_by_id = {}
+    liveries_by_key = {}
     for op in train_classes_db.list_operators():
         try:
-            operators_by_id[int(op["id"])] = op
+            op_id = int(op["id"])
         except (ValueError, TypeError):
-            pass
+            continue
+        operators_by_id[op_id] = op
+        for liv in train_classes_db.list_liveries(op_id):
+            code = (liv.get("code") or "").strip().lower()
+            if code:
+                liveries_by_key[(op_id, code)] = liv
 
     results = []
     for tc in classes:
@@ -1754,12 +1760,23 @@ def known_trains_list():
         resolved = train_classes_db.resolve_speeds(tc, group=group)
         status = train_classes_db.compute_completion(tc)
         power = train_classes_db.compute_power_label(tc.get("is_steam"), tc.get("is_diesel"), tc.get("is_electric"))
-        # livery_id stores the operator_id; pull that operator's colour so the
-        # client can colour the pill bar without any extra per-train API calls
+        # livery_id stores the operator_id; livery_name stores the livery code.
+        # Prefer the specific livery's own colour over the operator's default
+        # colour, so each pill reflects the actual train livery.
+        colour = None
         try:
-            op = operators_by_id.get(int(tc.get("livery_id") or 0))
+            op_id = int(tc.get("livery_id") or 0)
         except (ValueError, TypeError):
-            op = None
+            op_id = None
+        if op_id:
+            code = (tc.get("livery_name") or "").strip().lower()
+            livery = liveries_by_key.get((op_id, code)) if code else None
+            if livery and livery.get("colour"):
+                colour = livery["colour"]
+            else:
+                op = operators_by_id.get(op_id)
+                if op and op.get("colour"):
+                    colour = op["colour"]
         results.append({
             **tc,
             "resolved_max_speed_mph": resolved["max_speed_mph"],
@@ -1767,7 +1784,7 @@ def known_trains_list():
             "status": status,
             "power_label": power,
             "group_name": group["name"] if group else None,
-            "operator_colour": op["colour"] if op and op.get("colour") else None,
+            "operator_colour": colour,
         })
 
     return jsonify({
