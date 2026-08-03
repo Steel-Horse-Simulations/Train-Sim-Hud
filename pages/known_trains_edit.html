@@ -596,7 +596,7 @@ async function setupVariantsPanel() {
   try {
     const res = await fetch('/api/known_trains/list?show_hidden=1');
     const data = res.ok ? await res.json() : { classes: [] };
-    const candidates = (data.classes || []).filter(c => c.id !== Number(trainClassId));
+    const candidates = (data.classes || []).filter(c => c.id !== Number(trainClassId) && !c.group_id);
     candidates.sort((a, b) => (a.display_name || a.source_name || '').localeCompare(b.display_name || b.source_name || ''));
     sourceSel.innerHTML = '<option value="">Choose a train…</option>' +
       candidates.map(c => `<option value="${c.id}">${esc(c.display_name || c.source_name)}</option>`).join('');
