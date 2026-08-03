@@ -30,22 +30,31 @@
     overflow: hidden;
   }
 
-  /* Grey border inset from edges: 4px on left/top/bottom, 16px on right */
+  /* Grey border inset from edges, fades out to the left same as coloured frame */
   .pill-wrap::after {
     content: '';
     position: absolute;
     inset: 4px 16px 4px 4px;
-    border: 1px solid rgba(255,255,255,0.13);
+    border: 4px solid rgba(255,255,255,0.13);
     border-radius: 16px;
     pointer-events: none;
     z-index: 0;
+    -webkit-mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
+            mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
   }
 
+  /* Coloured frame on top of grey border */
   .pill-wrap::before {
     content: '';
     position: absolute;
     inset: 0;
     border-radius: 20px;
+    background: var(--livery-color);
+    -webkit-mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
+            mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
+    pointer-events: none;
+    z-index: 1;
+  }
     background: var(--livery-color);
     -webkit-mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
             mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
