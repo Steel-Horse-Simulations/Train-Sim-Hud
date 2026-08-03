@@ -130,7 +130,7 @@
     <div class="panel attention-panel" id="attentionPanel" style="display:none;">
       <h2 id="attentionHeading">&#9888; Needs attention</h2>
       <p class="small dim" style="margin-bottom:6px;">
-        Trains missing a display name, group, operator/livery, power type, or photo. This section disappears
+        Trains missing a display name, group, operator/livery, or power type. This section disappears
         once everything's set up.
       </p>
       <div id="attentionRows"></div>
@@ -198,7 +198,6 @@ function missingReason(item) {
   if (!item.group_id) return 'has a name, but no group assigned';
   if (!item.livery_id || !item.livery_name) return 'has a name and group, but no operator/livery assigned';
   if (!item.is_steam && !item.is_diesel && !item.is_electric) return 'has a name, group and livery, but no power type set';
-  if (!item.thumbnail_path) return 'has a name, group, livery and power, but no photo set';
   return 'missing one or more details';
 }
 
