@@ -35,13 +35,6 @@
   .sub-item .sub-speed { font-size: 12px; color: var(--text-dim); }
   .sub-item .del-btn { background: transparent; border: 1px solid rgba(224,90,78,0.4); color: var(--status-red); padding: 3px 9px; border-radius: 4px; font-size: 11px; cursor: pointer; }
   .sub-item .del-btn:hover { background: rgba(224,90,78,0.15); }
-  .sub-item .edit-btn { background: transparent; border: 1px solid var(--hairline); color: var(--text-dim); padding: 3px 9px; border-radius: 4px; font-size: 11px; cursor: pointer; }
-  .sub-item .edit-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
-  .sub-edit-form { display: none; padding: 10px 12px; background: rgba(255,255,255,0.03); border-top: 1px solid var(--hairline); gap: 8px; flex-direction: column; }
-  .sub-edit-form.open { display: flex; }
-  .sub-edit-form .field-row { margin-top: 0; }
-  .sub-edit-form input { flex: 1; }
-  .sub-edit-form .save-btn { background: var(--accent); color: #fff; border: none; padding: 4px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; font-family: var(--heading); }
 
   .add-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hairline); }
   .add-form h4 { font-family: var(--heading); font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-dim); margin: 0 0 10px; }
@@ -49,21 +42,9 @@
   .del-group-btn { margin-left: auto; background: transparent; border: 1px solid rgba(224,90,78,0.4); color: var(--status-red); padding: 6px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; }
   .del-group-btn:hover { background: rgba(224,90,78,0.15); }
 
-  .power-chip {
-    display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px;
-    background: rgba(255,255,255,0.04); border: 1px solid var(--hairline); border-radius: 20px;
-    padding: 0 14px; height: 30px; box-sizing: border-box; cursor: pointer;
-  }
-  .power-chip:has(input:checked) { border-color: var(--accent); background: rgba(255,255,255,0.08); color: var(--accent-bright); }
-  .power-chip input[type="checkbox"] {
-    appearance: none; -webkit-appearance: none; width: 15px; height: 15px; flex: none; margin: 0; padding: 0;
-    border: 1.5px solid var(--hairline); border-radius: 3px; background: rgba(255,255,255,0.06);
-    position: relative; cursor: pointer; box-sizing: border-box;
-  }
-  .power-chip input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
-  .power-chip input[type="checkbox"]:checked::after {
-    content: ''; position: absolute; left: 4px; top: 0.5px; width: 4px; height: 8px;
-    border: solid #1a1013; border-width: 0 2px 2px 0; transform: rotate(45deg);
+  select {
+    background: rgba(255,255,255,0.06); border: 1px solid var(--hairline); border-radius: 4px;
+    color: var(--text); font-family: var(--sans); font-size: 13px; padding: 6px 8px;
   }
 </style>
 </head>
@@ -75,22 +56,23 @@
   </div>
 
   <main>
-    <a class="back" href="/pages/known_trains.html">&larr; Back to Known Trains</a>
+    <a class="back" href="/pages/classes.html">&larr; Back to Classes</a>
     <div class="titlebar" style="display:flex;align-items:center;gap:12px;margin:10px 0 20px;">
       <h1 style="font-family:var(--heading);font-size:22px;margin:0;">Groups</h1>
     </div>
+    <p class="small dim" style="margin-bottom:16px;">
+      A Group brings several Classes together as one family — for example Class 801, Class 802
+      and Class 805 could all sit inside a "Class 8xx" Group, while each keeps its own subclasses
+      (like Class 801/1 and Class 801/2) untouched.
+    </p>
 
-    <div id="groupsList"></div>
+    <div id="familiesList"></div>
 
     <div class="panel" style="margin-top:16px;">
       <h2>Add Group</h2>
-      <form onsubmit="createGroup(event)">
+      <form onsubmit="createFamily(event)">
         <label>Group name</label>
-        <input type="text" id="new-group-name" placeholder="e.g. Class 170" style="width:100%;" required>
-        <label>Default max speed (mph)</label>
-        <input type="text" id="new-group-speed" placeholder="e.g. 100">
-        <label>Default dial max (mph)</label>
-        <input type="text" id="new-group-dial" placeholder="e.g. 120">
+        <input type="text" id="new-family-name" placeholder="e.g. Class 8xx" style="width:100%;" required>
         <div style="margin-top:14px;">
           <button class="btn primary" type="submit">Add Group</button>
         </div>
@@ -99,196 +81,150 @@
   </main>
 
 <script>
-let groups = [];
+let families = [];
+let allClasses = [];
 
 async function load() {
   try {
-    const res = await fetch('/api/known_trains/groups');
-    const data = await res.json();
-    groups = data.groups || [];
+    const [famRes, classRes] = await Promise.all([
+      fetch('/api/known_trains/families'),
+      fetch('/api/known_trains/groups'),
+    ]);
+    const famData = await famRes.json();
+    const classData = await classRes.json();
+    families = famData.families || [];
+    allClasses = classData.groups || [];
     render();
   } catch(e) {
-    document.getElementById('groupsList').innerHTML = '<p class="small dim">Could not load groups.</p>';
+    document.getElementById('familiesList').innerHTML = '<p class="small dim">Could not load groups.</p>';
   }
 }
 
 function render() {
-  const container = document.getElementById('groupsList');
-  if (!groups.length) {
+  const container = document.getElementById('familiesList');
+  if (!families.length) {
     container.innerHTML = '<p class="small dim" style="text-align:center;margin-bottom:16px;">No groups yet — create one below.</p>';
     return;
   }
-  container.innerHTML = groups.map(g => `
-    <div class="item-pill" id="group-pill-${g.id}">
-      <div class="item-header" onclick="togglePill('group-pill-${g.id}')">
-        <span class="item-name">${g.name}</span>
-        <span class="item-meta">${g.default_max_speed_mph ? g.default_max_speed_mph + ' mph' : 'no default speed'}</span>
+  container.innerHTML = families.map(f => `
+    <div class="item-pill" id="family-pill-${f.id}">
+      <div class="item-header" onclick="togglePill('family-pill-${f.id}')">
+        <span class="item-name">${esc(f.name)}</span>
+        <span class="item-meta">${f.classes.length} class${f.classes.length === 1 ? '' : 'es'}</span>
         <span class="item-chevron">&#9654;</span>
       </div>
       <div class="item-body">
-        <form onsubmit="saveGroup(event, ${g.id})">
+        <form onsubmit="saveFamily(event, ${f.id})">
           <label>Group name</label>
-          <input type="text" id="gname-${g.id}" value="${esc(g.name)}" style="width:100%;" required>
-          <label>Default max speed (mph)</label>
-          <input type="text" id="gspeed-${g.id}" value="${g.default_max_speed_mph ?? ''}" placeholder="e.g. 100">
-          <label>Default dial max (mph)</label>
-          <input type="text" id="gdial-${g.id}" value="${g.default_dial_max_mph ?? ''}" placeholder="e.g. 120">
+          <input type="text" id="fname-${f.id}" value="${esc(f.name)}" style="width:100%;" required>
           <div class="btn-row">
             <button class="btn primary" type="submit">Save</button>
-            <button class="del-group-btn" type="button" onclick="deleteGroup(${g.id}, '${esc(g.name)}')">Delete group</button>
+            <button class="del-group-btn" type="button" onclick="deleteFamily(${f.id}, '${esc(f.name)}')">Delete group</button>
           </div>
         </form>
 
         <div class="sub-list">
-          <h4 style="font-family:var(--heading);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin:14px 0 10px;">Subclasses</h4>
-          <div id="subs-${g.id}">${renderSubclasses(g)}</div>
+          <h4 style="font-family:var(--heading);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin:14px 0 10px;">Classes in this group</h4>
+          <div id="members-${f.id}">${renderMembers(f)}</div>
         </div>
 
         <div class="add-form">
-          <h4>Add subclass</h4>
-          <form onsubmit="addSubclass(event, ${g.id})">
-            <label>Subclass name</label>
-            <input type="text" id="sub-name-${g.id}" placeholder="e.g. 170/1" style="width:100%;" required>
-            <label>Max speed override (mph) — leave blank to use group default</label>
-            <input type="text" id="sub-speed-${g.id}" placeholder="optional">
-            <div style="margin-top:12px;">
-              <button class="btn primary" type="submit">Add Subclass</button>
-            </div>
-          </form>
+          <h4>Add a class to this group</h4>
+          <div class="field-row">
+            <select id="add-class-${f.id}" style="flex:1;">
+              ${unassignedOrOtherClassOptions(f)}
+            </select>
+            <button class="btn primary" type="button" onclick="addClassToFamily(${f.id})">Add</button>
+          </div>
         </div>
       </div>
     </div>
   `).join('');
 }
 
-function renderSubclasses(g) {
-  if (!g.subclasses || !g.subclasses.length) return '<p class="small dim">No subclasses yet.</p>';
-  return g.subclasses.map(s => `
-    <div id="sub-wrap-${s.id}">
-      <div class="sub-item" id="sub-item-${s.id}">
-        <span class="sub-name">${esc(s.name)}</span>
-        <span class="sub-speed">${s.max_speed_override_mph ? s.max_speed_override_mph + ' mph' : 'group default'}</span>
-        <button class="edit-btn" onclick="toggleSubEdit(${s.id})">Edit</button>
-        <button class="del-btn" onclick="deleteSubclass(${s.id}, '${esc(s.name)}', ${g.id})">Remove</button>
-      </div>
-      <div class="sub-edit-form" id="sub-edit-${s.id}">
-        <div class="field-row">
-          <input type="text" id="sedit-name-${s.id}" value="${esc(s.name)}" placeholder="Name" style="min-width:120px;">
-          <input type="text" id="sedit-speed-${s.id}" value="${s.max_speed_override_mph ?? ''}" placeholder="Speed (mph)" style="max-width:120px;">
-          <button class="save-btn" onclick="saveSubclass(${s.id}, ${g.id})">Save</button>
-        </div>
-      </div>
+function renderMembers(f) {
+  if (!f.classes.length) return '<p class="small dim">No classes assigned yet.</p>';
+  return f.classes.map(c => `
+    <div class="sub-item">
+      <span class="sub-name">${esc(c.name)}</span>
+      <span class="sub-speed">${c.default_max_speed_mph ? c.default_max_speed_mph + ' mph' : ''}</span>
+      <button class="del-btn" onclick="removeClassFromFamily(${c.id}, '${esc(c.name)}', ${f.id})">Remove</button>
     </div>
   `).join('');
+}
+
+function unassignedOrOtherClassOptions(f) {
+  const memberIds = new Set(f.classes.map(c => c.id));
+  const options = allClasses.filter(c => !memberIds.has(c.id));
+  if (!options.length) return '<option value="">No other classes available</option>';
+  return options.map(c => `<option value="${c.id}">${esc(c.name)}${c.family_id ? ' (in another group)' : ''}</option>`).join('');
 }
 
 function togglePill(id) {
   document.getElementById(id).classList.toggle('open');
-  if (document.getElementById(id).classList.contains('open')) {
-    loadGroupDetail(parseInt(id.replace('group-pill-', '')));
-  }
 }
 
-async function loadGroupDetail(groupId) {
-  try {
-    const res = await fetch(`/api/known_trains/groups/${groupId}`);
-    const g = await res.json();
-    const group = groups.find(x => x.id === groupId);
-    if (group) { group.subclasses = g.subclasses || []; }
-    document.getElementById(`subs-${groupId}`).innerHTML = renderSubclasses(group || g);
-  } catch(e) {}
-}
-
-async function saveGroup(e, groupId) {
+async function saveFamily(e, familyId) {
   e.preventDefault();
-  const name = document.getElementById(`gname-${groupId}`).value.trim();
-  const speed = document.getElementById(`gspeed-${groupId}`).value.trim();
-  const dial = document.getElementById(`gdial-${groupId}`).value.trim();
+  const name = document.getElementById(`fname-${familyId}`).value.trim();
   try {
-    await fetch(`/api/known_trains/groups/${groupId}`, {
+    await fetch(`/api/known_trains/families/${familyId}`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        name,
-        default_max_speed_mph: speed ? Number(speed) : null,
-        default_dial_max_mph: dial ? Number(dial) : null,
-      })
+      body: JSON.stringify({ name })
     });
     await load();
   } catch(e) { alert('Save failed'); }
 }
 
-async function createGroup(e) {
+async function createFamily(e) {
   e.preventDefault();
-  const name = document.getElementById('new-group-name').value.trim();
-  const speed = document.getElementById('new-group-speed').value.trim();
-  const dial = document.getElementById('new-group-dial').value.trim();
+  const name = document.getElementById('new-family-name').value.trim();
   try {
-    await fetch('/api/known_trains/groups', {
+    await fetch('/api/known_trains/families', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        name,
-        default_max_speed_mph: speed ? Number(speed) : null,
-        default_dial_max_mph: dial ? Number(dial) : null,
-      })
+      body: JSON.stringify({ name })
     });
-    document.getElementById('new-group-name').value = '';
-    document.getElementById('new-group-speed').value = '';
-    document.getElementById('new-group-dial').value = '';
+    document.getElementById('new-family-name').value = '';
     await load();
   } catch(e) { alert('Create failed'); }
 }
 
-async function deleteGroup(groupId, name) {
-  if (!confirm(`Delete group "${name}"? All trains in this group will be ungrouped.`)) return;
+async function deleteFamily(familyId, name) {
+  if (!confirm(`Delete group "${name}"? Its classes will not be deleted, just unassigned from this group.`)) return;
   try {
-    await fetch(`/api/known_trains/groups/${groupId}`, { method: 'DELETE' });
+    await fetch(`/api/known_trains/families/${familyId}`, { method: 'DELETE' });
     await load();
   } catch(e) { alert('Delete failed'); }
 }
 
-async function addSubclass(e, groupId) {
-  e.preventDefault();
-  const name = document.getElementById(`sub-name-${groupId}`).value.trim();
-  const speed = document.getElementById(`sub-speed-${groupId}`).value.trim();
+async function addClassToFamily(familyId) {
+  const sel = document.getElementById(`add-class-${familyId}`);
+  const classId = sel.value;
+  if (!classId) return;
   try {
-    await fetch(`/api/known_trains/groups/${groupId}/subclasses`, {
-      method: 'POST',
+    await fetch(`/api/known_trains/groups/${classId}`, {
+      method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ name, max_speed_override_mph: speed ? Number(speed) : null })
+      body: JSON.stringify({ family_id: familyId })
     });
-    document.getElementById(`sub-name-${groupId}`).value = '';
-    document.getElementById(`sub-speed-${groupId}`).value = '';
-    await loadGroupDetail(groupId);
+    await load();
+    document.getElementById(`family-pill-${familyId}`).classList.add('open');
   } catch(e) { alert('Add failed'); }
 }
 
-async function deleteSubclass(subclassId, name, groupId) {
-  if (!confirm(`Remove subclass "${name}"?`)) return;
+async function removeClassFromFamily(classId, name, familyId) {
+  if (!confirm(`Remove "${name}" from this group? The class itself will not be deleted.`)) return;
   try {
-    await fetch(`/api/known_trains/subclasses/${subclassId}`, { method: 'DELETE' });
-    await loadGroupDetail(groupId);
-  } catch(e) { alert('Delete failed'); }
-}
-
-function toggleSubEdit(subclassId) {
-  const el = document.getElementById(`sub-edit-${subclassId}`);
-  el.classList.toggle('open');
-}
-
-async function saveSubclass(subclassId, groupId) {
-  const name = document.getElementById(`sedit-name-${subclassId}`).value.trim();
-  const speed = document.getElementById(`sedit-speed-${subclassId}`).value.trim();
-  if (!name) { alert('Name is required'); return; }
-  try {
-    await fetch(`/api/known_trains/subclasses/${subclassId}`, {
+    await fetch(`/api/known_trains/groups/${classId}`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ name, max_speed_override_mph: speed ? Number(speed) : null })
+      body: JSON.stringify({ family_id: null })
     });
-    await loadGroupDetail(groupId);
-  } catch(e) { alert('Save failed'); }
+    await load();
+    document.getElementById(`family-pill-${familyId}`).classList.add('open');
+  } catch(e) { alert('Remove failed'); }
 }
 
 function esc(str) {

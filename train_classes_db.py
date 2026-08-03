@@ -133,8 +133,28 @@ def init_db():
                 UNIQUE(group_id, name)
             );
             CREATE INDEX IF NOT EXISTS idx_subclasses_group ON loco_subclasses(group_id);
+
+            -- "Group" here is the higher-level family that several Classes
+            -- (loco_groups rows) belong to - e.g. Class 801, 802 and 805 all
+            -- belonging to the "Class 8xx" family. Deliberately a separate
+            -- table from loco_groups (which is the Class-level entity, shown
+            -- to the user as "Classes") to avoid disturbing the existing
+            -- class/subclass logic.
+            CREATE TABLE IF NOT EXISTS class_families (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
         """)
         conn.commit()
+
+        # Migration: add family_id to loco_groups so an existing Class can be
+        # assigned into a Group (family) without disturbing existing rows.
+        existing_group_cols = {row["name"] for row in conn.execute("PRAGMA table_info(loco_groups)")}
+        if "family_id" not in existing_group_cols:
+            conn.execute("ALTER TABLE loco_groups ADD COLUMN family_id INTEGER REFERENCES class_families(id) ON DELETE SET NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_groups_family ON loco_groups(family_id)")
 
         # Migration: add the new Known Trains v2 columns to the EXISTING
         # train_classes table via ALTER TABLE, never CREATE/DROP - this
@@ -355,18 +375,20 @@ def delete_subclass(subclass_id):
 
 def clear_all():
     """Wipes every piece of Known Trains data: sighted/imported train
-    classes, groups, subclasses, operators, and liveries - a full reset.
-    Also resets AUTOINCREMENT counters so new records start at id 1 again."""
+    classes, groups, subclasses, families, operators, and liveries - a full
+    reset. Also resets AUTOINCREMENT counters so new records start at id 1
+    again."""
     conn = _connect()
     try:
         conn.execute("DELETE FROM train_classes")
         conn.execute("DELETE FROM loco_subclasses")
         conn.execute("DELETE FROM loco_groups")
+        conn.execute("DELETE FROM class_families")
         conn.execute("DELETE FROM operator_liveries")
         conn.execute("DELETE FROM operators")
         conn.execute(
             "DELETE FROM sqlite_sequence WHERE name IN "
-            "('train_classes','loco_groups','loco_subclasses','operators','operator_liveries')"
+            "('train_classes','loco_groups','loco_subclasses','class_families','operators','operator_liveries')"
         )
         conn.commit()
     finally:
@@ -721,7 +743,7 @@ def create_group(name, default_max_speed_mph=None, default_dial_max_mph=None, hu
         conn.close()
 
 
-GROUP_EDITABLE_FIELDS = {"name", "default_max_speed_mph", "default_dial_max_mph", "hud_panels"}
+GROUP_EDITABLE_FIELDS = {"name", "default_max_speed_mph", "default_dial_max_mph", "hud_panels", "family_id"}
 SUBCLASS_EDITABLE_FIELDS = {"name", "max_speed_override_mph", "dial_max_override_mph"}
 
 
@@ -774,6 +796,93 @@ def list_groups():
             g["hud_panels"] = json.loads(g["hud_panels"] or "[]")
             results.append(g)
         return results
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------
+# Class Families ("Groups" in the UI): a higher-level grouping that several
+# Classes (loco_groups rows) belong to - e.g. Class 801, 802 and 805 all
+# belonging to the "Class 8xx" family. A Class's own subclass logic is
+# untouched; family_id on loco_groups just says which family (if any) that
+# Class sits in.
+# ---------------------------------------------------------------------
+
+def create_family(name):
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "INSERT INTO class_families (name, created_at, updated_at) VALUES (?, ?, ?)",
+            (name, now, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+FAMILY_EDITABLE_FIELDS = {"name"}
+
+
+def update_family(family_id, fields):
+    safe = {k: v for k, v in fields.items() if k in FAMILY_EDITABLE_FIELDS}
+    if not safe:
+        return False
+    conn = _connect()
+    try:
+        safe["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        set_clause = ", ".join(f"{col} = ?" for col in safe)
+        conn.execute(f"UPDATE class_families SET {set_clause} WHERE id = ?", list(safe.values()) + [family_id])
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def delete_family(family_id):
+    """Deletes the family. Member Classes are NOT deleted - their family_id
+    is set to NULL automatically via ON DELETE SET NULL, so they just become
+    ungrouped again."""
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM class_families WHERE id = ?", (family_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_family(family_id):
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM class_families WHERE id = ?", (family_id,)).fetchone()
+        if not row:
+            return None
+        family = dict(row)
+        classes = conn.execute(
+            "SELECT * FROM loco_groups WHERE family_id = ? ORDER BY name", (family_id,)
+        ).fetchall()
+        family["classes"] = [dict(c) for c in classes]
+        return family
+    finally:
+        conn.close()
+
+
+def list_families():
+    """Every family, each with its member Classes nested in - the Groups
+    page renders straight from this without extra per-family requests."""
+    conn = _connect()
+    try:
+        families = [dict(r) for r in conn.execute("SELECT * FROM class_families ORDER BY name").fetchall()]
+        classes = conn.execute("SELECT * FROM loco_groups WHERE family_id IS NOT NULL ORDER BY name").fetchall()
+        by_family = {}
+        for c in classes:
+            c = dict(c)
+            by_family.setdefault(c["family_id"], []).append(c)
+        for f in families:
+            f["classes"] = by_family.get(f["id"], [])
+        return families
     finally:
         conn.close()
 

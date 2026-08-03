@@ -146,7 +146,7 @@
           <label>Group</label>
           <select id="f-group" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;"><option value="">(none)</option></select>
           
-          <button class="btn primary" style="width: 100%; margin-bottom: 14px;" onclick="goToGroupPage()">Manage Groups</button>
+          <button class="btn primary" style="width: 100%; margin-bottom: 14px;" onclick="goToGroupPage()">Manage Classes</button>
           
           <label>Subclass (shares the group's HUD panels, can have its own speeds)</label>
           <select id="f-subclass" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 0;"></select>
@@ -528,7 +528,7 @@ function goToGroupPage() {
   if (groupId) {
     location.href = `/pages/known_trains_group.html?id=${groupId}`;
   } else {
-    location.href = '/pages/groups.html';
+    location.href = '/pages/classes.html';
   }
 }
 

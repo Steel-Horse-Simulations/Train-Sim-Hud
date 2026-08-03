@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.13.2"
+APP_VERSION = "7.14.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1674,6 +1674,50 @@ def known_trains_delete_subclass(subclass_id):
 @app.route("/api/known_trains/groups/<int:group_id>", methods=["DELETE"])
 def known_trains_delete_group(group_id):
     train_classes_db.delete_group(group_id)
+    return jsonify({"ok": True})
+
+
+# ---- Class Families ("Groups" in the UI) -----------------------------------
+# A family is a higher-level grouping of several Classes - e.g. Class 801,
+# 802 and 805 all belonging to the "Class 8xx" family. Assigning a Class to
+# a family is done via PATCH /api/known_trains/groups/<id> with family_id,
+# reusing the existing Class-update endpoint above.
+
+@app.route("/api/known_trains/families", methods=["GET"])
+def known_trains_list_families():
+    return jsonify({"families": train_classes_db.list_families()})
+
+
+@app.route("/api/known_trains/families", methods=["POST"])
+def known_trains_create_family():
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name_required"}), 400
+    family_id = train_classes_db.create_family(name)
+    return jsonify(train_classes_db.get_family(family_id))
+
+
+@app.route("/api/known_trains/families/<int:family_id>", methods=["GET"])
+def known_trains_get_family(family_id):
+    family = train_classes_db.get_family(family_id)
+    if not family:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(family)
+
+
+@app.route("/api/known_trains/families/<int:family_id>", methods=["PATCH"])
+def known_trains_update_family(family_id):
+    body = request.get_json(force=True, silent=True) or {}
+    ok = train_classes_db.update_family(family_id, body)
+    if not ok:
+        return jsonify({"error": "no_editable_fields_provided"}), 400
+    return jsonify(train_classes_db.get_family(family_id))
+
+
+@app.route("/api/known_trains/families/<int:family_id>", methods=["DELETE"])
+def known_trains_delete_family(family_id):
+    train_classes_db.delete_family(family_id)
     return jsonify({"ok": True})
 
 
