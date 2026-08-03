@@ -15,9 +15,18 @@
   .pill-wrap {
     position: relative;
     padding: 4px 16px 4px 4px;
-    border: 4px solid rgba(255,255,255,0.13);
-    border-radius: 20px;
     overflow: hidden;
+  }
+
+  /* Grey border inset from edges: 4px on left/top/bottom, 16px on right */
+  .pill-wrap::after {
+    content: '';
+    position: absolute;
+    inset: 4px 16px 4px 4px;
+    border: 1px solid rgba(255,255,255,0.13);
+    border-radius: 16px;
+    pointer-events: none;
+    z-index: 0;
   }
 
   .pill-wrap::before {
@@ -29,6 +38,7 @@
     -webkit-mask-image: linear-gradient(to left, #000 0, #000 60px, transparent 156px);
             mask-image: linear-gradient(to left, #000 0, #000 60px, transparent 156px);
     pointer-events: none;
+    z-index: 1;
   }
 
   /* Inner pill body: tinted with the operator colour at 20% opacity. */
