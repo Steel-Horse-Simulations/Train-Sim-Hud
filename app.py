@@ -1515,21 +1515,13 @@ def loco_identity():
     # 1) Direct match: this raw/clean identity has its own train_classes row
     # (covers ordinary trains AND the non-destructive Variants feature,
     # since a variant row keeps its own group_id/subclass_id once attached).
-    # Raw ObjectClass is tried FIRST - it's the stable, persistent key that
-    # record_live_sighting/dedup already use to find-or-create a row, so
-    # it's reliably present. find_loco_class()'s "clean" name is NOT a
-    # reliable lookup key: when TSW's own API doesn't report a clean
-    # DisplayName, it falls all the way back to the raw internal asset
-    # string (e.g. "RVM Class158 SR DMS B C") which changes what it returns
-    # from poll to poll and won't match a row keyed on the real raw id or on
-    # the user's configured display name - that mismatch was both flipping
-    # the resolved speeds between two different results and showing the
-    # ugly raw string as the loco name instead of "Class 158".
-    own_row = None
-    if raw:
-        own_row = train_classes_db.get_train_class_by_source_name(raw)
-    if not own_row and name:
-        own_row = train_classes_db.get_train_class_by_source_name(name)
+    # TSW's own API is inconsistent about what it reports poll to poll, and
+    # a user's configured display name is often livery-suffixed rather than
+    # an exact match to either raw or clean - find_train_class_for_identity
+    # tries several strategies (raw, clean, display name, and bare-class
+    # prefix of a livery-suffixed display name) so the SAME row is found
+    # consistently regardless of which form TSW happens to report this poll.
+    own_row = train_classes_db.find_train_class_for_identity(raw, name)
     if own_row:
         group = train_classes_db.get_group(own_row["group_id"]) if own_row.get("group_id") else None
         subclass = train_classes_db.get_subclass(own_row["subclass_id"]) if own_row.get("subclass_id") else None

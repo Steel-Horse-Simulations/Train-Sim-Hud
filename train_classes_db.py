@@ -653,6 +653,43 @@ def get_train_class_by_source_name(source_name):
         conn.close()
 
 
+def find_train_class_for_identity(raw_object_class, clean_name=None):
+    """Robust lookup for "which Known Trains row is this currently-driven
+    loco": TSW's own API is inconsistent about what it reports poll to poll
+    (sometimes the bare class like "Class 220", sometimes nothing so we fall
+    back to the raw asset string), and a user's configured display name is
+    often livery-suffixed ("Class 220 - Cross Country") rather than an exact
+    match to either. Tries, in order:
+      1. source_name == raw
+      2. source_name == clean_name
+      3. display_name == clean_name
+      4. display_name starts with "<clean_name> -" (bare class is a prefix
+         of the livery-suffixed configured name)
+    First match wins; returns None if nothing matches any strategy."""
+    conn = _connect()
+    try:
+        if raw_object_class:
+            row = conn.execute("SELECT * FROM train_classes WHERE source_name = ?", (raw_object_class,)).fetchone()
+            if row:
+                return dict(row)
+        if clean_name:
+            row = conn.execute("SELECT * FROM train_classes WHERE source_name = ?", (clean_name,)).fetchone()
+            if row:
+                return dict(row)
+            row = conn.execute("SELECT * FROM train_classes WHERE display_name = ?", (clean_name,)).fetchone()
+            if row:
+                return dict(row)
+            row = conn.execute(
+                "SELECT * FROM train_classes WHERE display_name = ? OR display_name LIKE ? ORDER BY times_seen DESC LIMIT 1",
+                (clean_name, clean_name + " -%"),
+            ).fetchone()
+            if row:
+                return dict(row)
+        return None
+    finally:
+        conn.close()
+
+
 def update_train_class(train_class_id, fields, client_updated_at=None):
     """Only ever writes columns in EDITABLE_FIELDS — id and source_id stay
     protected so re-imports can always find the right row to update.
