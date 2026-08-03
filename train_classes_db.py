@@ -957,11 +957,18 @@ def resolve_speeds(train_class_row, group=None, subclass=None):
             return group_val, "group"
         return fallback, "fallback"
 
+    # Guard against corrupt/sentinel catalog values (e.g. an unset Unreal
+    # float that made it through import) - nothing real needs a value this
+    # large, so treat it as if no catalog speed was ever set.
+    catalog_max = train_class_row.get("max_speed_mph")
+    if catalog_max is not None and catalog_max >= 500:
+        catalog_max = None
+
     max_speed, max_speed_source = pick(
         train_class_row.get("max_speed_override_mph"),
         subclass.get("max_speed_override_mph") if subclass else None,
         group.get("default_max_speed_mph") if group else None,
-        train_class_row.get("max_speed_mph") or 100.0,  # catalog-sourced real speed is a reasonable final fallback before the hardcoded default
+        catalog_max or 100.0,  # catalog-sourced real speed is a reasonable final fallback before the hardcoded default
     )
     dial_max, dial_max_source = pick(
         train_class_row.get("dial_max_override_mph"),

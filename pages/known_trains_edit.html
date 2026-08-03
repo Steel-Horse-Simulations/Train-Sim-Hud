@@ -42,9 +42,13 @@
 
   .raw-readonly { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-dim); background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 6px; }
 
-  .speed-field { margin-top: 14px; }
+  .speed-field { margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .speed-field input { width: 120px; display: inline-block; }
-  .speed-caption { font-size: 12px; color: var(--text-dim); margin-top: 5px; }
+  .speed-field input:disabled { opacity: 0.6; cursor: not-allowed; }
+  .speed-field .edit-btn { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 6px 16px; border-radius: 4px; font-size: 12.5px; cursor: pointer; font-family: var(--heading); }
+  .speed-field .edit-btn:hover { border-color: var(--accent); color: var(--accent-bright); }
+  .speed-field .edit-btn.saving { border-color: var(--accent); background: var(--accent); color: #1a1013; }
+  .speed-caption { font-size: 12px; color: var(--text-dim); margin-top: 5px; width: 100%; }
   .speed-caption.custom { color: var(--accent-bright); }
   .reset-link { background: none; border: none; color: var(--accent-bright); font-size: 12px; text-decoration: underline; cursor: pointer; padding: 0; margin-left: 8px; }
 
@@ -156,12 +160,14 @@
           <h2>Speeds</h2>
           <label>Max train speed (mph)</label>
           <div class="speed-field">
-            <input type="text" id="f-maxSpeed">
+            <input type="text" id="f-maxSpeed" disabled placeholder="&mdash;">
+            <button type="button" class="edit-btn" id="f-maxSpeedEditBtn" onclick="toggleSpeedEdit('f-maxSpeed')">Edit</button>
             <div class="speed-caption" id="maxSpeedCaption"></div>
           </div>
           <label>Speedometer dial max (mph) - where the HUD's speed circle ends</label>
           <div class="speed-field">
-            <input type="text" id="f-dialMax">
+            <input type="text" id="f-dialMax" disabled placeholder="&mdash;">
+            <button type="button" class="edit-btn" id="f-dialMaxEditBtn" onclick="toggleSpeedEdit('f-dialMax')">Edit</button>
             <div class="speed-caption" id="dialMaxCaption"></div>
           </div>
         </div>
@@ -425,6 +431,11 @@ document.getElementById('f-subclass').addEventListener('change', () => { refresh
 function resolvedDefault(kind) {
   // kind: 'max' or 'dial'. Mirrors train_classes_db.resolve_speeds()'s
   // chain: subclass override -> group default -> catalog value -> 100.
+  // Returns null if there's no group assigned yet - an ungrouped train has
+  // no meaningful default to show.
+  const groupId = document.getElementById('f-group').value;
+  if (!groupId) return null;
+
   const subId = document.getElementById('f-subclass').value;
   const sub = currentGroupDetail && subId ? currentGroupDetail.subclasses.find(s => String(s.id) === subId) : null;
   const subVal = sub ? (kind === 'max' ? sub.max_speed_override_mph : sub.dial_max_override_mph) : null;
@@ -433,7 +444,10 @@ function resolvedDefault(kind) {
   const groupVal = currentGroupDetail ? (kind === 'max' ? currentGroupDetail.default_max_speed_mph : currentGroupDetail.default_dial_max_mph) : null;
   if (groupVal !== null && groupVal !== undefined) return { value: groupVal, source: `group ${currentGroupDetail.name}` };
 
-  if (kind === 'max' && trainClass.max_speed_mph) return { value: trainClass.max_speed_mph, source: 'catalog data' };
+  // Guard against corrupt/sentinel catalog values (e.g. an unset Unreal
+  // float import) - nothing real ever needs a value this large.
+  const catalogMax = trainClass.max_speed_mph;
+  if (kind === 'max' && catalogMax && catalogMax < 500) return { value: catalogMax, source: 'catalog data' };
   return { value: 100, source: 'fallback' };
 }
 
@@ -445,27 +459,51 @@ function refreshSpeedCaptions() {
 function setupSpeedField(inputId, captionId, savedOverride, defaultInfo) {
   const input = document.getElementById(inputId);
   const caption = document.getElementById(captionId);
-  if (input.value === '' && savedOverride !== null && savedOverride !== undefined) {
-    input.value = savedOverride;
-  } else if (input.value === '') {
-    input.value = defaultInfo.value;
-  }
-  input.dataset.default = defaultInfo.value;
-  input.dataset.defaultSource = defaultInfo.source;
+
+  // Blank by default - only shows a value if this specific train already
+  // has a manual override saved. Never auto-fills with the computed
+  // subclass/group/catalog default.
+  input.value = (savedOverride !== null && savedOverride !== undefined) ? savedOverride : '';
+  input.dataset.default = defaultInfo ? defaultInfo.value : '';
+  input.dataset.defaultSource = defaultInfo ? defaultInfo.source : '';
+  input.dataset.hasDefault = defaultInfo ? '1' : '0';
 
   function refresh() {
-    const isCustom = input.value !== String(input.dataset.default) && input.value.trim() !== '';
+    const isCustom = input.value.trim() !== '';
     caption.classList.toggle('custom', isCustom);
     if (isCustom) {
-      caption.innerHTML = `Custom for this train &mdash; ${input.dataset.defaultSource} default is ${input.dataset.default} <button class="reset-link" onclick="document.getElementById('${inputId}').value='${input.dataset.default}'; document.getElementById('${inputId}').dispatchEvent(new Event('input'));">Reset to ${input.dataset.default}</button>`;
+      const resetBtn = ` <button class="reset-link" onclick="document.getElementById('${inputId}').value=''; document.getElementById('${inputId}').dispatchEvent(new Event('input'));">Clear override</button>`;
+      caption.innerHTML = defaultInfo
+        ? `Custom for this train &mdash; ${input.dataset.defaultSource} default is ${input.dataset.default}${resetBtn}`
+        : `Custom for this train${resetBtn}`;
+    } else if (defaultInfo) {
+      caption.innerHTML = `Using ${input.dataset.defaultSource} default (${input.dataset.default}) &mdash; click Edit to set a value for just this train`;
     } else {
-      caption.innerHTML = `Using ${input.dataset.defaultSource} default (${input.dataset.default}) &mdash; change the number to override just this train`;
+      caption.innerHTML = `No group assigned yet, so there's no default speed to show &mdash; assign a group above, or click Edit to set a speed for just this train`;
     }
   }
   input.removeEventListener('input', input._refreshHandler || (() => {}));
   input._refreshHandler = refresh;
   input.addEventListener('input', refresh);
   refresh();
+}
+
+function toggleSpeedEdit(inputId) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(inputId + 'EditBtn');
+  const editing = !input.disabled;
+  if (editing) {
+    // Currently editable -> this click is "Save": lock the field back down.
+    input.disabled = true;
+    btn.textContent = 'Edit';
+    btn.classList.remove('saving');
+  } else {
+    // Currently locked -> this click is "Edit": unlock for typing.
+    input.disabled = false;
+    btn.textContent = 'Save';
+    btn.classList.add('saving');
+    input.focus();
+  }
 }
 
 const primaryBoxIds = ['f-steam', 'f-diesel', 'f-electric'];
@@ -564,8 +602,8 @@ async function save() {
     };
     const maxSpeedInput = document.getElementById('f-maxSpeed');
     const dialMaxInput = document.getElementById('f-dialMax');
-    body.max_speed_override_mph = maxSpeedInput.value !== String(maxSpeedInput.dataset.default) && maxSpeedInput.value.trim() !== '' ? Number(maxSpeedInput.value) : null;
-    body.dial_max_override_mph = dialMaxInput.value !== String(dialMaxInput.dataset.default) && dialMaxInput.value.trim() !== '' ? Number(dialMaxInput.value) : null;
+    body.max_speed_override_mph = maxSpeedInput.value.trim() !== '' ? Number(maxSpeedInput.value) : null;
+    body.dial_max_override_mph = dialMaxInput.value.trim() !== '' ? Number(dialMaxInput.value) : null;
 
     const res = await fetch(`/api/known_trains/classes/${trainClassId}`, {
       method: 'PATCH',
