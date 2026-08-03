@@ -1032,13 +1032,14 @@ def needs_attention():
 # ---- Merge / aliasing ------------------------------------------------------
 
 def merge_train_class_into(source_class_id, target_class_id, subclass_id=None):
-    """Merges an ungrouped train class into an existing (target) class.
-    The source row's raw identifiers are remembered in train_class_aliases
-    so future live sightings are attributed to the target instead of
-    recreating a stray row. The source row is then deleted; its historic
-    times_seen count is folded into the target. subclass_id (optional) lets
-    this specific variant resolve its own speed via the target's group even
-    though every other attribute comes from the target."""
+    """Merges any train class into an existing (target) class - the source
+    doesn't need to be ungrouped. The source row's raw identifiers are
+    remembered in train_class_aliases so future live sightings are
+    attributed to the target instead of recreating a stray row. The source
+    row is then deleted; its historic times_seen count is folded into the
+    target. subclass_id (optional) lets this specific variant resolve its
+    own speed via the target's group even though every other attribute
+    comes from the target."""
     if source_class_id == target_class_id:
         return False, "cannot merge a train into itself"
 
@@ -1050,8 +1051,6 @@ def merge_train_class_into(source_class_id, target_class_id, subclass_id=None):
             return False, "source train not found"
         if not target:
             return False, "target train not found"
-        if source["group_id"] is not None:
-            return False, "only ungrouped trains can be merged into another train"
 
         now = datetime.now().isoformat(timespec="seconds")
         conn.execute(
@@ -1067,6 +1066,37 @@ def merge_train_class_into(source_class_id, target_class_id, subclass_id=None):
         conn.execute("DELETE FROM train_classes WHERE id = ?", (source_class_id,))
         conn.commit()
         return True, None
+    finally:
+        conn.close()
+
+
+def list_aliases_for_target(target_class_id):
+    """Every raw train that's currently merged into this target - i.e. what
+    shows under "Merged into this train" on the Edit page, with a Remove
+    button per row to un-merge it."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT a.*, s.name AS subclass_name FROM train_class_aliases a "
+            "LEFT JOIN loco_subclasses s ON s.id = a.subclass_id "
+            "WHERE a.target_class_id = ? ORDER BY a.source_name",
+            (target_class_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def delete_alias(alias_id):
+    """Un-merges a previously-merged train. The alias link is removed so a
+    future live sighting of that raw class creates its own train_classes row
+    again instead of being folded into the target. Historic times_seen that
+    was already folded into the target is not split back out."""
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM train_class_aliases WHERE id = ?", (alias_id,))
+        conn.commit()
+        return True
     finally:
         conn.close()
 

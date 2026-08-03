@@ -209,12 +209,12 @@
         <div class="panel" style="margin-top:16px;" id="mergePanel">
           <h2>Merge into existing train</h2>
           <p style="font-size:12.5px; color:var(--text-dim); margin:0 0 10px;">
-            This train is ungrouped. If it's really just a subclass variant of a train
-            you've already set up (the same class shows up under a few different names in
-            the menu), you can fold it into that train here. This row will disappear from
-            Known Trains and future sightings of it will count towards the train you pick
-            below. Everything about it - name, operator, livery, photo - will come from
-            that train; only the subclass you choose below can still give it its own speed.
+            If this is really just a subclass variant of a train you've already set up (the
+            same class shows up under a few different names in the menu), you can fold it
+            into that train here. This row will disappear from Known Trains and future
+            sightings of it will count towards the train you pick below. Everything about
+            it - name, operator, livery, photo - will come from that train; only the
+            subclass you choose below can still give it its own speed.
           </p>
           <label>Merge into</label>
           <select id="f-mergeTarget" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;">
@@ -225,6 +225,15 @@
             <option value="">(none)</option>
           </select>
           <button class="btn primary" style="width: 100%;" onclick="mergeTrain()" id="mergeBtn">Merge and remove this entry</button>
+        </div>
+
+        <div class="panel" style="margin-top:16px;" id="mergedListPanel">
+          <h2>Trains merged into this one</h2>
+          <p style="font-size:12.5px; color:var(--text-dim); margin:0 0 10px;">
+            These raw sightings are currently folded into this train. Remove one to split it
+            back out — its future sightings will start showing up as their own entry again.
+          </p>
+          <div id="mergedListBody"><p class="small dim">Loading…</p></div>
         </div>
 
         <div class="save-bar">
@@ -280,6 +289,7 @@ async function load() {
   document.getElementById('f-visible').checked = trainClass.is_visible !== 0;
 
   setupMergePanel();
+  loadMergedList();
   
   document.getElementById('f-steam').checked = !!trainClass.is_steam;
   document.getElementById('f-diesel').checked = !!trainClass.is_diesel;
@@ -587,14 +597,6 @@ async function save() {
 function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
 
 async function setupMergePanel() {
-  const panel = document.getElementById('mergePanel');
-  // Only ungrouped trains can be merged into another train.
-  if (trainClass.group_id) {
-    panel.style.display = 'none';
-    return;
-  }
-  panel.style.display = 'block';
-
   const targetSel = document.getElementById('f-mergeTarget');
   try {
     const res = await fetch('/api/known_trains/list?show_hidden=1');
@@ -633,6 +635,39 @@ function esc(str) {
   const div = document.createElement('div');
   div.textContent = str == null ? '' : String(str);
   return div.innerHTML;
+}
+
+async function loadMergedList() {
+  const body = document.getElementById('mergedListBody');
+  try {
+    const res = await fetch(`/api/known_trains/classes/${trainClassId}/aliases`);
+    const data = res.ok ? await res.json() : { aliases: [] };
+    const aliases = data.aliases || [];
+    if (!aliases.length) {
+      body.innerHTML = '<p class="small dim">No trains merged into this one yet.</p>';
+      return;
+    }
+    body.innerHTML = aliases.map(a => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:5px;margin-bottom:6px;">
+        <span style="flex:1;font-size:13px;font-weight:600;">${esc(a.source_name || '(unnamed)')}</span>
+        <span style="font-size:12px;color:var(--text-dim);">${a.subclass_name ? esc(a.subclass_name) : 'no subclass'}</span>
+        <button style="background:transparent;border:1px solid rgba(224,90,78,0.4);color:var(--status-red);padding:3px 9px;border-radius:4px;font-size:11px;cursor:pointer;"
+          onclick="removeAlias(${a.id}, '${esc(a.source_name || '')}')">Remove</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    body.innerHTML = '<p class="small dim">Could not load merged trains.</p>';
+  }
+}
+
+async function removeAlias(aliasId, name) {
+  if (!confirm(`Remove "${name}" from this train? Future sightings of it will start showing up as their own entry again.`)) return;
+  try {
+    await fetch(`/api/known_trains/aliases/${aliasId}`, { method: 'DELETE' });
+    await loadMergedList();
+  } catch (e) {
+    alert('Remove failed');
+  }
 }
 
 async function mergeTrain() {

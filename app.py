@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.14.1"
+APP_VERSION = "7.15.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1936,10 +1936,10 @@ def known_trains_update(train_class_id):
 
 @app.route("/api/known_trains/classes/<int:train_class_id>/merge_into", methods=["POST"])
 def known_trains_merge(train_class_id):
-    """Merges an ungrouped train class into an existing target train class.
-    The source row is deleted; its raw identifiers are remembered so future
-    live sightings are attributed to the target. Optional subclass_id lets
-    this specific variant resolve its own speed via the target's group."""
+    """Merges a train class into an existing target train class. The source
+    row is deleted; its raw identifiers are remembered so future live
+    sightings are attributed to the target. Optional subclass_id lets this
+    specific variant resolve its own speed via the target's group."""
     try:
         body = request.get_json(force=True, silent=True) or {}
         target_class_id = body.get("target_class_id")
@@ -1957,6 +1957,22 @@ def known_trains_merge(train_class_id):
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/known_trains/classes/<int:train_class_id>/aliases", methods=["GET"])
+def known_trains_list_aliases(train_class_id):
+    """Every train currently merged into this one, so the Edit page can show
+    an "Add / remove trains" list alongside the merge panel."""
+    return jsonify({"aliases": train_classes_db.list_aliases_for_target(train_class_id)})
+
+
+@app.route("/api/known_trains/aliases/<int:alias_id>", methods=["DELETE"])
+def known_trains_delete_alias(alias_id):
+    """Un-merges a previously-merged train. Future sightings of that raw
+    class will create their own entry again instead of folding into the
+    target."""
+    train_classes_db.delete_alias(alias_id)
+    return jsonify({"ok": True})
 
 
 # ---- lifecycle ------------------------------------------------------------
