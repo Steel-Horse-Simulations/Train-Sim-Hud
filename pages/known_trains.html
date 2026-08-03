@@ -24,42 +24,46 @@
 
   .trains-grid { display: flex; flex-direction: column; gap: 10px; }
 
-  /* pill-wrap: outer coloured frame. Its own background provides:
-       - a solid 16px vertical bar on the RIGHT edge (full height)
-       - top/bottom 4px strips that fade from solid livery (right) to
-         transparent, ending exactly at the left edge of the picture (420px)
-     The inner .train-pill sits inside the padding and paints over this
-     background; its large right-side border-radius carves a concave curve
-     into the coloured frame at the top-right/bottom-right corners. */
+  /* The coloured frame is a SOLID layer sitting behind the inner pill.
+     Because it is solid (not a hard-stopped gradient), the inner pill's
+     border-radius carves a true curve out of it at the corners instead of
+     leaving a square edge. The left-fade is done with a mask, which does not
+     affect the shape, so the curve survives. */
   .pill-wrap {
-    border-radius: 20px;
-    padding: 4px 16px 4px 4px;
-    background:
-      linear-gradient(to left, var(--livery-color) 16px, transparent 16px),
-      linear-gradient(to left, var(--livery-color), transparent 420px) 0 0    / 100% 4px no-repeat,
-      linear-gradient(to left, var(--livery-color), transparent 420px) 0 100% / 100% 4px no-repeat;
     position: relative;
-    overflow: hidden;
+    padding: 4px 16px 4px 4px;
+  }
+
+  .pill-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 20px;
+    background: var(--livery-color);
+    /* Opaque at the right edge, fading out by the left edge of the picture (420px) */
+    -webkit-mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
+            mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
+    pointer-events: none;
   }
 
   /* Inner pill body: tinted with the livery colour at 20% opacity.
-     Large right-side border-radius creates the concave inner curve. */
+     Its right-side radius is what produces the concave curve in the frame. */
   .train-pill {
     background: color-mix(in srgb, var(--livery-color) 20%, transparent);
     border-radius: 8px 20px 20px 8px;
     height: 156px;
     display: flex; align-items: stretch;
-    position: relative; overflow: hidden;
+    position: relative; z-index: 1;
+    overflow: hidden;
   }
 
-  /* Picture sits flush against the pill's right edge, and flush top/bottom -
-     no gap, no mask needed since overflow:hidden on .train-pill clips it to
-     the same curve as the coloured frame. */
+  /* Picture flush to the right edge and full pill height. Its corners are
+     clipped by .train-pill's radius, revealing the coloured frame behind. */
   .train-pill-thumb {
-    width: 420px; height: 156px; flex-shrink: 0; overflow: hidden; background: var(--livery-color);
-    border-radius: 0 20px 20px 0;
+    width: 420px; height: 156px; flex-shrink: 0; overflow: hidden;
+    background: #1c1a20;
     display: flex; align-items: center; justify-content: center;
-    margin-left: auto; /* pushes thumb to the right edge */
+    margin-left: auto;
   }
   .train-pill-thumb img { width: 100%; height: 100%; object-fit: contain; }
   .train-pill-thumb.none { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }

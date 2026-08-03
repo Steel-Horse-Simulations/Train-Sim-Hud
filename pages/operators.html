@@ -12,37 +12,44 @@
   .trains-grid { display: flex; flex-direction: column; gap: 10px; }
   .op-item { display: flex; flex-direction: column; }
 
+  /* Solid coloured frame layer behind the inner pill; the inner pill's
+     border-radius carves a true curve out of it. Fade is via mask so the
+     shape of the curve is unaffected. */
   .pill-wrap {
-    border-radius: 20px;
-    padding: 4px 16px 4px 4px;
-    background:
-      linear-gradient(to left, var(--livery-color) 16px, transparent 16px),
-      linear-gradient(to left, var(--livery-color), transparent 156px) 0 0    / 100% 4px no-repeat,
-      linear-gradient(to left, var(--livery-color), transparent 156px) 0 100% / 100% 4px no-repeat;
     position: relative;
-    overflow: hidden;
+    padding: 4px 16px 4px 4px;
   }
 
-  /* Inner pill body: tinted with the livery colour at 20% opacity.
-     Large right-side border-radius creates the concave inner curve. */
+  .pill-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 20px;
+    background: var(--livery-color);
+    -webkit-mask-image: linear-gradient(to left, #000 0, #000 60px, transparent 156px);
+            mask-image: linear-gradient(to left, #000 0, #000 60px, transparent 156px);
+    pointer-events: none;
+  }
+
+  /* Inner pill body: tinted with the operator colour at 20% opacity. */
   .train-pill {
     background: color-mix(in srgb, var(--livery-color) 20%, transparent);
     border-radius: 8px 20px 20px 8px;
     height: 156px;
     display: flex; align-items: stretch;
-    position: relative; overflow: hidden;
+    position: relative; z-index: 1;
+    overflow: hidden;
     cursor: pointer;
   }
   .train-pill:hover { background: color-mix(in srgb, var(--livery-color) 28%, transparent); }
 
-  /* Logo sits flush against the pill's right edge, and flush top/bottom -
-     no gap, no mask needed since overflow:hidden on .train-pill clips it to
-     the same curve as the coloured frame. */
+  /* Logo flush to the right edge; corners clipped by .train-pill's radius,
+     revealing the coloured frame behind. */
   .op-logo-pill {
-    width: 156px; height: 156px; flex-shrink: 0; overflow: hidden; background: var(--livery-color);
-    border-radius: 0 20px 20px 0;
+    width: 156px; height: 156px; flex-shrink: 0; overflow: hidden;
+    background: #1c1a20;
     display: flex; align-items: center; justify-content: center;
-    margin-left: auto; /* pushes logo to the right edge */
+    margin-left: auto;
   }
   .op-logo-pill img { width: 100%; height: 100%; object-fit: contain; }
   .op-logo-pill span { font-size: 15px; color: var(--text-dim); font-weight: 700; text-transform: uppercase; }
