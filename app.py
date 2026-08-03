@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.15.0"
+APP_VERSION = "7.16.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1932,6 +1932,44 @@ def known_trains_update(train_class_id):
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/known_trains/classes/<int:target_class_id>/variants", methods=["GET"])
+def known_trains_list_variants(target_class_id):
+    """Every train currently folded in as a variant of this one - the
+    Operators/liveries-style list on the Edit page."""
+    return jsonify({"variants": train_classes_db.list_variants_for_target(target_class_id)})
+
+
+@app.route("/api/known_trains/classes/<int:target_class_id>/variants", methods=["POST"])
+def known_trains_add_variant(target_class_id):
+    """Adds a train as a variant of this one: it's not deleted, just hidden
+    from Known Trains and tagged with this train's group + the chosen
+    subclass. Fully reversible via DELETE below."""
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        source_class_id = body.get("source_class_id")
+        subclass_id = body.get("subclass_id")
+        if not source_class_id:
+            return jsonify({"error": "missing_source_class_id"}), 400
+        ok, error = train_classes_db.set_variant(
+            int(source_class_id), target_class_id,
+            int(subclass_id) if subclass_id else None,
+        )
+        if not ok:
+            return jsonify({"error": error}), 400
+        return jsonify({"ok": True})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/known_trains/classes/<int:variant_class_id>/variant", methods=["DELETE"])
+def known_trains_remove_variant(variant_class_id):
+    """Un-hides a variant - it reappears in Known Trains as its own entry."""
+    train_classes_db.remove_variant(variant_class_id)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/known_trains/classes/<int:train_class_id>/merge_into", methods=["POST"])

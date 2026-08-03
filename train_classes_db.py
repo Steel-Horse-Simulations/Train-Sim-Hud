@@ -171,12 +171,14 @@ def init_db():
             "dial_max_override_mph": "REAL",
             "group_id": "INTEGER REFERENCES loco_groups(id) ON DELETE SET NULL",
             "subclass_id": "INTEGER REFERENCES loco_subclasses(id) ON DELETE SET NULL",
+            "variant_of_class_id": "INTEGER REFERENCES train_classes(id) ON DELETE SET NULL",
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
                 conn.execute(f"ALTER TABLE train_classes ADD COLUMN {col} {col_type}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_train_classes_group ON train_classes(group_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_train_classes_subclass ON train_classes(subclass_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_train_classes_variant_of ON train_classes(variant_of_class_id)")
 
         # Operators tables
         conn.executescript("""
@@ -614,7 +616,11 @@ def list_train_classes(visible_only=True, query=None):
     conn = _connect()
     try:
         sql = "SELECT * FROM train_classes"
-        clauses, params = [], []
+        # Variant rows (folded into another train as a subclass entry, e.g. via
+        # the Operators-style "add variant" panel) never appear in Known
+        # Trains regardless of the show-hidden checkbox - they only show up
+        # nested under their parent train.
+        clauses, params = ["variant_of_class_id IS NULL"], []
         if visible_only:
             clauses.append("is_visible = 1")
         if query:
@@ -1014,10 +1020,14 @@ def compute_completion(train_class_row):
 
 def needs_attention():
     """Anything missing one or more of the COMPLETION_FIELDS - i.e. anything
-    that would not show a green completion dot on the Known Trains list."""
+    that would not show a green completion dot on the Known Trains list.
+    Variant rows are excluded - they're nested under their parent train and
+    never shown as their own Known Trains entry."""
     conn = _connect()
     try:
-        rows = conn.execute("SELECT * FROM train_classes ORDER BY times_seen DESC").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM train_classes WHERE variant_of_class_id IS NULL ORDER BY times_seen DESC"
+        ).fetchall()
         result = []
         for r in rows:
             row = dict(r)
@@ -1030,6 +1040,69 @@ def needs_attention():
 
 
 # ---- Merge / aliasing ------------------------------------------------------
+
+def list_variants_for_target(target_class_id):
+    """Every train currently folded in as a variant of this one - shown as
+    the "Variants" list on the Edit page, Operators/liveries-style. Each row
+    is a real train_classes row still, just hidden from Known Trains."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT t.*, s.name AS subclass_name FROM train_classes t "
+            "LEFT JOIN loco_subclasses s ON s.id = t.subclass_id "
+            "WHERE t.variant_of_class_id = ? ORDER BY t.display_name, t.source_name",
+            (target_class_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_variant(source_class_id, target_class_id, subclass_id=None):
+    """Non-destructive, reversible version of a merge: the source row is
+    NOT deleted or renamed. It's just tagged as a variant of the target
+    (hiding it from Known Trains) and given the target's group_id so the
+    chosen subclass resolves its speed correctly. Removing the variant
+    later (remove_variant) simply clears these fields and the row
+    reappears in Known Trains exactly as it was."""
+    if source_class_id == target_class_id:
+        return False, "cannot make a train a variant of itself"
+
+    conn = _connect()
+    try:
+        source = conn.execute("SELECT * FROM train_classes WHERE id = ?", (source_class_id,)).fetchone()
+        target = conn.execute("SELECT * FROM train_classes WHERE id = ?", (target_class_id,)).fetchone()
+        if not source:
+            return False, "source train not found"
+        if not target:
+            return False, "target train not found"
+
+        now = datetime.now().isoformat(timespec="seconds")
+        conn.execute(
+            "UPDATE train_classes SET variant_of_class_id = ?, group_id = ?, subclass_id = ?, updated_at = ? WHERE id = ?",
+            (target_class_id, target["group_id"], subclass_id, now, source_class_id),
+        )
+        conn.commit()
+        return True, None
+    finally:
+        conn.close()
+
+
+def remove_variant(variant_class_id):
+    """Un-hides a variant row - it reappears in Known Trains as its own
+    entry again, keeping whatever group/subclass it had while hidden."""
+    conn = _connect()
+    try:
+        now = datetime.now().isoformat(timespec="seconds")
+        conn.execute(
+            "UPDATE train_classes SET variant_of_class_id = NULL, updated_at = ? WHERE id = ?",
+            (now, variant_class_id),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
 
 def merge_train_class_into(source_class_id, target_class_id, subclass_id=None):
     """Merges any train class into an existing (target) class - the source

@@ -206,34 +206,29 @@
           </p>
         </div>
 
-        <div class="panel" style="margin-top:16px;" id="mergePanel">
-          <h2>Merge into existing train</h2>
+        <div class="panel" style="margin-top:16px;" id="variantsPanel">
+          <h2>Variants</h2>
           <p style="font-size:12.5px; color:var(--text-dim); margin:0 0 10px;">
-            If this is really just a subclass variant of a train you've already set up (the
-            same class shows up under a few different names in the menu), you can fold it
-            into that train here. This row will disappear from Known Trains and future
-            sightings of it will count towards the train you pick below. Everything about
-            it - name, operator, livery, photo - will come from that train; only the
-            subclass you choose below can still give it its own speed.
+            If the same class shows up under a few different names in the menu, add those
+            entries here as variants of this train instead of deleting them. A variant stays
+            fully intact and just gets hidden from Known Trains while it's attached; remove
+            it any time and it reappears there exactly as it was. Give a variant a subclass
+            below to let it resolve its own speed.
           </p>
-          <label>Merge into</label>
-          <select id="f-mergeTarget" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;">
-            <option value="">Choose a train…</option>
-          </select>
-          <label>Subclass (optional - gives this specific variant its own speed)</label>
-          <select id="f-mergeSubclass" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;">
-            <option value="">(none)</option>
-          </select>
-          <button class="btn primary" style="width: 100%;" onclick="mergeTrain()" id="mergeBtn">Merge and remove this entry</button>
-        </div>
+          <div id="variantsList"><p class="small dim">Loading…</p></div>
 
-        <div class="panel" style="margin-top:16px;" id="mergedListPanel">
-          <h2>Trains merged into this one</h2>
-          <p style="font-size:12.5px; color:var(--text-dim); margin:0 0 10px;">
-            These raw sightings are currently folded into this train. Remove one to split it
-            back out — its future sightings will start showing up as their own entry again.
-          </p>
-          <div id="mergedListBody"><p class="small dim">Loading…</p></div>
+          <div class="add-form" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--hairline);">
+            <h4 style="font-family:var(--heading); font-size:13px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-dim); margin:0 0 10px;">Add a variant</h4>
+            <label>Train</label>
+            <select id="f-variantSource" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;">
+              <option value="">Choose a train…</option>
+            </select>
+            <label>Subclass (optional - gives this variant its own speed)</label>
+            <select id="f-variantSubclass" style="width: 100%; background: #0d1116; border: 1px solid var(--hairline); color: var(--text); padding: 8px 10px; border-radius: 4px; font-family: var(--heading); font-size: 14px; margin-bottom: 14px;">
+              <option value="">(none)</option>
+            </select>
+            <button class="btn primary" style="width: 100%;" onclick="addVariant()" id="addVariantBtn">Save variant</button>
+          </div>
         </div>
 
         <div class="save-bar">
@@ -288,8 +283,8 @@ async function load() {
   
   document.getElementById('f-visible').checked = trainClass.is_visible !== 0;
 
-  setupMergePanel();
-  loadMergedList();
+  setupVariantsPanel();
+  loadVariantsList();
   
   document.getElementById('f-steam').checked = !!trainClass.is_steam;
   document.getElementById('f-diesel').checked = !!trainClass.is_diesel;
@@ -596,33 +591,30 @@ async function save() {
 
 function exitApp() { fetch('/api/shutdown', {method: 'POST'}); }
 
-async function setupMergePanel() {
-  const targetSel = document.getElementById('f-mergeTarget');
+async function setupVariantsPanel() {
+  const sourceSel = document.getElementById('f-variantSource');
   try {
     const res = await fetch('/api/known_trains/list?show_hidden=1');
     const data = res.ok ? await res.json() : { classes: [] };
-    const candidates = (data.classes || []).filter(c => c.id !== Number(trainClassId) && c.group_id);
+    const candidates = (data.classes || []).filter(c => c.id !== Number(trainClassId));
     candidates.sort((a, b) => (a.display_name || a.source_name || '').localeCompare(b.display_name || b.source_name || ''));
-    targetSel.innerHTML = '<option value="">Choose a train…</option>' +
-      candidates.map(c => `<option value="${c.id}" data-group-id="${c.group_id}">${esc(c.display_name || c.source_name)}</option>`).join('');
+    sourceSel.innerHTML = '<option value="">Choose a train…</option>' +
+      candidates.map(c => `<option value="${c.id}">${esc(c.display_name || c.source_name)}</option>`).join('');
   } catch (e) {
-    targetSel.innerHTML = '<option value="">Could not load trains</option>';
+    sourceSel.innerHTML = '<option value="">Could not load trains</option>';
   }
 
-  targetSel.addEventListener('change', refreshMergeSubclasses);
+  await refreshVariantSubclasses();
 }
 
-async function refreshMergeSubclasses() {
-  const targetSel = document.getElementById('f-mergeTarget');
-  const subSel = document.getElementById('f-mergeSubclass');
-  const opt = targetSel.options[targetSel.selectedIndex];
-  const groupId = opt ? opt.dataset.groupId : '';
-  if (!groupId) {
-    subSel.innerHTML = '<option value="">(none)</option>';
+async function refreshVariantSubclasses() {
+  const subSel = document.getElementById('f-variantSubclass');
+  if (!trainClass.group_id) {
+    subSel.innerHTML = '<option value="">(assign this train to a group to enable subclasses)</option>';
     return;
   }
   try {
-    const res = await fetch(`/api/known_trains/groups/${groupId}`);
+    const res = await fetch(`/api/known_trains/groups/${trainClass.group_id}`);
     const group = res.ok ? await res.json() : { subclasses: [] };
     subSel.innerHTML = '<option value="">(none)</option>' +
       (group.subclasses || []).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
@@ -637,73 +629,73 @@ function esc(str) {
   return div.innerHTML;
 }
 
-async function loadMergedList() {
-  const body = document.getElementById('mergedListBody');
+async function loadVariantsList() {
+  const body = document.getElementById('variantsList');
   try {
-    const res = await fetch(`/api/known_trains/classes/${trainClassId}/aliases`);
-    const data = res.ok ? await res.json() : { aliases: [] };
-    const aliases = data.aliases || [];
-    if (!aliases.length) {
-      body.innerHTML = '<p class="small dim">No trains merged into this one yet.</p>';
+    const res = await fetch(`/api/known_trains/classes/${trainClassId}/variants`);
+    const data = res.ok ? await res.json() : { variants: [] };
+    const variants = data.variants || [];
+    if (!variants.length) {
+      body.innerHTML = '<p class="small dim">No variants added yet.</p>';
       return;
     }
-    body.innerHTML = aliases.map(a => `
+    body.innerHTML = variants.map(v => `
       <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:5px;margin-bottom:6px;">
-        <span style="flex:1;font-size:13px;font-weight:600;">${esc(a.source_name || '(unnamed)')}</span>
-        <span style="font-size:12px;color:var(--text-dim);">${a.subclass_name ? esc(a.subclass_name) : 'no subclass'}</span>
+        <span style="flex:1;font-size:13px;font-weight:600;">${esc(v.display_name || v.source_name || '(unnamed)')}</span>
+        <span style="font-size:12px;color:var(--text-dim);">${v.subclass_name ? esc(v.subclass_name) : 'no subclass'}</span>
         <button style="background:transparent;border:1px solid rgba(224,90,78,0.4);color:var(--status-red);padding:3px 9px;border-radius:4px;font-size:11px;cursor:pointer;"
-          onclick="removeAlias(${a.id}, '${esc(a.source_name || '')}')">Remove</button>
+          onclick="removeVariant(${v.id}, '${esc(v.display_name || v.source_name || '')}')">Remove</button>
       </div>
     `).join('');
   } catch (e) {
-    body.innerHTML = '<p class="small dim">Could not load merged trains.</p>';
+    body.innerHTML = '<p class="small dim">Could not load variants.</p>';
   }
 }
 
-async function removeAlias(aliasId, name) {
-  if (!confirm(`Remove "${name}" from this train? Future sightings of it will start showing up as their own entry again.`)) return;
-  try {
-    await fetch(`/api/known_trains/aliases/${aliasId}`, { method: 'DELETE' });
-    await loadMergedList();
-  } catch (e) {
-    alert('Remove failed');
-  }
-}
-
-async function mergeTrain() {
-  const targetId = document.getElementById('f-mergeTarget').value;
-  if (!targetId) {
-    alert('Choose a train to merge into first.');
+async function addVariant() {
+  const sourceId = document.getElementById('f-variantSource').value;
+  if (!sourceId) {
+    alert('Choose a train to add first.');
     return;
   }
-  const subclassId = document.getElementById('f-mergeSubclass').value;
-  if (!confirm('This will remove this entry from Known Trains and fold its sighting count into the train you chose. This cannot be undone. Continue?')) {
-    return;
-  }
-  const btn = document.getElementById('mergeBtn');
-  btn.textContent = 'Merging…';
+  const subclassId = document.getElementById('f-variantSubclass').value;
+  const btn = document.getElementById('addVariantBtn');
+  btn.textContent = 'Saving…';
   btn.disabled = true;
   try {
-    const res = await fetch(`/api/known_trains/classes/${trainClassId}/merge_into`, {
+    const res = await fetch(`/api/known_trains/classes/${trainClassId}/variants`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        target_class_id: Number(targetId),
+        source_class_id: Number(sourceId),
         subclass_id: subclassId ? Number(subclassId) : null,
       }),
     });
     if (res.ok) {
-      location.href = '/pages/known_trains.html';
+      document.getElementById('f-variantSource').value = '';
+      document.getElementById('f-variantSubclass').value = '';
+      await loadVariantsList();
+      await setupVariantsPanel(); // refresh candidate list so the just-added train drops out
     } else {
       const err = await res.json().catch(() => ({}));
-      btn.textContent = 'Merge and remove this entry';
-      btn.disabled = false;
-      alert('Merge failed: ' + (err.error || res.statusText));
+      alert('Add failed: ' + (err.error || res.statusText));
     }
   } catch (e) {
-    btn.textContent = 'Merge and remove this entry';
-    btn.disabled = false;
     alert('Error: ' + e.message);
+  } finally {
+    btn.textContent = 'Save variant';
+    btn.disabled = false;
+  }
+}
+
+async function removeVariant(variantId, name) {
+  if (!confirm(`Remove "${name}" as a variant? It will reappear in Known Trains as its own entry.`)) return;
+  try {
+    await fetch(`/api/known_trains/classes/${variantId}/variant`, { method: 'DELETE' });
+    await loadVariantsList();
+    await setupVariantsPanel(); // the removed train becomes a candidate again
+  } catch (e) {
+    alert('Remove failed');
   }
 }
 
