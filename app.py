@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.17.0"
+APP_VERSION = "7.18.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1503,23 +1503,47 @@ def weather_status():
 def loco_identity():
     name = find_loco_class()
     raw = get_current_raw_object_class()
+
+    # Legacy fallback values, used only if nothing in Known Trains v2 matches
+    # this loco at all.
     max_speed = loco_profiles.get_effective_max_speed_mph(raw) if raw else loco_profiles.DEFAULT_MAX_SPEED_MPH
+    dial_max = max_speed * 1.2 if max_speed else None
 
-    # If this raw/clean identity was merged into another train class, this
-    # specific variant may have its own subclass assigned - use that
-    # subclass's speed override instead of the generic profile value, while
-    # everything else about the train still comes from the target class.
-    alias = train_classes_db.get_alias_for_raw(raw, clean_name=name) if (raw or name) else None
-    if alias and alias.get("subclass_id"):
-        target = train_classes_db.get_train_class(alias["target_class_id"])
-        if target:
-            group = train_classes_db.get_group(target["group_id"]) if target.get("group_id") else None
-            subclass = train_classes_db.get_subclass(alias["subclass_id"])
-            resolved = train_classes_db.resolve_speeds(target, group=group, subclass=subclass)
-            if resolved.get("max_speed_mph") is not None:
-                max_speed = resolved["max_speed_mph"]
+    resolved = None
 
-    return jsonify({"name": name, "raw_object_class": raw, "max_speed_mph": max_speed})
+    # 1) Direct match: this raw/clean identity has its own train_classes row
+    # (covers ordinary trains AND the new non-destructive Variants feature,
+    # since a variant row keeps its own group_id/subclass_id once attached).
+    own_row = None
+    if raw:
+        own_row = train_classes_db.get_train_class_by_source_name(raw)
+    if not own_row and name:
+        own_row = train_classes_db.get_train_class_by_source_name(name)
+    if own_row:
+        group = train_classes_db.get_group(own_row["group_id"]) if own_row.get("group_id") else None
+        subclass = train_classes_db.get_subclass(own_row["subclass_id"]) if own_row.get("subclass_id") else None
+        resolved = train_classes_db.resolve_speeds(own_row, group=group, subclass=subclass)
+
+    # 2) Old-style merge alias: the source row was deleted and future
+    # sightings redirect to a target class, optionally with its own
+    # subclass override. Kept for backward compatibility with data merged
+    # before the non-destructive Variants feature existed.
+    if resolved is None:
+        alias = train_classes_db.get_alias_for_raw(raw, clean_name=name) if (raw or name) else None
+        if alias:
+            target = train_classes_db.get_train_class(alias["target_class_id"])
+            if target:
+                group = train_classes_db.get_group(target["group_id"]) if target.get("group_id") else None
+                subclass = train_classes_db.get_subclass(alias["subclass_id"]) if alias.get("subclass_id") else None
+                resolved = train_classes_db.resolve_speeds(target, group=group, subclass=subclass)
+
+    if resolved is not None:
+        if resolved.get("max_speed_mph") is not None:
+            max_speed = resolved["max_speed_mph"]
+        if resolved.get("dial_max_mph") is not None:
+            dial_max = resolved["dial_max_mph"]
+
+    return jsonify({"name": name, "raw_object_class": raw, "max_speed_mph": max_speed, "dial_max_mph": dial_max})
 
 
 @app.route("/api/loco/profiles", methods=["GET"])

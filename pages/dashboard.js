@@ -121,17 +121,11 @@ function updateUpcomingLimits(nextSpeedLimits, currentLimitMph) {
 let currentSpeedMph = null;
 let currentLimitMph = null;
 let currentMaxSpeedMph = 100;
+let currentDialMaxMph = null; // real per-train speedometer dial max from Known Trains v2, via /api/loco
 
-// TEMPORARY: the app only stores ONE speed value per loco right now
-// (currentMaxSpeedMph above), used directly as the dial's 100% scale.
-// The "real" design (approved, not yet built - see Known Trains v2 in
-// PROJECT_NOTES.md) has TWO independent values: max train speed (where
-// the tick goes) and a separate speedometer dial max (where the ring
-// itself ends, can be higher - like a real speedo having room past top
-// speed). Until that field exists, this multiplies the one value we do
-// have to fake that headroom. Replace DIAL_HEADROOM_MULTIPLIER's use
-// entirely once Known Trains v2 ships its own real dial-max field -
-// search for this comment.
+// Fallback headroom multiplier, used only for locos with no Known Trains v2
+// entry yet (so no real dial_max_mph is available) - keeps the dial usable
+// rather than pegging the needle at 100%.
 const DIAL_HEADROOM_MULTIPLIER = 1.2;
 
 let speedPollInFlight = false;
@@ -141,11 +135,12 @@ function updateGaugeRing() {
   const tick = document.getElementById('max-tick');
   const overMaxBadge = document.getElementById('over-max-badge');
 
-  const dialMax = currentMaxSpeedMph * DIAL_HEADROOM_MULTIPLIER;
+  const dialMax = currentDialMaxMph || (currentMaxSpeedMph * DIAL_HEADROOM_MULTIPLIER);
   if (tick) {
-    const tickFrac = currentMaxSpeedMph / dialMax;
+    const tickFrac = Math.max(0, Math.min(1, currentMaxSpeedMph / dialMax));
     const tickRotation = 224.5 + (tickFrac * 271);
     tick.setAttribute('transform', `rotate(${tickRotation} 60 60)`);
+    tick.setAttribute('stroke', 'var(--status-red)');
   }
 
   if (currentSpeedMph === null || currentSpeedMph <= 0) {
@@ -315,6 +310,11 @@ async function pollLoco() {
     }
     if (data && typeof data.max_speed_mph === 'number' && data.max_speed_mph > 0) {
       currentMaxSpeedMph = data.max_speed_mph;
+    }
+    if (data && typeof data.dial_max_mph === 'number' && data.dial_max_mph > 0) {
+      currentDialMaxMph = data.dial_max_mph;
+    } else {
+      currentDialMaxMph = null;
     }
     updateGaugeRing();
   } catch (e) {
