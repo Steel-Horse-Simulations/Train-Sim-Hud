@@ -18,7 +18,8 @@
     overflow: hidden;
   }
 
-  /* Grey border inset from edges, fades out to the left same as coloured frame */
+  /* Grey border inset from edges, covers the main body and fades out where
+     the coloured frame takes over near the logo */
   .pill-wrap::after {
     content: '';
     position: absolute;
@@ -27,8 +28,8 @@
     border-radius: 16px;
     pointer-events: none;
     z-index: 0;
-    -webkit-mask-image: linear-gradient(to left, #000 0, #000 60px, transparent 156px);
-            mask-image: linear-gradient(to left, #000 0, #000 60px, transparent 156px);
+    -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 60px, #000 156px);
+            mask-image: linear-gradient(to left, transparent 0, transparent 60px, #000 156px);
   }
 
   /* Coloured frame on top of grey border */

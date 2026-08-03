@@ -30,7 +30,8 @@
     overflow: hidden;
   }
 
-  /* Grey border inset from edges, fades out to the left same as coloured frame */
+  /* Grey border inset from edges, covers the main body and fades out where
+     the coloured frame takes over near the picture */
   .pill-wrap::after {
     content: '';
     position: absolute;
@@ -39,8 +40,8 @@
     border-radius: 16px;
     pointer-events: none;
     z-index: 0;
-    -webkit-mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
-            mask-image: linear-gradient(to left, #000 0, #000 120px, transparent 420px);
+    -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 120px, #000 420px);
+            mask-image: linear-gradient(to left, transparent 0, transparent 120px, #000 420px);
   }
 
   /* Coloured frame on top of grey border */
