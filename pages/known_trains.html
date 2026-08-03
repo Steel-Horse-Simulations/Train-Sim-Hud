@@ -30,14 +30,14 @@
     overflow: hidden;
   }
 
-  /* Grey border inset from edges, covers the main body and fades out where
-     the coloured frame takes over near the picture */
+  /* Grey border around the outer edge of the pill, fading out where the
+     coloured frame takes over near the picture */
   .pill-wrap::after {
     content: '';
     position: absolute;
-    inset: 4px 16px 4px 4px;
+    inset: 0;
     border: 4px solid rgba(255,255,255,0.13);
-    border-radius: 16px;
+    border-radius: 20px;
     pointer-events: none;
     z-index: 0;
     -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 120px, #000 420px);
