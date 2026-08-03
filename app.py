@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.18.1"
+APP_VERSION = "7.18.2"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1503,6 +1503,7 @@ def weather_status():
 def loco_identity():
     name = find_loco_class()
     raw = get_current_raw_object_class()
+    display_name = name  # what gets shown/returned; may be overridden below
 
     # Legacy fallback values, used only if nothing in Known Trains v2 matches
     # this loco at all.
@@ -1512,20 +1513,29 @@ def loco_identity():
     resolved = None
 
     # 1) Direct match: this raw/clean identity has its own train_classes row
-    # (covers ordinary trains AND the new non-destructive Variants feature,
+    # (covers ordinary trains AND the non-destructive Variants feature,
     # since a variant row keeps its own group_id/subclass_id once attached).
-    # Clean display name is tried first - it's the properly-configured row a
-    # user sets up in Known Trains; a raw ObjectClass string can still match
-    # an older, unconfigured duplicate row left over from before dedup ran.
+    # Raw ObjectClass is tried FIRST - it's the stable, persistent key that
+    # record_live_sighting/dedup already use to find-or-create a row, so
+    # it's reliably present. find_loco_class()'s "clean" name is NOT a
+    # reliable lookup key: when TSW's own API doesn't report a clean
+    # DisplayName, it falls all the way back to the raw internal asset
+    # string (e.g. "RVM Class158 SR DMS B C") which changes what it returns
+    # from poll to poll and won't match a row keyed on the real raw id or on
+    # the user's configured display name - that mismatch was both flipping
+    # the resolved speeds between two different results and showing the
+    # ugly raw string as the loco name instead of "Class 158".
     own_row = None
-    if name:
-        own_row = train_classes_db.get_train_class_by_source_name(name)
-    if not own_row and raw:
+    if raw:
         own_row = train_classes_db.get_train_class_by_source_name(raw)
+    if not own_row and name:
+        own_row = train_classes_db.get_train_class_by_source_name(name)
     if own_row:
         group = train_classes_db.get_group(own_row["group_id"]) if own_row.get("group_id") else None
         subclass = train_classes_db.get_subclass(own_row["subclass_id"]) if own_row.get("subclass_id") else None
         resolved = train_classes_db.resolve_speeds(own_row, group=group, subclass=subclass)
+        if own_row.get("display_name"):
+            display_name = own_row["display_name"]
 
     # 2) Old-style merge alias: the source row was deleted and future
     # sightings redirect to a target class, optionally with its own
@@ -1539,6 +1549,8 @@ def loco_identity():
                 group = train_classes_db.get_group(target["group_id"]) if target.get("group_id") else None
                 subclass = train_classes_db.get_subclass(alias["subclass_id"]) if alias.get("subclass_id") else None
                 resolved = train_classes_db.resolve_speeds(target, group=group, subclass=subclass)
+                if target.get("display_name"):
+                    display_name = target["display_name"]
 
     if resolved is not None:
         if resolved.get("max_speed_mph") is not None:
@@ -1546,7 +1558,7 @@ def loco_identity():
         if resolved.get("dial_max_mph") is not None:
             dial_max = resolved["dial_max_mph"]
 
-    return jsonify({"name": name, "raw_object_class": raw, "max_speed_mph": max_speed, "dial_max_mph": dial_max})
+    return jsonify({"name": display_name, "raw_object_class": raw, "max_speed_mph": max_speed, "dial_max_mph": dial_max})
 
 
 @app.route("/api/loco/profiles", methods=["GET"])
