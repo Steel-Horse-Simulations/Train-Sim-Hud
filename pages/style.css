@@ -302,7 +302,7 @@ textarea.dump {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   display: flex; align-items: center; gap: 22px; padding: 18px 28px;
 }
-.hud-gauge { width: 210px; height: 210px; position: relative; }
+.hud-gauge { width: 315px; height: 315px; position: relative; }
 .hud-gauge svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 .hud-gauge .speed-num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .hud-gauge .speed-num .n { font-family: var(--heading); font-weight: 600; font-size: 66px; line-height: 1; }

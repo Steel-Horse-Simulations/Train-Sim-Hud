@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.20.0"
+APP_VERSION = "7.20.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1033,7 +1033,17 @@ def service_worker():
 
 @app.route("/pages/<path:filename>")
 def pages(filename):
-    return send_from_directory(PAGES_DIR, filename)
+    # Force revalidation on every request. Without this, WebView2 (and the
+    # tablet's browser) can keep serving an old cached copy of style.css or
+    # dashboard.js after an update - which is why UI changes sometimes only
+    # showed up after a manual refresh, and why the gauge resize didn't
+    # appear until now. These files are small and requested rarely enough
+    # that always-fresh is worth it over the minor bandwidth saving.
+    response = send_from_directory(PAGES_DIR, filename)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 # ---- config -----------------------------------------------------------
