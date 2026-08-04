@@ -46,10 +46,15 @@
               <circle id="analogue-bezel" cx="60" cy="60" r="53.70" fill="none"
                       stroke="rgba(160,107,240,0.35)" stroke-width="0.22" style="display:none;"/>
 
-              <circle id="gauge-ring-bg" cx="60" cy="60" r="50" fill="none" stroke="#2a2a30" stroke-width="8"
-                      stroke-dasharray="236.49 314.16" stroke-linecap="round" transform="rotate(224.5 60 60)"/>
-              <circle id="gauge-ring" cx="60" cy="60" r="50" fill="none" stroke="none" stroke-width="8"
-                      stroke-dasharray="0 314.16" stroke-linecap="round" transform="rotate(224.5 60 60)"/>
+              <circle id="gauge-ring-bg" cx="60" cy="60" r="50" fill="none" stroke="#2a2a30" stroke-width="9.2"
+                      stroke-dasharray="236.49 314.16" stroke-linecap="butt" transform="rotate(224.5 60 60)"/>
+              <circle id="gauge-ring" cx="60" cy="60" r="50" fill="none" stroke="none" stroke-width="9.2"
+                      stroke-dasharray="0 314.16" stroke-linecap="butt" transform="rotate(224.5 60 60)"/>
+              <!-- Portion of the ring PAST the train's max speed - drawn as its own segment,
+                   offset to start exactly where gauge-ring's normal (limit-coloured) segment
+                   ends, so only speed beyond max shows red rather than the whole ring. -->
+              <circle id="gauge-ring-over" cx="60" cy="60" r="50" fill="none" stroke="none" stroke-width="9.2"
+                      stroke-dasharray="0 999" stroke-linecap="butt" transform="rotate(224.5 60 60)"/>
               <!-- Ticks/numbers, built by buildAnalogueTicks() since they depend on each
                    train's dial max. max-tick comes AFTER them: it is drawn as an exact
                    duplicate of the major tick it sits on (same length, width and position,

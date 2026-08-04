@@ -170,12 +170,21 @@ function polarPoint(r, svgAngleDeg) {
   return { x: 60 + r * Math.cos(rad), y: 60 + r * Math.sin(rad) };
 }
 
-// Numbers always advance in clean multiples of 10. Only steps up to 20/50 for
-// unusually large dials so the face doesn't become unreadable.
+// Numbers always advance in clean multiples of 10, except very small dials
+// (50mph or under) which use multiples of 5 so there are still enough ticks
+// to read easily.
 function niceTickStep(dialMax) {
+  if (dialMax <= 50) return 5;
   if (dialMax <= 200) return 10;
   if (dialMax <= 400) return 20;
   return 50;
+}
+
+// Spacing between minor (unlabelled) ticks. Small dials (<=50) get a minor
+// tick at every 1mph; everything else keeps the old halfway-between-majors
+// spacing.
+function minorTickSpacing(dialMax, majorStep) {
+  return dialMax <= 50 ? 1 : majorStep / 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +194,7 @@ function niceTickStep(dialMax) {
 // Do not "tidy" these into round numbers - they are a direct transcription.
 // ---------------------------------------------------------------------------
 const AN = {
-  ringWidth:  2.1739,   // mockup arc_w 20 - much thinner than the digital ring's 8
+  ringWidth:  2.5,      // mockup arc_w 20 (2.1739) widened 15% per request
   tickOuter: 51.5217,   // major_out 474
   majorInner:45.5435,   // major_in  419
   minorInner:48.4783,   // minor_in  446
@@ -218,7 +227,7 @@ function buildAnalogueTicks(dialMax) {
     line.setAttribute('x2', inner.x.toFixed(3)); line.setAttribute('y2', inner.y.toFixed(3));
     line.setAttribute('stroke', 'var(--text)');
     line.setAttribute('stroke-width', AN.majorW);
-    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('stroke-linecap', 'butt');
     frag.appendChild(line);
 
     const labelPos = polarPoint(AN.labelR, A);
@@ -237,9 +246,9 @@ function buildAnalogueTicks(dialMax) {
     text.textContent = Math.round(v);
     frag.appendChild(text);
 
-    // Minor tick halfway to the next major, skipped past dialMax
-    const minorV = v + step / 2;
-    if (minorV < dialMax) {
+    // Minor tick(s) between this major and the next, skipped past dialMax
+    const minorStep = minorTickSpacing(dialMax, step);
+    for (let minorV = v + minorStep; minorV < v + step && minorV < dialMax; minorV += minorStep) {
       const mA = svgAngleForValue(minorV, dialMax);
       const mOuter = polarPoint(AN.tickOuter, mA);
       const mInner = polarPoint(AN.minorInner, mA);
@@ -248,7 +257,7 @@ function buildAnalogueTicks(dialMax) {
       mLine.setAttribute('x2', mInner.x.toFixed(3)); mLine.setAttribute('y2', mInner.y.toFixed(3));
       mLine.setAttribute('stroke', 'var(--text-dim)');
       mLine.setAttribute('stroke-width', AN.minorW);
-      mLine.setAttribute('stroke-linecap', 'round');
+      mLine.setAttribute('stroke-linecap', 'butt');
       frag.appendChild(mLine);
     }
   }
@@ -277,8 +286,8 @@ function setSpeedometerMode(mode) {
   // The mockup's arc is far thinner than the digital gauge's ring. Without
   // this the ticks and numbers sit against a band ~4x too heavy and the whole
   // face reads wrong, so the ring is thinned to the design's width here.
-  const ringWidth = isAnalogue ? AN.ringWidth : 8;
-  ['gauge-ring-bg', 'gauge-ring'].forEach(id => {
+  const ringWidth = isAnalogue ? AN.ringWidth : 9.2; // digital ring also widened 15% (8 -> 9.2)
+  ['gauge-ring-bg', 'gauge-ring', 'gauge-ring-over'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.setAttribute('stroke-width', ringWidth);
   });
@@ -317,7 +326,7 @@ function updateGaugeRing() {
       tick.setAttribute('x2', inner.x.toFixed(3)); tick.setAttribute('y2', inner.y.toFixed(3));
       tick.setAttribute('transform', '');
       tick.setAttribute('stroke-width', AN.majorW);
-      tick.setAttribute('stroke-linecap', 'round');
+      tick.setAttribute('stroke-linecap', 'butt');
     } else {
       // Digital gauge: short line across the ring band, rotated into place.
       tick.setAttribute('x1', '60'); tick.setAttribute('y1', '6');
@@ -334,17 +343,43 @@ function updateGaugeRing() {
     updateNeedle(dialMax);
   }
 
+  const ringOver = document.getElementById('gauge-ring-over');
+
   if (currentSpeedMph === null || currentSpeedMph <= 0) {
     ring.setAttribute('stroke-dasharray', '0 999');
     ring.setAttribute('stroke', 'none');
+    if (ringOver) { ringOver.setAttribute('stroke-dasharray', '0 999'); ringOver.setAttribute('stroke', 'none'); }
     if (overMaxBadge) overMaxBadge.classList.remove('show');
     return;
   }
-  const frac = Math.max(0, Math.min(1, currentSpeedMph / dialMax));
-  const arcLength = frac * 236.49;
-  ring.setAttribute('stroke-dasharray', arcLength.toFixed(2) + ' 314.16');
+
+  // Normal segment: 0 up to whichever is smaller, current speed or max speed.
+  // Coloured purely by speed-vs-limit (speedRingColor), same as always -
+  // being over the train's max speed no longer affects this portion's colour.
+  const normalUpTo = Math.min(currentSpeedMph, currentMaxSpeedMph);
+  const normalFrac = Math.max(0, Math.min(1, normalUpTo / dialMax));
+  const normalArcLen = normalFrac * 236.49;
+  ring.setAttribute('stroke-dasharray', normalArcLen.toFixed(2) + ' 314.16');
+  ring.setAttribute('stroke', speedRingColor(currentSpeedMph, currentLimitMph));
+
+  // Over segment: only the portion from max speed up to current speed (capped
+  // at the dial's own top end) - drawn as a second arc offset to start right
+  // where the normal segment ends, so only speed past max shows red.
   const overMax = currentSpeedMph > currentMaxSpeedMph;
-  ring.setAttribute('stroke', overMax ? 'var(--status-red)' : speedRingColor(currentSpeedMph, currentLimitMph));
+  if (ringOver) {
+    if (overMax) {
+      const overUpTo = Math.max(0, Math.min(currentSpeedMph, dialMax));
+      const overFrac = Math.max(0, Math.min(1, overUpTo / dialMax));
+      const overArcLen = Math.max(0, overFrac * 236.49 - normalArcLen);
+      ringOver.setAttribute('stroke-dasharray', overArcLen.toFixed(2) + ' 999');
+      ringOver.setAttribute('stroke-dashoffset', (-normalArcLen).toFixed(2));
+      ringOver.setAttribute('stroke', 'var(--status-red)');
+    } else {
+      ringOver.setAttribute('stroke-dasharray', '0 999');
+      ringOver.setAttribute('stroke', 'none');
+    }
+  }
+
   if (overMaxBadge) overMaxBadge.classList.toggle('show', overMax);
 }
 
