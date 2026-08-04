@@ -123,6 +123,7 @@ let currentLimitMph = null;
 let currentMaxSpeedMph = 100;
 let currentDialMaxMph = null; // real per-train speedometer dial max from Known Trains v2, via /api/loco
 let currentSpeedometerMode = 'digital'; // 'digital' or 'analogue', from Known Trains v2 per train
+let analogueTicksBuiltKey = null;       // guards against rebuilding identical ticks every 300ms poll
 
 // Fallback headroom multiplier, used only for locos with no Known Trains v2
 // entry yet (so no real dial_max_mph is available) - keeps the dial usable
@@ -131,85 +132,110 @@ const DIAL_HEADROOM_MULTIPLIER = 1.2;
 
 let speedPollInFlight = false;
 
-// Picks a major tick step that's always a clean multiple of 10, aiming for
-// roughly 6-12 numbered ticks around the dial whatever the train's own
-// dial max is.
-function niceTickStep(dialMax) {
-  const rough = dialMax / 10;
-  const candidates = [10, 20, 30, 40, 50, 100, 200];
-  for (const c of candidates) {
-    if (rough <= c) return c;
-  }
-  return 200;
-}
+// ---------------------------------------------------------------------------
+// Gauge angle conventions - read this before touching any dial geometry.
+//
+// The whole gauge SVG is rotated -90deg by CSS (.hud-gauge svg in style.css).
+// Everything below works in *SVG space* and lets that CSS rotation do the
+// final turn, exactly like the existing ring does.
+//
+//   - The ring is a <circle> whose stroke-dasharray starts at SVG angle 0 =
+//     EAST, carrying transform="rotate(224.5 60 60)". So a value v sits at
+//     SVG angle:  A = 224.5 + (v/dialMax)*271   (clockwise from east)
+//   - On screen that lands at A - 90, so v=0 shows at bottom-left and the
+//     scale sweeps clockwise to dialMax at bottom-right.
+//   - An element drawn pointing UP in SVG (like the max-speed tick line and
+//     the needle, both vertical above cy) sits at SVG angle 270 by default,
+//     so to place it at value v it needs rotate(A - 270).
+//
+// Two long-standing bugs lived here: polarPoint() subtracted an extra 90deg
+// (rotating the whole number ring a quarter turn), and the max-speed tick
+// used rotate(A) instead of rotate(A - 270), putting it 270deg out.
+// ---------------------------------------------------------------------------
 
-function angleForValue(v, dialMax) {
+function svgAngleForValue(v, dialMax) {
   const frac = Math.max(0, Math.min(1, v / dialMax));
   return 224.5 + frac * 271;
 }
 
-function polarPoint(r, deg) {
-  const rad = (deg - 90) * Math.PI / 180;
+// Rotation for an element that points UP in SVG (tick line, needle).
+function upElementRotationForValue(v, dialMax) {
+  return svgAngleForValue(v, dialMax) - 270;
+}
+
+// Point at radius r along an SVG angle (clockwise from east) - NO extra
+// offset, matching the ring's own convention.
+function polarPoint(r, svgAngleDeg) {
+  const rad = svgAngleDeg * Math.PI / 180;
   return { x: 60 + r * Math.cos(rad), y: 60 + r * Math.sin(rad) };
 }
 
-// Builds the numbered ticks around the analogue face for this train's dial
-// max. Rebuilt fresh every call (cheap - a dozen small SVG elements) rather
-// than cached, so a train swap always shows the correct scale immediately
-// with no chance of a stale build lingering from a different train.
+// Numbers always advance in clean multiples of 10. Only steps up to 20/50 for
+// unusually large dials so the face doesn't become unreadable.
+function niceTickStep(dialMax) {
+  if (dialMax <= 200) return 10;
+  if (dialMax <= 400) return 20;
+  return 50;
+}
+
+// Builds the numbered ticks around the analogue face for this train's dial max.
 function buildAnalogueTicks(dialMax) {
   const group = document.getElementById('analogue-ticks');
   if (!group || !dialMax) return;
 
   const step = niceTickStep(dialMax);
+  const key = dialMax + ':' + step;
+  if (key === analogueTicksBuiltKey) return;
+  analogueTicksBuiltKey = key;
+
   const svgNS = 'http://www.w3.org/2000/svg';
   const frag = document.createDocumentFragment();
 
-  // Ticks sit just inside the ring band (ring spans r=46 to r=54) rather
-  // than starting from the ring's centreline, so they read as "belonging"
-  // to the ring instead of floating further into the dial's interior.
+  // Ring band spans r=46..54. Ticks sit across its outer half; numbers sit
+  // inside the ring, like the approved design.
   const tickOuter = 55;
-  const majorInner = 47;
-  const minorInner = 51;
-  const labelRadius = 39;
+  const majorInner = 46;
+  const minorInner = 50;
+  const labelRadius = 37;
 
   for (let v = 0; v <= dialMax + 0.001; v += step) {
-    const deg = angleForValue(v, dialMax);
-    const outer = polarPoint(tickOuter, deg);
-    const inner = polarPoint(majorInner, deg);
+    const A = svgAngleForValue(v, dialMax);
+
+    const outer = polarPoint(tickOuter, A);
+    const inner = polarPoint(majorInner, A);
     const line = document.createElementNS(svgNS, 'line');
-    line.setAttribute('x1', outer.x); line.setAttribute('y1', outer.y);
-    line.setAttribute('x2', inner.x); line.setAttribute('y2', inner.y);
+    line.setAttribute('x1', outer.x.toFixed(2)); line.setAttribute('y1', outer.y.toFixed(2));
+    line.setAttribute('x2', inner.x.toFixed(2)); line.setAttribute('y2', inner.y.toFixed(2));
     line.setAttribute('stroke', 'var(--text)');
-    line.setAttribute('stroke-width', '1.6');
+    line.setAttribute('stroke-width', '1.8');
     line.setAttribute('stroke-linecap', 'round');
     frag.appendChild(line);
 
-    const labelPos = polarPoint(labelRadius, deg);
+    const labelPos = polarPoint(labelRadius, A);
     const text = document.createElementNS(svgNS, 'text');
-    text.setAttribute('x', labelPos.x);
-    text.setAttribute('y', labelPos.y);
+    text.setAttribute('x', labelPos.x.toFixed(2));
+    text.setAttribute('y', labelPos.y.toFixed(2));
     text.setAttribute('text-anchor', 'middle');
     text.setAttribute('dominant-baseline', 'central');
-    // Counter-rotate 90deg around its own point: the whole SVG is rotated
-    // -90deg via CSS (.hud-gauge svg), so every text element needs this to
-    // stay upright/readable rather than rendering sideways on screen.
-    text.setAttribute('transform', `rotate(90 ${labelPos.x} ${labelPos.y})`);
+    // Counter-rotate +90 about its own point to cancel the SVG's -90 CSS
+    // rotation, so numbers read upright on screen.
+    text.setAttribute('transform', `rotate(90 ${labelPos.x.toFixed(2)} ${labelPos.y.toFixed(2)})`);
     text.setAttribute('font-size', '9');
+    text.setAttribute('font-weight', '600');
     text.setAttribute('fill', 'var(--text)');
     text.setAttribute('class', 'analogue-tick-label');
     text.textContent = Math.round(v);
     frag.appendChild(text);
 
-    // Minor tick at the halfway point to the next major, skipped past dialMax
+    // Minor tick halfway to the next major, skipped past dialMax
     const minorV = v + step / 2;
     if (minorV < dialMax) {
-      const mdeg = angleForValue(minorV, dialMax);
-      const mOuter = polarPoint(tickOuter, mdeg);
-      const mInner = polarPoint(minorInner, mdeg);
+      const mA = svgAngleForValue(minorV, dialMax);
+      const mOuter = polarPoint(tickOuter, mA);
+      const mInner = polarPoint(minorInner, mA);
       const mLine = document.createElementNS(svgNS, 'line');
-      mLine.setAttribute('x1', mOuter.x); mLine.setAttribute('y1', mOuter.y);
-      mLine.setAttribute('x2', mInner.x); mLine.setAttribute('y2', mInner.y);
+      mLine.setAttribute('x1', mOuter.x.toFixed(2)); mLine.setAttribute('y1', mOuter.y.toFixed(2));
+      mLine.setAttribute('x2', mInner.x.toFixed(2)); mLine.setAttribute('y2', mInner.y.toFixed(2));
       mLine.setAttribute('stroke', 'var(--text-dim)');
       mLine.setAttribute('stroke-width', '1');
       mLine.setAttribute('stroke-linecap', 'round');
@@ -222,30 +248,34 @@ function buildAnalogueTicks(dialMax) {
 }
 
 // Shows/hides the digital number vs analogue needle+ticks based on this
-// train's Known Trains "speedometer" setting. Cheap to call every poll -
-// only actually touches the DOM when the mode has changed.
+// train's Known Trains "speedometer" setting. Applies unconditionally rather
+// than early-returning on "no change" - a stale/cached stylesheet on the
+// tablet previously left the digital readout visible over the dial, so the
+// visibility is forced here with inline styles instead of relying on CSS.
 function setSpeedometerMode(mode) {
-  if (mode === currentSpeedometerMode) return;
-  currentSpeedometerMode = mode;
   const isAnalogue = mode === 'analogue';
+  if (mode !== currentSpeedometerMode) {
+    currentSpeedometerMode = mode;
+    analogueTicksBuiltKey = null; // force a rebuild on the next update
+  }
+
   document.querySelectorAll('.hud-gauge').forEach(g => g.classList.toggle('analogue', isAnalogue));
-  const display = isAnalogue ? '' : 'none';
-  const needle = document.getElementById('needle');
-  const hub = document.getElementById('needle-hub');
-  const hubDot = document.getElementById('needle-hub-dot');
-  const mphLabel = document.getElementById('analogue-mph-label');
-  if (needle) needle.style.display = display;
-  if (hub) hub.style.display = display;
-  if (hubDot) hubDot.style.display = display;
-  if (mphLabel) mphLabel.style.display = display;
+  document.querySelectorAll('.hud-gauge .speed-num').forEach(el => {
+    el.style.display = isAnalogue ? 'none' : '';
+  });
+
+  const shown = isAnalogue ? '' : 'none';
+  ['needle', 'needle-hub', 'needle-hub-dot', 'analogue-mph-label'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = shown;
+  });
 }
 
 function updateNeedle(dialMax) {
   const needle = document.getElementById('needle');
   if (!needle || currentSpeedometerMode !== 'analogue') return;
   const speed = currentSpeedMph || 0;
-  const rotation = angleForValue(speed, dialMax);
-  needle.setAttribute('transform', `rotate(${rotation} 60 60)`);
+  needle.setAttribute('transform', `rotate(${upElementRotationForValue(speed, dialMax).toFixed(2)} 60 60)`);
 }
 
 function updateGaugeRing() {
@@ -254,10 +284,9 @@ function updateGaugeRing() {
   const overMaxBadge = document.getElementById('over-max-badge');
 
   const dialMax = currentDialMaxMph || (currentMaxSpeedMph * DIAL_HEADROOM_MULTIPLIER);
+
   if (tick) {
-    const tickFrac = Math.max(0, Math.min(1, currentMaxSpeedMph / dialMax));
-    const tickRotation = 224.5 + (tickFrac * 271);
-    tick.setAttribute('transform', `rotate(${tickRotation} 60 60)`);
+    tick.setAttribute('transform', `rotate(${upElementRotationForValue(currentMaxSpeedMph, dialMax).toFixed(2)} 60 60)`);
     tick.setAttribute('stroke', 'var(--status-red)');
   }
 
@@ -457,5 +486,8 @@ function startDashboard() {
   pollAux();
   setInterval(pollAux, 5000);
   pollLoco();
-  setInterval(pollLoco, 10000);
+  // 2s rather than 10s: this poll carries the speedometer type, dial max and
+  // max speed, so a slow interval meant swapping trains left the wrong dial
+  // (or the digital readout) on screen until a manual page refresh.
+  setInterval(pollLoco, 2000);
 }
