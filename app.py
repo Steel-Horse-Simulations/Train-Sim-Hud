@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.19.0"
+APP_VERSION = "7.19.2"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1527,10 +1527,24 @@ def loco_identity():
         group = train_classes_db.get_group(own_row["group_id"]) if own_row.get("group_id") else None
         subclass = train_classes_db.get_subclass(own_row["subclass_id"]) if own_row.get("subclass_id") else None
         resolved = train_classes_db.resolve_speeds(own_row, group=group, subclass=subclass)
-        if own_row.get("display_name"):
-            display_name = own_row["display_name"]
-        if own_row.get("speedometer") in ("analogue", "digital"):
-            speedometer = own_row["speedometer"]
+
+        # If this row is a Variant (added via the non-destructive "Variants"
+        # panel), display attributes should come from the train it's
+        # attached to - it's meant to present as that train, sharing its
+        # name/photo/etc, with only its own subclass (if any) able to give
+        # it a different speed. The variant row's own group_id was already
+        # copied from the parent when it was attached, so speed resolution
+        # above is already correct either way.
+        display_row = own_row
+        if own_row.get("variant_of_class_id"):
+            parent = train_classes_db.get_train_class(own_row["variant_of_class_id"])
+            if parent:
+                display_row = parent
+
+        if display_row.get("display_name"):
+            display_name = display_row["display_name"]
+        if display_row.get("speedometer") in ("analogue", "digital"):
+            speedometer = display_row["speedometer"]
 
     # 2) Old-style merge alias: the source row was deleted and future
     # sightings redirect to a target class, optionally with its own

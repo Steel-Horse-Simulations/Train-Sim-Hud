@@ -123,7 +123,6 @@ let currentLimitMph = null;
 let currentMaxSpeedMph = 100;
 let currentDialMaxMph = null; // real per-train speedometer dial max from Known Trains v2, via /api/loco
 let currentSpeedometerMode = 'digital'; // 'digital' or 'analogue', from Known Trains v2 per train
-let analogueTicksBuiltForDialMax = null; // dialMax the analogue face was last built for, so it's only rebuilt when it actually changes
 
 // Fallback headroom multiplier, used only for locos with no Known Trains v2
 // entry yet (so no real dial_max_mph is available) - keeps the dial usable
@@ -132,15 +131,16 @@ const DIAL_HEADROOM_MULTIPLIER = 1.2;
 
 let speedPollInFlight = false;
 
-// Picks a "nice" major tick step (5/10/15/20/25/50/100) aiming for roughly
-// 6-10 numbered ticks around the dial, whatever the train's own dial max is.
+// Picks a major tick step that's always a clean multiple of 10, aiming for
+// roughly 6-12 numbered ticks around the dial whatever the train's own
+// dial max is.
 function niceTickStep(dialMax) {
-  const rough = dialMax / 8;
-  const candidates = [5, 10, 15, 20, 25, 50, 100];
+  const rough = dialMax / 10;
+  const candidates = [10, 20, 30, 40, 50, 100, 200];
   for (const c of candidates) {
     if (rough <= c) return c;
   }
-  return 100;
+  return 200;
 }
 
 function angleForValue(v, dialMax) {
@@ -154,21 +154,29 @@ function polarPoint(r, deg) {
 }
 
 // Builds the numbered ticks around the analogue face for this train's dial
-// max. Only re-run when dialMax actually changes (different train / edited
-// setting) - not on every 300ms speed poll.
+// max. Rebuilt fresh every call (cheap - a dozen small SVG elements) rather
+// than cached, so a train swap always shows the correct scale immediately
+// with no chance of a stale build lingering from a different train.
 function buildAnalogueTicks(dialMax) {
   const group = document.getElementById('analogue-ticks');
-  if (!group || !dialMax || dialMax === analogueTicksBuiltForDialMax) return;
-  analogueTicksBuiltForDialMax = dialMax;
+  if (!group || !dialMax) return;
 
   const step = niceTickStep(dialMax);
   const svgNS = 'http://www.w3.org/2000/svg';
   const frag = document.createDocumentFragment();
 
+  // Ticks sit just inside the ring band (ring spans r=46 to r=54) rather
+  // than starting from the ring's centreline, so they read as "belonging"
+  // to the ring instead of floating further into the dial's interior.
+  const tickOuter = 55;
+  const majorInner = 47;
+  const minorInner = 51;
+  const labelRadius = 39;
+
   for (let v = 0; v <= dialMax + 0.001; v += step) {
     const deg = angleForValue(v, dialMax);
-    const outer = polarPoint(50, deg);
-    const inner = polarPoint(42, deg);
+    const outer = polarPoint(tickOuter, deg);
+    const inner = polarPoint(majorInner, deg);
     const line = document.createElementNS(svgNS, 'line');
     line.setAttribute('x1', outer.x); line.setAttribute('y1', outer.y);
     line.setAttribute('x2', inner.x); line.setAttribute('y2', inner.y);
@@ -177,12 +185,12 @@ function buildAnalogueTicks(dialMax) {
     line.setAttribute('stroke-linecap', 'round');
     frag.appendChild(line);
 
-    const labelPos = polarPoint(34, deg);
+    const labelPos = polarPoint(labelRadius, deg);
     const text = document.createElementNS(svgNS, 'text');
     text.setAttribute('x', labelPos.x);
     text.setAttribute('y', labelPos.y);
     text.setAttribute('text-anchor', 'middle');
-    text.setAttribute('dominant-baseline', 'middle');
+    text.setAttribute('dominant-baseline', 'central');
     // Counter-rotate 90deg around its own point: the whole SVG is rotated
     // -90deg via CSS (.hud-gauge svg), so every text element needs this to
     // stay upright/readable rather than rendering sideways on screen.
@@ -197,8 +205,8 @@ function buildAnalogueTicks(dialMax) {
     const minorV = v + step / 2;
     if (minorV < dialMax) {
       const mdeg = angleForValue(minorV, dialMax);
-      const mOuter = polarPoint(50, mdeg);
-      const mInner = polarPoint(45, mdeg);
+      const mOuter = polarPoint(tickOuter, mdeg);
+      const mInner = polarPoint(minorInner, mdeg);
       const mLine = document.createElementNS(svgNS, 'line');
       mLine.setAttribute('x1', mOuter.x); mLine.setAttribute('y1', mOuter.y);
       mLine.setAttribute('x2', mInner.x); mLine.setAttribute('y2', mInner.y);
