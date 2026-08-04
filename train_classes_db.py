@@ -656,36 +656,62 @@ def get_train_class_by_source_name(source_name):
 def find_train_class_for_identity(raw_object_class, clean_name=None):
     """Robust lookup for "which Known Trains row is this currently-driven
     loco": TSW's own API is inconsistent about what it reports poll to poll
-    (sometimes the bare class like "Class 220", sometimes nothing so we fall
-    back to the raw asset string), and a user's configured display name is
-    often livery-suffixed ("Class 220 - Cross Country") rather than an exact
-    match to either. Tries, in order:
-      1. source_name == raw
-      2. source_name == clean_name
-      3. display_name == clean_name
-      4. display_name starts with "<clean_name> -" (bare class is a prefix
-         of the livery-suffixed configured name)
-    First match wins; returns None if nothing matches any strategy."""
+    (sometimes the bare class like "Class 220", sometimes the raw asset
+    string), and a user's configured display name is often livery-suffixed
+    ("Class 220 - Cross Country") rather than an exact match to either.
+
+    Gathers every row that could plausibly be "this loco" under any of the
+    matching strategies below, then RANKS them rather than taking the first
+    strategy that happens to hit something - otherwise an old, unconfigured
+    stray row whose source_name is literally the bare class name (left over
+    from before the user set the train up properly) can win over the actual
+    configured entry just because it matches an earlier strategy.
+
+    Ranking, highest priority first:
+      1. Configured rows (group_id set) beat unconfigured ones outright.
+      2. Exact display_name match beats a display_name prefix match beats a
+         source_name match.
+      3. Higher times_seen as a final tiebreak.
+    """
     conn = _connect()
     try:
+        candidates = {}
+
+        def add(row, exact_display, prefix_display, source_match):
+            if not row:
+                return
+            d = dict(row)
+            rid = d["id"]
+            rank = (
+                1 if d.get("group_id") else 0,
+                1 if exact_display else 0,
+                1 if prefix_display else 0,
+                1 if source_match else 0,
+                d.get("times_seen") or 0,
+            )
+            if rid not in candidates or rank > candidates[rid][0]:
+                candidates[rid] = (rank, d)
+
         if raw_object_class:
             row = conn.execute("SELECT * FROM train_classes WHERE source_name = ?", (raw_object_class,)).fetchone()
-            if row:
-                return dict(row)
+            add(row, exact_display=False, prefix_display=False, source_match=True)
+
         if clean_name:
             row = conn.execute("SELECT * FROM train_classes WHERE source_name = ?", (clean_name,)).fetchone()
-            if row:
-                return dict(row)
+            add(row, exact_display=False, prefix_display=False, source_match=True)
+
             row = conn.execute("SELECT * FROM train_classes WHERE display_name = ?", (clean_name,)).fetchone()
-            if row:
-                return dict(row)
-            row = conn.execute(
-                "SELECT * FROM train_classes WHERE display_name = ? OR display_name LIKE ? ORDER BY times_seen DESC LIMIT 1",
-                (clean_name, clean_name + " -%"),
-            ).fetchone()
-            if row:
-                return dict(row)
-        return None
+            add(row, exact_display=True, prefix_display=False, source_match=False)
+
+            for row in conn.execute(
+                "SELECT * FROM train_classes WHERE display_name LIKE ?", (clean_name + " -%",)
+            ).fetchall():
+                add(row, exact_display=False, prefix_display=True, source_match=False)
+
+        if not candidates:
+            return None
+        best_rank, best_row = max(candidates.values(), key=lambda pair: pair[0])
+        return best_row
     finally:
         conn.close()
 

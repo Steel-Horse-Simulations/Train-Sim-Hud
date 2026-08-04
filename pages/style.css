@@ -309,6 +309,8 @@ textarea.dump {
 .hud-gauge .speed-num .u { font-family: var(--heading); font-size: 15px; color: var(--text-dim); letter-spacing: 0.14em; margin-top: 4px; }
 
 .max-tick { transition: stroke 0.15s ease; }
+.hud-gauge.analogue .speed-num { display: none; }
+.analogue-tick-label { font-family: var(--heading); font-weight: 600; }
 .over-max-badge {
   position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
   background: var(--status-red); color: #1a1013; font-family: var(--heading); font-weight: 700;

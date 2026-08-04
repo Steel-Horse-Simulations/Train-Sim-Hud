@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.18.2"
+APP_VERSION = "7.19.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1504,6 +1504,7 @@ def loco_identity():
     name = find_loco_class()
     raw = get_current_raw_object_class()
     display_name = name  # what gets shown/returned; may be overridden below
+    speedometer = "digital"  # default for unconfigured trains
 
     # Legacy fallback values, used only if nothing in Known Trains v2 matches
     # this loco at all.
@@ -1528,6 +1529,8 @@ def loco_identity():
         resolved = train_classes_db.resolve_speeds(own_row, group=group, subclass=subclass)
         if own_row.get("display_name"):
             display_name = own_row["display_name"]
+        if own_row.get("speedometer") in ("analogue", "digital"):
+            speedometer = own_row["speedometer"]
 
     # 2) Old-style merge alias: the source row was deleted and future
     # sightings redirect to a target class, optionally with its own
@@ -1543,6 +1546,8 @@ def loco_identity():
                 resolved = train_classes_db.resolve_speeds(target, group=group, subclass=subclass)
                 if target.get("display_name"):
                     display_name = target["display_name"]
+                if target.get("speedometer") in ("analogue", "digital"):
+                    speedometer = target["speedometer"]
 
     if resolved is not None:
         if resolved.get("max_speed_mph") is not None:
@@ -1550,7 +1555,13 @@ def loco_identity():
         if resolved.get("dial_max_mph") is not None:
             dial_max = resolved["dial_max_mph"]
 
-    return jsonify({"name": display_name, "raw_object_class": raw, "max_speed_mph": max_speed, "dial_max_mph": dial_max})
+    return jsonify({
+        "name": display_name,
+        "raw_object_class": raw,
+        "max_speed_mph": max_speed,
+        "dial_max_mph": dial_max,
+        "speedometer": speedometer,
+    })
 
 
 @app.route("/api/loco/profiles", methods=["GET"])

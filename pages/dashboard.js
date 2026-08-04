@@ -122,6 +122,8 @@ let currentSpeedMph = null;
 let currentLimitMph = null;
 let currentMaxSpeedMph = 100;
 let currentDialMaxMph = null; // real per-train speedometer dial max from Known Trains v2, via /api/loco
+let currentSpeedometerMode = 'digital'; // 'digital' or 'analogue', from Known Trains v2 per train
+let analogueTicksBuiltForDialMax = null; // dialMax the analogue face was last built for, so it's only rebuilt when it actually changes
 
 // Fallback headroom multiplier, used only for locos with no Known Trains v2
 // entry yet (so no real dial_max_mph is available) - keeps the dial usable
@@ -129,6 +131,114 @@ let currentDialMaxMph = null; // real per-train speedometer dial max from Known 
 const DIAL_HEADROOM_MULTIPLIER = 1.2;
 
 let speedPollInFlight = false;
+
+// Picks a "nice" major tick step (5/10/15/20/25/50/100) aiming for roughly
+// 6-10 numbered ticks around the dial, whatever the train's own dial max is.
+function niceTickStep(dialMax) {
+  const rough = dialMax / 8;
+  const candidates = [5, 10, 15, 20, 25, 50, 100];
+  for (const c of candidates) {
+    if (rough <= c) return c;
+  }
+  return 100;
+}
+
+function angleForValue(v, dialMax) {
+  const frac = Math.max(0, Math.min(1, v / dialMax));
+  return 224.5 + frac * 271;
+}
+
+function polarPoint(r, deg) {
+  const rad = (deg - 90) * Math.PI / 180;
+  return { x: 60 + r * Math.cos(rad), y: 60 + r * Math.sin(rad) };
+}
+
+// Builds the numbered ticks around the analogue face for this train's dial
+// max. Only re-run when dialMax actually changes (different train / edited
+// setting) - not on every 300ms speed poll.
+function buildAnalogueTicks(dialMax) {
+  const group = document.getElementById('analogue-ticks');
+  if (!group || !dialMax || dialMax === analogueTicksBuiltForDialMax) return;
+  analogueTicksBuiltForDialMax = dialMax;
+
+  const step = niceTickStep(dialMax);
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const frag = document.createDocumentFragment();
+
+  for (let v = 0; v <= dialMax + 0.001; v += step) {
+    const deg = angleForValue(v, dialMax);
+    const outer = polarPoint(50, deg);
+    const inner = polarPoint(42, deg);
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', outer.x); line.setAttribute('y1', outer.y);
+    line.setAttribute('x2', inner.x); line.setAttribute('y2', inner.y);
+    line.setAttribute('stroke', 'var(--text)');
+    line.setAttribute('stroke-width', '1.6');
+    line.setAttribute('stroke-linecap', 'round');
+    frag.appendChild(line);
+
+    const labelPos = polarPoint(34, deg);
+    const text = document.createElementNS(svgNS, 'text');
+    text.setAttribute('x', labelPos.x);
+    text.setAttribute('y', labelPos.y);
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('dominant-baseline', 'middle');
+    // Counter-rotate 90deg around its own point: the whole SVG is rotated
+    // -90deg via CSS (.hud-gauge svg), so every text element needs this to
+    // stay upright/readable rather than rendering sideways on screen.
+    text.setAttribute('transform', `rotate(90 ${labelPos.x} ${labelPos.y})`);
+    text.setAttribute('font-size', '9');
+    text.setAttribute('fill', 'var(--text)');
+    text.setAttribute('class', 'analogue-tick-label');
+    text.textContent = Math.round(v);
+    frag.appendChild(text);
+
+    // Minor tick at the halfway point to the next major, skipped past dialMax
+    const minorV = v + step / 2;
+    if (minorV < dialMax) {
+      const mdeg = angleForValue(minorV, dialMax);
+      const mOuter = polarPoint(50, mdeg);
+      const mInner = polarPoint(45, mdeg);
+      const mLine = document.createElementNS(svgNS, 'line');
+      mLine.setAttribute('x1', mOuter.x); mLine.setAttribute('y1', mOuter.y);
+      mLine.setAttribute('x2', mInner.x); mLine.setAttribute('y2', mInner.y);
+      mLine.setAttribute('stroke', 'var(--text-dim)');
+      mLine.setAttribute('stroke-width', '1');
+      mLine.setAttribute('stroke-linecap', 'round');
+      frag.appendChild(mLine);
+    }
+  }
+
+  group.innerHTML = '';
+  group.appendChild(frag);
+}
+
+// Shows/hides the digital number vs analogue needle+ticks based on this
+// train's Known Trains "speedometer" setting. Cheap to call every poll -
+// only actually touches the DOM when the mode has changed.
+function setSpeedometerMode(mode) {
+  if (mode === currentSpeedometerMode) return;
+  currentSpeedometerMode = mode;
+  const isAnalogue = mode === 'analogue';
+  document.querySelectorAll('.hud-gauge').forEach(g => g.classList.toggle('analogue', isAnalogue));
+  const display = isAnalogue ? '' : 'none';
+  const needle = document.getElementById('needle');
+  const hub = document.getElementById('needle-hub');
+  const hubDot = document.getElementById('needle-hub-dot');
+  const mphLabel = document.getElementById('analogue-mph-label');
+  if (needle) needle.style.display = display;
+  if (hub) hub.style.display = display;
+  if (hubDot) hubDot.style.display = display;
+  if (mphLabel) mphLabel.style.display = display;
+}
+
+function updateNeedle(dialMax) {
+  const needle = document.getElementById('needle');
+  if (!needle || currentSpeedometerMode !== 'analogue') return;
+  const speed = currentSpeedMph || 0;
+  const rotation = angleForValue(speed, dialMax);
+  needle.setAttribute('transform', `rotate(${rotation} 60 60)`);
+}
 
 function updateGaugeRing() {
   const ring = document.getElementById('gauge-ring');
@@ -141,6 +251,11 @@ function updateGaugeRing() {
     const tickRotation = 224.5 + (tickFrac * 271);
     tick.setAttribute('transform', `rotate(${tickRotation} 60 60)`);
     tick.setAttribute('stroke', 'var(--status-red)');
+  }
+
+  if (currentSpeedometerMode === 'analogue') {
+    buildAnalogueTicks(dialMax);
+    updateNeedle(dialMax);
   }
 
   if (currentSpeedMph === null || currentSpeedMph <= 0) {
@@ -316,6 +431,7 @@ async function pollLoco() {
     } else {
       currentDialMaxMph = null;
     }
+    setSpeedometerMode(data && data.speedometer === 'analogue' ? 'analogue' : 'digital');
     updateGaugeRing();
   } catch (e) {
     el.textContent = 'Missing Train Class';

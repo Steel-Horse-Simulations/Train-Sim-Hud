@@ -43,6 +43,18 @@
               <circle id="gauge-ring" cx="60" cy="60" r="50" fill="none" stroke="none" stroke-width="8"
                       stroke-dasharray="0 314.16" stroke-linecap="round" transform="rotate(224.5 60 60)"/>
               <line id="max-tick" class="max-tick" x1="60" y1="6" x2="60" y2="14" stroke="none" stroke-width="2" stroke-linecap="butt"/>
+
+              <!-- Analogue face: ticks/numbers built dynamically by JS (buildAnalogueTicks)
+                   since they depend on each train's own dial max. Needle rotated per-poll by
+                   updateNeedle(). All hidden by default; shown only when this train's
+                   speedometer setting is "analogue" (setSpeedometerMode in dashboard.js). -->
+              <g id="analogue-ticks"></g>
+              <polygon id="needle" points="60,60 58,63 60,16 62,63" fill="var(--accent-bright)" style="display:none;"/>
+              <circle id="needle-hub" cx="60" cy="60" r="6.5" fill="#1c1a24" stroke="var(--accent)" stroke-width="1.5" style="display:none;"/>
+              <circle id="needle-hub-dot" cx="60" cy="60" r="2.2" fill="var(--accent-bright)" style="display:none;"/>
+              <text id="analogue-mph-label" x="60" y="82" text-anchor="middle" dominant-baseline="middle"
+                    transform="rotate(90 60 82)" font-family="var(--heading)" font-size="6.5"
+                    letter-spacing="1" fill="var(--text-dim)" style="display:none;">MPH</text>
             </svg>
             <div class="speed-num"><div class="n" id="v-speed">—</div><div class="u">MPH</div></div>
           </div>
