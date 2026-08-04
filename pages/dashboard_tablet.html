@@ -38,23 +38,35 @@
           <div class="hud-gauge">
             <div class="over-max-badge" id="over-max-badge">Over max speed</div>
             <svg viewBox="0 0 120 120">
-              <circle cx="60" cy="60" r="50" fill="none" stroke="#2a2a30" stroke-width="8"
+              <!-- Analogue face + bezel, drawn behind everything. Radii/widths are the
+                   approved mockup's own values scaled by 50/460 (its arc r=460 -> this
+                   gauge's ring r=50). Hidden unless in analogue mode. -->
+              <circle id="analogue-face" cx="60" cy="60" r="54.35" fill="#141218"
+                      stroke="rgba(255,255,255,0.10)" stroke-width="0.33" style="display:none;"/>
+              <circle id="analogue-bezel" cx="60" cy="60" r="53.70" fill="none"
+                      stroke="rgba(160,107,240,0.35)" stroke-width="0.22" style="display:none;"/>
+
+              <circle id="gauge-ring-bg" cx="60" cy="60" r="50" fill="none" stroke="#2a2a30" stroke-width="8"
                       stroke-dasharray="236.49 314.16" stroke-linecap="round" transform="rotate(224.5 60 60)"/>
               <circle id="gauge-ring" cx="60" cy="60" r="50" fill="none" stroke="none" stroke-width="8"
                       stroke-dasharray="0 314.16" stroke-linecap="round" transform="rotate(224.5 60 60)"/>
+              <!-- Ticks/numbers, built by buildAnalogueTicks() since they depend on each
+                   train's dial max. max-tick comes AFTER them: it is drawn as an exact
+                   duplicate of the major tick it sits on (same length, width and position,
+                   just red), so it must paint last to be visible.
+                   Needle geometry is the mockup's: widest at 2.17 either side of centre,
+                   tapering to a tip 42.28 out. Rotated per-poll by updateNeedle(). -->
+              <g id="analogue-ticks"></g>
+
               <line id="max-tick" class="max-tick" x1="60" y1="6" x2="60" y2="14" stroke="none" stroke-width="2" stroke-linecap="butt"/>
 
-              <!-- Analogue face: ticks/numbers built dynamically by JS (buildAnalogueTicks)
-                   since they depend on each train's own dial max. Needle rotated per-poll by
-                   updateNeedle(). All hidden by default; shown only when this train's
-                   speedometer setting is "analogue" (setSpeedometerMode in dashboard.js). -->
-              <g id="analogue-ticks"></g>
-              <polygon id="needle" points="60,17 61.7,59 60,66 58.3,59" fill="var(--accent-bright)" style="display:none;"/>
-              <circle id="needle-hub" cx="60" cy="60" r="6.5" fill="#1c1a24" stroke="var(--accent)" stroke-width="1.5" style="display:none;"/>
-              <circle id="needle-hub-dot" cx="60" cy="60" r="2.2" fill="var(--accent-bright)" style="display:none;"/>
-              <text id="analogue-mph-label" x="42" y="60" text-anchor="middle" dominant-baseline="central"
-                    transform="rotate(90 42 60)" font-family="var(--heading)" font-size="6.5"
-                    letter-spacing="1" fill="var(--text-dim)" style="display:none;">MPH</text>
+              <polygon id="needle" points="60,17.72 62.17,60 60.87,60 59.13,60 57.83,60"
+                       fill="var(--accent-bright)" style="display:none;"/>
+              <circle id="needle-hub" cx="60" cy="60" r="2.83" fill="#1c1a24" stroke="var(--accent)" stroke-width="0.43" style="display:none;"/>
+              <circle id="needle-hub-dot" cx="60" cy="60" r="0.98" fill="var(--accent-bright)" style="display:none;"/>
+              <text id="analogue-mph-label" x="52.39" y="60" text-anchor="middle" dominant-baseline="central"
+                    transform="rotate(90 52.39 60)" font-family="var(--heading)" font-size="3.7"
+                    font-weight="700" letter-spacing="0.35" fill="var(--text-dim)" style="display:none;">MPH</text>
             </svg>
             <div class="speed-num"><div class="n" id="v-speed">—</div><div class="u">MPH</div></div>
           </div>

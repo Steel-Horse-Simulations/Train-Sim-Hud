@@ -178,6 +178,23 @@ function niceTickStep(dialMax) {
   return 50;
 }
 
+// ---------------------------------------------------------------------------
+// Analogue face geometry. Every value below is the approved mockup's own
+// number scaled by 50/460 (its arc radius 460 maps to this gauge's ring r=50),
+// so the dial renders identically to the design that was signed off.
+// Do not "tidy" these into round numbers - they are a direct transcription.
+// ---------------------------------------------------------------------------
+const AN = {
+  ringWidth:  2.1739,   // mockup arc_w 20 - much thinner than the digital ring's 8
+  tickOuter: 51.5217,   // major_out 474
+  majorInner:45.5435,   // major_in  419
+  minorInner:48.4783,   // minor_in  446
+  labelR:    39.5652,   // label_r   364
+  majorW:     0.5435,   // major stroke 5
+  minorW:     0.3261,   // minor stroke 3
+  fontNum:    5.6522,   // number font 52
+};
+
 // Builds the numbered ticks around the analogue face for this train's dial max.
 function buildAnalogueTicks(dialMax) {
   const group = document.getElementById('analogue-ticks');
@@ -191,36 +208,29 @@ function buildAnalogueTicks(dialMax) {
   const svgNS = 'http://www.w3.org/2000/svg';
   const frag = document.createDocumentFragment();
 
-  // Ring band spans r=46..54. Ticks sit across its outer half; numbers sit
-  // inside the ring, like the approved design.
-  const tickOuter = 55;
-  const majorInner = 46;
-  const minorInner = 50;
-  const labelRadius = 37;
-
   for (let v = 0; v <= dialMax + 0.001; v += step) {
     const A = svgAngleForValue(v, dialMax);
 
-    const outer = polarPoint(tickOuter, A);
-    const inner = polarPoint(majorInner, A);
+    const outer = polarPoint(AN.tickOuter, A);
+    const inner = polarPoint(AN.majorInner, A);
     const line = document.createElementNS(svgNS, 'line');
-    line.setAttribute('x1', outer.x.toFixed(2)); line.setAttribute('y1', outer.y.toFixed(2));
-    line.setAttribute('x2', inner.x.toFixed(2)); line.setAttribute('y2', inner.y.toFixed(2));
+    line.setAttribute('x1', outer.x.toFixed(3)); line.setAttribute('y1', outer.y.toFixed(3));
+    line.setAttribute('x2', inner.x.toFixed(3)); line.setAttribute('y2', inner.y.toFixed(3));
     line.setAttribute('stroke', 'var(--text)');
-    line.setAttribute('stroke-width', '1.8');
+    line.setAttribute('stroke-width', AN.majorW);
     line.setAttribute('stroke-linecap', 'round');
     frag.appendChild(line);
 
-    const labelPos = polarPoint(labelRadius, A);
+    const labelPos = polarPoint(AN.labelR, A);
     const text = document.createElementNS(svgNS, 'text');
-    text.setAttribute('x', labelPos.x.toFixed(2));
-    text.setAttribute('y', labelPos.y.toFixed(2));
+    text.setAttribute('x', labelPos.x.toFixed(3));
+    text.setAttribute('y', labelPos.y.toFixed(3));
     text.setAttribute('text-anchor', 'middle');
     text.setAttribute('dominant-baseline', 'central');
     // Counter-rotate +90 about its own point to cancel the SVG's -90 CSS
     // rotation, so numbers read upright on screen.
-    text.setAttribute('transform', `rotate(90 ${labelPos.x.toFixed(2)} ${labelPos.y.toFixed(2)})`);
-    text.setAttribute('font-size', '9');
+    text.setAttribute('transform', `rotate(90 ${labelPos.x.toFixed(3)} ${labelPos.y.toFixed(3)})`);
+    text.setAttribute('font-size', AN.fontNum);
     text.setAttribute('font-weight', '600');
     text.setAttribute('fill', 'var(--text)');
     text.setAttribute('class', 'analogue-tick-label');
@@ -231,13 +241,13 @@ function buildAnalogueTicks(dialMax) {
     const minorV = v + step / 2;
     if (minorV < dialMax) {
       const mA = svgAngleForValue(minorV, dialMax);
-      const mOuter = polarPoint(tickOuter, mA);
-      const mInner = polarPoint(minorInner, mA);
+      const mOuter = polarPoint(AN.tickOuter, mA);
+      const mInner = polarPoint(AN.minorInner, mA);
       const mLine = document.createElementNS(svgNS, 'line');
-      mLine.setAttribute('x1', mOuter.x.toFixed(2)); mLine.setAttribute('y1', mOuter.y.toFixed(2));
-      mLine.setAttribute('x2', mInner.x.toFixed(2)); mLine.setAttribute('y2', mInner.y.toFixed(2));
+      mLine.setAttribute('x1', mOuter.x.toFixed(3)); mLine.setAttribute('y1', mOuter.y.toFixed(3));
+      mLine.setAttribute('x2', mInner.x.toFixed(3)); mLine.setAttribute('y2', mInner.y.toFixed(3));
       mLine.setAttribute('stroke', 'var(--text-dim)');
-      mLine.setAttribute('stroke-width', '1');
+      mLine.setAttribute('stroke-width', AN.minorW);
       mLine.setAttribute('stroke-linecap', 'round');
       frag.appendChild(mLine);
     }
@@ -264,8 +274,18 @@ function setSpeedometerMode(mode) {
     el.style.display = isAnalogue ? 'none' : '';
   });
 
+  // The mockup's arc is far thinner than the digital gauge's ring. Without
+  // this the ticks and numbers sit against a band ~4x too heavy and the whole
+  // face reads wrong, so the ring is thinned to the design's width here.
+  const ringWidth = isAnalogue ? AN.ringWidth : 8;
+  ['gauge-ring-bg', 'gauge-ring'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.setAttribute('stroke-width', ringWidth);
+  });
+
   const shown = isAnalogue ? '' : 'none';
-  ['needle', 'needle-hub', 'needle-hub-dot', 'analogue-mph-label'].forEach(id => {
+  ['needle', 'needle-hub', 'needle-hub-dot', 'analogue-mph-label',
+   'analogue-face', 'analogue-bezel'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = shown;
   });
@@ -286,7 +306,26 @@ function updateGaugeRing() {
   const dialMax = currentDialMaxMph || (currentMaxSpeedMph * DIAL_HEADROOM_MULTIPLIER);
 
   if (tick) {
-    tick.setAttribute('transform', `rotate(${upElementRotationForValue(currentMaxSpeedMph, dialMax).toFixed(2)} 60 60)`);
+    if (currentSpeedometerMode === 'analogue') {
+      // Draw it as an exact duplicate of the major tick underneath it - same
+      // endpoints, same stroke width, same cap - just red. Max speeds are
+      // always multiples of 5 so this always lands exactly on a tick.
+      const A = svgAngleForValue(currentMaxSpeedMph, dialMax);
+      const outer = polarPoint(AN.tickOuter, A);
+      const inner = polarPoint(AN.majorInner, A);
+      tick.setAttribute('x1', outer.x.toFixed(3)); tick.setAttribute('y1', outer.y.toFixed(3));
+      tick.setAttribute('x2', inner.x.toFixed(3)); tick.setAttribute('y2', inner.y.toFixed(3));
+      tick.setAttribute('transform', '');
+      tick.setAttribute('stroke-width', AN.majorW);
+      tick.setAttribute('stroke-linecap', 'round');
+    } else {
+      // Digital gauge: short line across the ring band, rotated into place.
+      tick.setAttribute('x1', '60'); tick.setAttribute('y1', '6');
+      tick.setAttribute('x2', '60'); tick.setAttribute('y2', '14');
+      tick.setAttribute('transform', `rotate(${upElementRotationForValue(currentMaxSpeedMph, dialMax).toFixed(2)} 60 60)`);
+      tick.setAttribute('stroke-width', '2');
+      tick.setAttribute('stroke-linecap', 'butt');
+    }
     tick.setAttribute('stroke', 'var(--status-red)');
   }
 
