@@ -507,7 +507,14 @@ async function pollLoco() {
     } else {
       currentDialMaxMph = null;
     }
-    setSpeedometerMode(data && data.speedometer === 'analogue' ? 'analogue' : 'digital');
+    // Digital speedometer removed from the dashboard - analogue is always
+    // shown regardless of each train's own "speedometer" setting. The
+    // setting is still resolved and returned by /api/loco, and every bit of
+    // digital-display code (the .speed-num markup, its CSS, and the digital
+    // branch inside updateGaugeRing's max-tick handling) is left in place
+    // untouched, so this can be flipped back to `data.speedometer === ...`
+    // to restore per-train digital/analogue switching later.
+    setSpeedometerMode('analogue');
     updateGaugeRing();
   } catch (e) {
     el.textContent = 'Missing Train Class';
@@ -518,6 +525,7 @@ async function pollLoco() {
 
 function startDashboard() {
   setWeatherIcon('overcast');
+  setSpeedometerMode('analogue'); // set synchronously so digital never flashes before the first poll response
   pollSpeed();
   setInterval(pollSpeed, 300);
   pollDriver();
