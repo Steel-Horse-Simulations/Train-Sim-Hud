@@ -709,7 +709,38 @@ def find_train_class_for_identity(raw_object_class, clean_name=None):
                 add(row, exact_display=False, prefix_display=True, source_match=False)
 
         if not candidates:
+            # Fallback: TSW sometimes only ever reports a raw, decorated
+            # asset-style name for a loco (e.g. "RVM WSR Class09 C") with no
+            # clean DisplayName at all - and a user's configured entry is
+            # often just the bare class ("Class 09"). None of the exact or
+            # prefix strategies above catch that, since the decoration is on
+            # the TSW side rather than the configured side. Normalize both
+            # (strip spaces/punctuation, lowercase) and check whether a
+            # configured train's display name is contained inside whatever
+            # TSW reported. Restricted to configured rows (group_id set) and
+            # a minimum length so a short/generic name like "09" can't match
+            # everything.
+            def norm(s):
+                return ''.join(ch for ch in (s or '').lower() if ch.isalnum())
+
+            haystacks = [norm(s) for s in (raw_object_class, clean_name) if s]
+            if haystacks:
+                fuzzy_best = None
+                for row in conn.execute(
+                    "SELECT * FROM train_classes WHERE group_id IS NOT NULL AND display_name IS NOT NULL"
+                ).fetchall():
+                    row = dict(row)
+                    needle = norm(row.get("display_name"))
+                    if len(needle) < 4:
+                        continue
+                    if any(needle in h for h in haystacks):
+                        key = (len(needle), row.get("times_seen") or 0)
+                        if fuzzy_best is None or key > fuzzy_best[0]:
+                            fuzzy_best = (key, row)
+                if fuzzy_best:
+                    return fuzzy_best[1]
             return None
+
         best_rank, best_row = max(candidates.values(), key=lambda pair: pair[0])
         return best_row
     finally:

@@ -204,6 +204,104 @@ const AN = {
   fontNum:    5.6522,   // number font 52
 };
 
+// ---------------------------------------------------------------------------
+// 3-digit 7-segment (LCD odometer style) readout. Built entirely from
+// rounded-rect bar segments - not a font/text glyph - so it looks like a real
+// 7-segment display: every segment always exists at a dim "unlit" colour
+// (matching a real LCD's dead segments showing through), and the ones that
+// are ON for the current digit are recoloured bright on each update.
+// No decimal points - just the three digit cells.
+// ---------------------------------------------------------------------------
+const SEVEN_SEG_MAP = {
+  '0': 'abcdef', '1': 'bc', '2': 'abged', '3': 'abgcd', '4': 'fgbc',
+  '5': 'afgcd', '6': 'afgecd', '7': 'abc', '8': 'abcdefg', '9': 'abcdfg',
+};
+
+// Segment geometry for one digit cell of size (dw, dh), each segment as a
+// rounded-rect bar: {x, y, w, h, rx}. Standard 7-seg layout - a=top,
+// b=top-right, c=bottom-right, d=bottom, e=bottom-left, f=top-left, g=middle.
+function sevenSegGeometry(dw, dh, t) {
+  const gap = t * 0.35;
+  return {
+    a: { x: t, y: 0, w: dw - 2 * t, h: t, rx: t / 2 },
+    g: { x: t, y: dh / 2 - t / 2, w: dw - 2 * t, h: t, rx: t / 2 },
+    d: { x: t, y: dh - t, w: dw - 2 * t, h: t, rx: t / 2 },
+    f: { x: 0, y: gap + t / 2, w: t, h: dh / 2 - t - gap, rx: t / 2 },
+    b: { x: dw - t, y: gap + t / 2, w: t, h: dh / 2 - t - gap, rx: t / 2 },
+    e: { x: 0, y: dh / 2 + t / 2 + gap, w: t, h: dh / 2 - t - gap, rx: t / 2 },
+    c: { x: dw - t, y: dh / 2 + t / 2 + gap, w: t, h: dh / 2 - t - gap, rx: t / 2 },
+  };
+}
+
+// Builds the static structure once: 3 digit cells, each with all 7 segment
+// <rect>s already in the DOM (as dim "unlit" bars). Re-running just clears
+// and rebuilds - cheap, and keeps this idempotent like the tick builder.
+function buildDigitalReadout() {
+  const group = document.getElementById('analogue-digital-readout');
+  if (!group || group.childElementCount) return; // structure only needs building once
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const dw = 5.2, dh = 9, t = 0.85, cellGap = 1.6;
+  // Absolute SVG-space coordinates: the group's transform is a rotate(90 32 60)
+  // - it spins the block in place around (32,60), it does NOT translate content
+  // drawn at local (0,0) there. So the digits are laid out directly around
+  // that same pivot point rather than around the origin.
+  const pivotX = 32, pivotY = 60;
+  const totalW = dw * 3 + cellGap * 2;
+  const startX = pivotX - totalW / 2;
+  const startY = pivotY - dh / 2;
+  const geom = sevenSegGeometry(dw, dh, t);
+
+  // Subtle border panel behind the segments, sized to the digit block plus
+  // a small margin, so the readout reads as a distinct "display" rather
+  // than free-floating segments.
+  const pad = 1.4;
+  const border = document.createElementNS(svgNS, 'rect');
+  border.setAttribute('x', (startX - pad).toFixed(3));
+  border.setAttribute('y', (startY - pad).toFixed(3));
+  border.setAttribute('width', (totalW + pad * 2).toFixed(3));
+  border.setAttribute('height', (dh + pad * 2).toFixed(3));
+  border.setAttribute('rx', '1');
+  border.setAttribute('fill', 'none');
+  border.setAttribute('stroke', 'rgba(255,255,255,0.14)');
+  border.setAttribute('stroke-width', '0.35');
+  group.appendChild(border);
+
+  for (let digit = 0; digit < 3; digit++) {
+    const ox = startX + digit * (dw + cellGap);
+    for (const name of 'abcdefg') {
+      const seg = geom[name];
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', (ox + seg.x).toFixed(3));
+      rect.setAttribute('y', (startY + seg.y).toFixed(3));
+      rect.setAttribute('width', seg.w.toFixed(3));
+      rect.setAttribute('height', seg.h.toFixed(3));
+      rect.setAttribute('rx', seg.rx.toFixed(3));
+      rect.setAttribute('fill', 'rgba(255,255,255,0.05)'); // dim/unlit by default
+      rect.setAttribute('id', `dseg-${digit}-${name}`);
+      group.appendChild(rect);
+    }
+  }
+}
+
+// Recolours each segment bright or dim based on the digit it belongs to.
+function updateDigitalReadout(speedMph) {
+  const group = document.getElementById('analogue-digital-readout');
+  if (!group) return;
+  buildDigitalReadout();
+
+  const clamped = Math.min(999, Math.max(0, Math.round(speedMph || 0)));
+  const digits = String(clamped).padStart(3, '0').split('');
+
+  digits.forEach((ch, i) => {
+    const on = SEVEN_SEG_MAP[ch] || '';
+    for (const name of 'abcdefg') {
+      const rect = document.getElementById(`dseg-${i}-${name}`);
+      if (rect) rect.setAttribute('fill', on.includes(name) ? 'var(--accent-bright)' : 'rgba(255,255,255,0.05)');
+    }
+  });
+}
+
 // Builds the numbered ticks around the analogue face for this train's dial max.
 function buildAnalogueTicks(dialMax) {
   const group = document.getElementById('analogue-ticks');
@@ -294,7 +392,7 @@ function setSpeedometerMode(mode) {
 
   const shown = isAnalogue ? '' : 'none';
   ['needle', 'needle-hub', 'needle-hub-dot', 'analogue-mph-label',
-   'analogue-face', 'analogue-bezel'].forEach(id => {
+   'analogue-face', 'analogue-bezel', 'analogue-digital-readout'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = shown;
   });
@@ -305,6 +403,7 @@ function updateNeedle(dialMax) {
   if (!needle || currentSpeedometerMode !== 'analogue') return;
   const speed = currentSpeedMph || 0;
   needle.setAttribute('transform', `rotate(${upElementRotationForValue(speed, dialMax).toFixed(2)} 60 60)`);
+  updateDigitalReadout(speed);
 }
 
 function updateGaugeRing() {
