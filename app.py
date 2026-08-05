@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.22.2"
+APP_VERSION = "7.26.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1329,7 +1329,210 @@ def proxy_raw(subpath):
     return jsonify(body), status
 
 
-# ---- safety systems --------------------------------------------------
+@app.route("/api/gamefiles/scan", methods=["GET", "POST"])
+def gamefiles_scan():
+    """Locates the TSW install and inventories its content files.
+
+    Step one towards reading timetables out of the game directly rather
+    than importing them from another HUD's database. Strictly read-only -
+    it lists and stats files, never opens or modifies anything.
+
+    POST {"path": "..."} to scan a specific folder if the game is
+    installed somewhere the auto-detection doesn't cover.
+    """
+    import game_files
+
+    extra_roots = None
+    if request.method == "POST":
+        body = request.get_json(force=True, silent=True) or {}
+        manual = (body.get("path") or "").strip()
+        if manual:
+            # Accept either the library root or the game folder itself, so
+            # it doesn't matter which the user pastes in.
+            extra_roots = [manual, os.path.dirname(manual.rstrip("/\\"))]
+
+    try:
+        result = game_files.scan(extra_roots=extra_roots)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+    # If a manual path was given and auto-detection found nothing there,
+    # try treating it as a Content directory directly.
+    if request.method == "POST" and not result.get("inventory"):
+        body = request.get_json(force=True, silent=True) or {}
+        manual = (body.get("path") or "").strip()
+        if manual and os.path.isdir(manual):
+            inv = game_files.inventory_content(manual)
+            if not inv.get("error"):
+                result["scanned"] = {"install_dir": manual, "content_dir": manual,
+                                      "game_name": "(manual path)", "has_content": True}
+                result["inventory"] = inv
+                result.pop("conclusion", None)
+
+    return jsonify(result)
+
+
+# ---- timetable / journey discovery ------------------------------------
+# Investigating whether live timetable data (service ID, destination, calling
+# points, scheduled times) is exposed by the game's own API. Right now this
+# app gets timetables by importing another HUD's SQLite database
+# (import_from_other_hud.py) rather than from the game directly.
+#
+# Two-pronged scan, mirroring how the safety-system scan works:
+#   1. Crawl the node tree looking for timetable-ish node names.
+#   2. Probe a curated list of plausible paths directly, because this game
+#      build's /list only exposes the object/node tree - NOT the readable
+#      properties on each node (see format_crawl_as_text). So a property
+#      like DriverAid.Data.nextStopName can exist and be readable while
+#      never appearing anywhere in /list output.
+
+_TIMETABLE_KEYWORDS = [
+    "timetable", "schedule", "service", "journey", "destination",
+    "station", "stop", "platform", "arrival", "departure", "calling",
+    "route", "scenario", "objective", "mission", "trip", "run",
+]
+
+# Paths worth trying directly even though /list won't advertise them.
+# Grouped so the results are readable; the game will simply return an error
+# for anything that doesn't exist, which is harmless.
+_TIMETABLE_CANDIDATE_PATHS = [
+    # DriverAid already gives us speed limits/signals - it's the most likely
+    # home for next-stop info too.
+    "DriverAid.Data",
+    "DriverAid.PlayerInfo",
+    "DriverAid.Timetable",
+    "DriverAid.Schedule",
+    "DriverAid.NextStop",
+    "DriverAid.Destination",
+    "DriverAid.Data.nextStop",
+    "DriverAid.Data.nextStopName",
+    "DriverAid.Data.destination",
+    "DriverAid.Data.serviceCode",
+    "DriverAid.Data.distanceToNextStop",
+    # Top-level managers, following the WeatherManager/TimeOfDay pattern.
+    "TimetableManager",
+    "TimetableManager.Data",
+    "ScheduleManager",
+    "ScheduleManager.Data",
+    "ServiceManager",
+    "ServiceManager.Data",
+    "JourneyManager",
+    "JourneyManager.Data",
+    "ScenarioManager",
+    "ScenarioManager.Data",
+    "MissionManager",
+    "MissionManager.Data",
+    "ObjectiveManager",
+    "ObjectiveManager.Data",
+    "RouteManager",
+    "RouteManager.Data",
+    # Formation/actor-level - the service a given train is running.
+    "CurrentFormation/0.Timetable",
+    "CurrentFormation/0.Schedule",
+    "CurrentFormation/0.Service",
+    "CurrentFormation/0.Data",
+    "CurrentDrivableActor.Timetable",
+    "CurrentDrivableActor.Schedule",
+    "CurrentDrivableActor.Service",
+    "CurrentDrivableActor.Destination",
+    # Function.* style calls, matching HUD_GetSpeed / IS_GetVehicleInfo.
+    "CurrentFormation/0.Function.IS_GetTimetable",
+    "CurrentFormation/0.Function.IS_GetServiceInfo",
+    "CurrentFormation/0.Function.IS_GetDestination",
+    "CurrentDrivableActor.Function.HUD_GetTimetable",
+    "CurrentDrivableActor.Function.HUD_GetNextStop",
+    "CurrentDrivableActor.Function.HUD_GetDestination",
+    "CurrentDrivableActor.Function.HUD_GetServiceInfo",
+]
+
+
+@app.route("/api/timetable/scan", methods=["GET", "POST"])
+def timetable_scan():
+    """Investigates whether the game exposes live timetable data.
+
+    GET: crawls the node tree for timetable-ish names AND probes the
+    curated candidate path list above.
+    POST {"test_paths": [...]}: probes specific paths, for following up on
+    anything promising the automatic scan turns up.
+
+    Must be run while in an active driving session - like everything under
+    DriverAid/CurrentDrivableActor, these paths won't respond from the menu.
+    """
+    headers = api_headers()
+    if headers is None:
+        return jsonify({"error": "no_key"}), 400
+
+    def probe(path):
+        body, status = api_get(f"get/{path}", timeout=(1, 2))
+        ok = (status == 200 and isinstance(body, dict)
+              and body.get("Result") == "Success")
+        return {
+            "path": path,
+            "status": status,
+            "responded": ok,
+            "values": body.get("Values") if ok else None,
+            "message": (body.get("Message") if isinstance(body, dict) else None) if not ok else None,
+        }
+
+    if request.method == "POST":
+        body = request.get_json(force=True, silent=True) or {}
+        test_paths = body.get("test_paths", [])
+        if not test_paths:
+            return jsonify({"error": "test_paths required"}), 400
+        results = [probe(p) for p in test_paths]
+        return jsonify({
+            "test_results": results,
+            "total": len(results),
+            "responding": sum(1 for r in results if r["responded"]),
+        })
+
+    # 1. Probe the curated candidates.
+    candidates = [probe(p) for p in _TIMETABLE_CANDIDATE_PATHS]
+
+    # 2. Crawl the node tree from the root for timetable-ish node names.
+    matches = []
+    visited = set()
+    queue = [""]
+    while queue and len(visited) < 250:
+        path = queue.pop(0)
+        if path in visited:
+            continue
+        visited.add(path)
+        body, status = api_get(f"list/{path}" if path else "list")
+        if status != 200 or not isinstance(body, dict):
+            continue
+        nodes = _get_ci(body, ["Nodes", "nodes"], [])
+        if not isinstance(nodes, list):
+            continue
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            child_name = _get_ci(node, ["NodeName", "nodename"])
+            if not child_name:
+                continue
+            child_path = f"{path}.{child_name}" if path else child_name
+            lower = child_name.lower().replace("_", "")
+            if any(kw in lower for kw in _TIMETABLE_KEYWORDS):
+                result = probe(child_path)
+                result["name"] = child_name
+                matches.append(result)
+            queue.append(child_path)
+
+    responding = [r for r in candidates + matches if r["responded"]]
+    return jsonify({
+        "candidates": candidates,
+        "tree_matches": matches,
+        "nodes_visited": len(visited),
+        "responding": responding,
+        "responding_count": len(responding),
+        "summary": (
+            f"{len(responding)} of {len(candidates) + len(matches)} probed paths returned data. "
+            "Run this while actually driving a service - nothing under DriverAid or "
+            "CurrentDrivableActor responds from the main menu."
+        ),
+    })
 
 _SAFETY_KEYWORDS = [
     "safety", "aws", "tpws", "pzb", "sifa", "vigilance", "deadman",

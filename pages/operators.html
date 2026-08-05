@@ -147,7 +147,7 @@
       <form onsubmit="createOperator(event)" class="op-add-form">
         <div class="field-row">
           <input type="text" id="new-op-name" placeholder="e.g. ScotRail" required>
-          <input type="text" id="new-op-code" placeholder="Short code (e.g. ScR)">
+          <input type="text" id="new-op-code" placeholder="Operator code (e.g. ScR)">
           <button type="submit" class="btn primary">Add</button>
         </div>
       </form>
@@ -209,7 +209,7 @@ function render() {
       <div class="op-edit-form" id="op-edit-${op.id}">
         <label>Operator name</label>
         <input type="text" id="opname-${op.id}" value="${esc(op.name)}" required>
-        <label>Short code</label>
+        <label>Operator code (for logo lookup)</label>
         <input type="text" id="opcode-${op.id}" value="${esc(op.short_code || '')}" placeholder="e.g. ScR">
         <label>Colour (used on pill and as default for new liveries)</label>
         <div style="display:flex;gap:8px;">

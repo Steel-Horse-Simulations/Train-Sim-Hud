@@ -394,10 +394,16 @@ async function updateOperatorLogo() {
   try {
     const res = await fetch(`/api/operators/${operatorId}`);
     const data = await res.json();
-    if (data.logo_path) {
-      logoDiv.innerHTML = `<img src="${data.logo_path}" alt="${data.name}" style="width: 100%; height: 100%; object-fit: contain; padding: 2px;">`;
+    // Every operator's logo is looked up by its operator code (short_code)
+    // via /company_logos/<code>.png - the same convention used on the
+    // Operators page - so it stays correct no matter which livery this
+    // train uses. logo_path was a separate, never-populated field that
+    // meant this preview never actually showed a logo.
+    const fallback = `<div style="font-size: 9px; color: var(--text-dim); text-align: center; word-wrap: break-word;">${data.name.substring(0, 3).toUpperCase()}</div>`;
+    if (data.short_code) {
+      logoDiv.innerHTML = `<img src="/company_logos/${encodeURIComponent(data.short_code)}.png" alt="${data.name}" style="width: 100%; height: 100%; object-fit: contain; padding: 2px;" onerror="this.parentElement.innerHTML='${fallback.replace(/'/g, "\\'")}'">`;
     } else {
-      logoDiv.innerHTML = `<div style="font-size: 9px; color: var(--text-dim); text-align: center; word-wrap: break-word;">${data.name.substring(0, 3).toUpperCase()}</div>`;
+      logoDiv.innerHTML = fallback;
     }
   } catch (e) {
     logoDiv.innerHTML = '<div style="font-size: 10px; color: var(--text-dim);">—</div>';

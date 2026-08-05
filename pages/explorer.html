@@ -15,6 +15,60 @@
 
   <main>
     <div class="panel">
+      <h2>Game files (timetable source investigation)</h2>
+      <p class="small dim">
+        Finds your Train Sim World install and lists what content files are actually in it.
+        This is step one of reading timetables straight from the game instead of importing them
+        from another HUD's database. <strong>Read-only</strong> — it lists and measures files,
+        it never opens, extracts or changes anything in the game folder.
+      </p>
+      <p class="small dim">
+        What comes back tells us whether this is straightforward or not: loose
+        <span class="mono">.json</span>/<span class="mono">.csv</span>/<span class="mono">.uasset</span>
+        files would be readable directly, whereas everything being sealed inside
+        <span class="mono">.pak</span> archives means an extraction step first. Copy the results
+        back to the chat and we can work out the route from there.
+      </p>
+      <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn primary" onclick="scanGameFiles()">Scan game files</button>
+        <button class="btn" onclick="copyGameFileResults()">Copy results</button>
+      </div>
+      <div style="margin-top:10px;">
+        <p class="small dim" style="margin-bottom:6px;">
+          Installed somewhere unusual? Paste the folder here (the game folder, or its Content folder):
+        </p>
+        <input type="text" id="gf-path" placeholder="e.g. D:\SteamLibrary\steamapps\common\Train Sim World 5"
+               style="width:100%;font-family:var(--mono);font-size:12px;">
+      </div>
+      <p class="small" id="gf-status" style="margin-top:8px;"></p>
+      <div id="gf-results" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Timetable data (investigation)</h2>
+      <p class="small dim">
+        Checks whether the game exposes live timetable/service data — destination, calling points,
+        scheduled times — through its own API. Right now this app gets timetables by importing
+        another HUD's database rather than from the game directly, so this is finding out whether
+        reading them live is possible.
+      </p>
+      <p class="small dim">
+        It does two things: crawls the node tree for timetable-ish names, and directly probes a list
+        of likely paths. That second part matters because this build's <span class="mono">/list</span>
+        only reports the node tree, <em>not</em> the properties on each node — so something like
+        <span class="mono">DriverAid.Data.nextStopName</span> could be readable while never showing up
+        in any listing. <strong>Run this while actually driving a timetabled service</strong>, not from
+        the menu and not in free roam.
+      </p>
+      <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn primary" onclick="scanTimetable()">Scan for timetable data</button>
+        <button class="btn" onclick="copyTimetableResults()">Copy results</button>
+      </div>
+      <p class="small" id="tt-status" style="margin-top:8px;"></p>
+      <div id="tt-results" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
       <h2>Safety systems</h2>
       <p class="small dim">
         Walks the <span class="mono">CurrentDrivableActor</span> node tree looking for any endpoint or property
@@ -84,6 +138,145 @@
 
 <script>
 let lastSafetyResults = null;
+
+let lastGameFileScan = null;
+
+async function scanGameFiles() {
+  const status = document.getElementById('gf-status');
+  const out = document.getElementById('gf-results');
+  const manual = document.getElementById('gf-path').value.trim();
+  status.textContent = 'Scanning the filesystem…';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const opts = manual
+      ? { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ path: manual }) }
+      : {};
+    const res = await fetch('/api/gamefiles/scan', opts);
+    const data = await res.json();
+    lastGameFileScan = data;
+
+    if (data.error) {
+      status.textContent = 'Error: ' + data.error;
+      status.style.color = 'var(--status-red)';
+      return;
+    }
+
+    const inv = data.inventory;
+    if (!inv) {
+      status.textContent = data.conclusion || 'No install found.';
+      status.style.color = 'var(--status-amber)';
+      if ((data.installs_found || []).length) {
+        out.innerHTML = '<p class="small dim">Folders found:</p>'
+          + data.installs_found.map(i =>
+              `<div class="mono" style="font-size:12px;">${esc(i.install_dir)}</div>`).join('');
+      }
+      return;
+    }
+
+    status.textContent = `Scanned ${esc(data.scanned.game_name)} — ${inv.total_files} files`
+      + (inv.truncated ? ' (capped)' : '');
+    status.style.color = 'var(--status-green)';
+
+    const extRows = (inv.by_extension || []).slice(0, 12).map(e =>
+      `<tr><td class="mono" style="padding:3px 10px 3px 0;">${esc(e.ext)}</td>
+           <td style="padding:3px 10px 3px 0;color:var(--text-dim);">${esc(e.description)}</td>
+           <td style="padding:3px 10px 3px 0;text-align:right;">${e.count}</td>
+           <td style="padding:3px 0;text-align:right;">${e.mb} MB</td></tr>`).join('');
+
+    const hints = inv.timetable_name_matches || [];
+    const hintRows = hints.length
+      ? hints.slice(0, 25).map(h =>
+          `<div class="mono" style="font-size:11px;color:var(--accent-bright);">${esc(h.path)}
+             <span style="color:var(--text-dim);">(${(h.bytes/1048576).toFixed(1)} MB)</span></div>`).join('')
+      : '<p class="small dim">No filenames matched timetable keywords — likely means it\'s packed inside the .pak archives rather than sitting in named files.</p>';
+
+    out.innerHTML = `
+      <div class="mono" style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">${esc(inv.content_dir)}</div>
+      <p class="small" style="margin:0 0 6px;font-weight:600;">File types present</p>
+      <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">${extRows}</table>
+      <p class="small" style="margin:0 0 6px;font-weight:600;">Files whose names suggest timetable data</p>
+      ${hintRows}`;
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+function copyGameFileResults() {
+  if (!lastGameFileScan) { alert('Run the scan first.'); return; }
+  const text = JSON.stringify(lastGameFileScan, null, 2);
+  navigator.clipboard.writeText(text).then(
+    () => alert('Copied — paste it into the chat.'),
+    () => { const w = window.open('', '_blank');
+            if (w) w.document.write('<pre>' + esc(text) + '</pre>'); else console.log(text); }
+  );
+}
+
+let lastTimetableScan = null;
+
+async function scanTimetable() {
+  const status = document.getElementById('tt-status');
+  const out = document.getElementById('tt-results');
+  status.textContent = 'Scanning… (probing ~50 paths, this can take a few seconds)';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const res = await fetch('/api/timetable/scan');
+    const data = await res.json();
+    lastTimetableScan = data;
+    if (data.error) {
+      status.textContent = 'Error: ' + data.error;
+      status.style.color = 'var(--status-red)';
+      return;
+    }
+    const hits = data.responding || [];
+    status.textContent = data.summary || '';
+    status.style.color = hits.length ? 'var(--status-green)' : 'var(--status-amber)';
+
+    if (!hits.length) {
+      out.innerHTML = `<p class="small dim">Nothing responded. That either means this build doesn't
+        expose timetable data at these paths, or the scan ran outside an active timetabled service.
+        Copy the results and send them over — the full list of what was tried is in there, and the
+        next step would be widening the path list or checking the full endpoint scan below.</p>`;
+      return;
+    }
+
+    out.innerHTML = '<p class="small" style="color:var(--status-green);margin-bottom:8px;">'
+      + 'Paths that returned data:</p>'
+      + hits.map(h => `
+        <div style="padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:6px;margin-bottom:6px;">
+          <div class="mono" style="font-size:12px;color:var(--accent-bright);">${esc(h.path)}</div>
+          <pre class="mono" style="font-size:11px;margin:6px 0 0;white-space:pre-wrap;word-break:break-all;color:var(--text-dim);">${esc(JSON.stringify(h.values, null, 2))}</pre>
+        </div>`).join('');
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+function copyTimetableResults() {
+  if (!lastTimetableScan) {
+    alert('Run the scan first.');
+    return;
+  }
+  const text = JSON.stringify(lastTimetableScan, null, 2);
+  navigator.clipboard.writeText(text).then(
+    () => alert('Copied. Paste it into the chat and we can work out what to do with whatever came back.'),
+    () => {
+      // Clipboard can be blocked depending on how the page is being served -
+      // fall back to showing the text so it can still be copied by hand.
+      const w = window.open('', '_blank');
+      if (w) { w.document.write('<pre>' + esc(text) + '</pre>'); }
+      else { alert('Could not copy automatically. The results are in the browser console.'); console.log(text); }
+    }
+  );
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 async function scanSafety() {
   const status = document.getElementById('safety-status');
