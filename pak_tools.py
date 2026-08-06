@@ -485,3 +485,127 @@ def scan_all_paks(pak_dir, aes_key=None, max_paks=60):
         "total_timetables": total_tt,
         "results": results,
     }
+
+
+# ---------------------------------------------------------------------------
+# Asset inspection
+#
+# Before writing any parser, the question worth answering is simply: is the
+# useful content (station names, service codes, times) present as readable
+# strings, or is it packed binary?
+#
+# Unreal stores an FName table of length-prefixed strings near the front of
+# a .uasset, and property names are FNames too. So pulling the strings out
+# is low-risk, version-independent, and answers the question directly -
+# unlike guessing at the binary layout, which varies by engine version and
+# by whether the type is a stock DataTable or a custom DTG one.
+# ---------------------------------------------------------------------------
+
+import struct
+
+UASSET_MAGIC = 0x9E2A83C1
+
+
+def _read_fname_strings(data, max_strings=6000):
+    """Walks the file looking for Unreal's length-prefixed strings:
+    int32 length, then that many bytes (ASCII, NUL-terminated) or, if the
+    length is negative, that many UTF-16 code units. Returns them in file
+    order. Deliberately tolerant - it scans rather than trusting header
+    offsets, so it works regardless of engine version."""
+    out = []
+    i = 0
+    n = len(data)
+    while i + 4 <= n and len(out) < max_strings:
+        (ln,) = struct.unpack_from("<i", data, i)
+        if 2 <= ln <= 512 and i + 4 + ln <= n:
+            raw = data[i + 4: i + 4 + ln]
+            if raw.endswith(b"\x00"):
+                try:
+                    s = raw[:-1].decode("ascii")
+                except UnicodeDecodeError:
+                    i += 1
+                    continue
+                if s and all(32 <= ord(c) < 127 for c in s):
+                    out.append(s)
+                    i += 4 + ln
+                    continue
+        elif -256 <= ln <= -2 and i + 4 + (-ln * 2) <= n:
+            raw = data[i + 4: i + 4 + (-ln * 2)]
+            try:
+                s = raw.decode("utf-16-le").rstrip("\x00")
+            except UnicodeDecodeError:
+                i += 1
+                continue
+            if s and all(32 <= ord(c) < 127 for c in s):
+                out.append(s)
+                i += 4 + (-ln * 2)
+                continue
+        i += 1
+    return out
+
+
+# Strings that look like they carry timetable meaning, so the report can
+# lead with them rather than with 3000 engine-internal names.
+_TIME_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
+_HEADCODE_RE = re.compile(r"^[0-9][A-Z][0-9]{2}$")   # e.g. 1A10, 2K05
+
+
+def inspect_asset(path):
+    """Reads a .uasset (and its .uexp sibling if present) and reports what
+    readable content is in it. Answers 'is this parseable' with evidence."""
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+
+    with open(path, "rb") as f:
+        data = f.read()
+
+    result = {"path": path, "size": len(data)}
+    if len(data) >= 4:
+        (magic,) = struct.unpack_from("<I", data, 0)
+        result["magic_ok"] = (magic == UASSET_MAGIC)
+        result["magic"] = hex(magic)
+
+    # The .uexp sibling holds the actual exported data; the .uasset is
+    # mostly header/name table. Both are worth reading.
+    uexp = os.path.splitext(path)[0] + ".uexp"
+    if os.path.isfile(uexp):
+        with open(uexp, "rb") as f:
+            uexp_data = f.read()
+        result["uexp_size"] = len(uexp_data)
+        data_all = data + uexp_data
+    else:
+        result["uexp_size"] = None
+        data_all = data
+
+    strings = _read_fname_strings(data_all)
+    result["string_count"] = len(strings)
+
+    times = [s for s in strings if _TIME_RE.match(s)]
+    headcodes = [s for s in strings if _HEADCODE_RE.match(s)]
+    props = sorted({s for s in strings
+                    if any(k in s.lower() for k in
+                           ("arriv", "depart", "station", "stop", "platform",
+                            "service", "time", "dwell", "destination",
+                            "origin", "headcode", "formation"))})
+
+    result["times_found"] = times[:60]
+    result["time_count"] = len(times)
+    result["headcodes_found"] = headcodes[:60]
+    result["headcode_count"] = len(headcodes)
+    result["interesting_properties"] = props[:120]
+    result["sample_strings"] = strings[:250]
+
+    # A blunt verdict, so the next decision is evidence-based.
+    if times or headcodes:
+        verdict = ("Readable schedule content found - times and/or service "
+                   "codes are present as plain strings, so a parser is "
+                   "realistic.")
+    elif props:
+        verdict = ("Timetable-shaped property names found but no literal "
+                   "times/codes - values are probably packed binary, which "
+                   "makes a parser substantially harder.")
+    else:
+        verdict = ("No readable timetable content. Either the wrong asset, "
+                   "or the data is fully binary.")
+    result["verdict"] = verdict
+    return result

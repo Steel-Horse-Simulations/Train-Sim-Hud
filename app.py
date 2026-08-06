@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.29.3"
+APP_VERSION = "7.30.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1424,6 +1424,56 @@ def paks_scan_all():
         combined["total_timetables"] += r.get("total_timetables", 0)
         combined["results"].extend(r.get("results", []))
     return jsonify(combined)
+
+
+@app.route("/api/paks/inspect", methods=["POST"])
+def paks_inspect():
+    """Extracts ONE timetable asset from a pak and reports what readable
+    content is inside it.
+
+    This is the step that decides whether a parser is worth building: if
+    station names, times and service codes are present as plain strings,
+    it's realistic; if only property names appear, the values are packed
+    binary and it's a much bigger job.
+
+    Body: {"pak_path": "...", "asset_path": "TS2Prototype/Plugins/..."}
+    """
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    pak_path = (body.get("pak_path") or "").strip()
+    asset_path = (body.get("asset_path") or "").strip()
+    if not pak_path or not asset_path:
+        return jsonify({"error": "pak_path and asset_path required"}), 400
+
+    out_dir = os.path.join(APP_DIR, "extracted",
+                            os.path.splitext(os.path.basename(pak_path))[0])
+    unpacked = pak_tools.unpack_pak(
+        pak_path, out_dir,
+        include=asset_path,
+        aes_key=(body.get("aes_key") or "").strip() or None,
+    )
+    if unpacked.get("error"):
+        return jsonify(unpacked), 400
+
+    # repak may not support --include, in which case everything landed in
+    # out_dir - either way the asset should now be on disk somewhere below.
+    target = None
+    wanted = os.path.basename(asset_path).lower()
+    for root, _dirs, files in os.walk(out_dir):
+        for f in files:
+            if f.lower() == wanted:
+                target = os.path.join(root, f)
+                break
+        if target:
+            break
+    if not target:
+        return jsonify({"error": "asset_not_found_after_unpack",
+                        "unpacked_to": out_dir,
+                        "files_written": unpacked.get("files_written")}), 404
+
+    result = pak_tools.inspect_asset(target)
+    result["extracted_to"] = target
+    return jsonify(result)
 
 
 @app.route("/api/paks/unpack", methods=["POST"])
