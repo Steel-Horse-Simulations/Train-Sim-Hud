@@ -228,6 +228,13 @@ async function listPak() {
       + (d.filtered_count !== undefined ? ` — <strong>${d.filtered_count}</strong> match your filter` : '');
     status.style.color = '';
 
+    const promising = Object.entries(d.promising_folders || {});
+    const promisingHtml = promising.length
+      ? `<p class="small" style="margin:0 0 6px;font-weight:600;color:var(--status-green);">Scheduling data found in these folders</p>
+         <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">
+         ${promising.map(([f,c]) => `<tr><td class="mono" style="padding:2px 12px 2px 0;font-size:11px;color:var(--accent-bright);">${esc(f)}</td>
+             <td style="padding:2px 0;text-align:right;">${c}</td></tr>`).join('')}</table>` : '';
+
     const folderRows = Object.entries(d.content_folders || {}).slice(0, 40)
       .map(([f,c]) => `<tr><td class="mono" style="padding:2px 12px 2px 0;font-size:11px;">${esc(f)}</td>
                            <td style="padding:2px 0;text-align:right;">${c}</td></tr>`).join('');
@@ -236,7 +243,8 @@ async function listPak() {
     const matches = (d.matches || []).slice(0, 80);
 
     out.innerHTML = `
-      <p class="small" style="margin:0 0 6px;font-weight:600;">Folders inside the pak (where the data lives)</p>
+      ${promisingHtml}
+      <p class="small" style="margin:0 0 6px;font-weight:600;">All folders inside the pak</p>
       <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">${folderRows}</table>
       ${d.filtered_count !== undefined ? `
         <p class="small" style="margin:0 0 6px;font-weight:600;">Your filter: “${esc(d.path_filter)}”</p>

@@ -204,6 +204,15 @@ def list_pak(pak_path, filter_keywords=None, aes_key=None, limit=400, path_filte
     result["content_folders"] = dict(
         sorted(content_dirs.items(), key=lambda kv: -kv[1])[:120])
 
+    # Surface the folders that actually hold scheduling data, so the answer
+    # isn't buried in a 50-row folder table.
+    wanted = ("timetable", "journey", "scenario", "formation",
+              "routedefinition", "gameplay")
+    result["promising_folders"] = {
+        k: v for k, v in sorted(content_dirs.items(), key=lambda kv: -kv[1])
+        if any(w in k.lower() for w in wanted)
+    }
+
     if path_filter:
         pf = path_filter.lower()
         filtered = [e for e in entries if pf in e.lower()]
@@ -273,17 +282,30 @@ def unpack_pak(pak_path, out_dir, include=None, aes_key=None, timeout=DEFAULT_TI
 # sounds and NPC meshes because "station"/"service"/"stop" appear all over
 # an Unreal route. These are the terms that actually indicate scheduling
 # data, and NOISE_DIRS filters out the asset categories that swamped it.
+# Keywords, tightened twice against real listings. Notes on what was
+# removed and why, so it doesn't get "helpfully" re-added:
+#   "/tt_", "_tt_"  -> matched thousands of Map/Tiles/TT_x-10_y-1.umap
+#                      terrain tiles. TT means "terrain tile" here, not
+#                      timetable.
+#   "railnetwork"   -> 2293 signal/OHLE/junction assets, no scheduling.
+#   "station"/"service"/"stop" -> station audio, announcements, NPCs.
+# Confirmed from a real Fife Circle listing: the scheduling data lives in
+# a separate small plugin, <Route>_Route_Gameplay, under Content/Timetable
+# (64 entries), with Journey/, Scenarios/ and CommonFormations/ beside it.
 TIMETABLE_KEYWORDS = [
-    "timetable", "schedule", "diagram", "servicedefinition",
-    "servicedata", "servicelist", "scenario", "journey",
-    "railnetwork", "railway", "operation", "roster", "duty",
-    "/tt_", "_tt_", "dt_", "datatable",
+    "_route_gameplay/", "/timetable/", "/journey/", "/scenarios/",
+    "/commonformations/", "/routedefinition/", "/formationdesigner/",
+    "servicedefinition", "servicedata", "servicelist",
 ]
 
 NOISE_DIRS = [
     "/audio/", "/characters/", "/meshes/", "/textures/", "/materials/",
     "/vfx/", "/fx/", "/animation/", "/anim/", "/collectables/",
     "/editorresources/", "/enginematerials/", "/enginesky/",
+    # Added after a real listing: these three alone were 39,000+ entries
+    # on one route and buried everything useful.
+    "/map/tiles/", "/scenery/", "/landscapematerial",
+    "/passengers/", "/interactive/", "/theme/",
 ]
 
 
