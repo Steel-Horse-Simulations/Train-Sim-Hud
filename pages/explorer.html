@@ -339,6 +339,9 @@ async function inspectAsset() {
         + `<div class="mono" style="font-size:11px;color:var(--accent-bright);word-break:break-all;">${arr.map(esc).join(', ')}</div>`
       : '';
     out.innerHTML = `<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      + list('Object types (the schema)', d.object_types)
+      + list('Enums', d.enums)
+      + list('Stations', d.stations)
       + list('Times', d.times_found)
       + list('Service codes', d.headcodes_found)
       + list('Timetable-ish field names', d.interesting_properties)

@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.30.0"
+APP_VERSION = "7.30.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1447,16 +1447,23 @@ def paks_inspect():
 
     out_dir = os.path.join(APP_DIR, "extracted",
                             os.path.splitext(os.path.basename(pak_path))[0])
+
+    # A .uasset is only the header and name table - the actual exported
+    # property data lives in the .uexp sibling. Extracting just the
+    # .uasset (as an earlier version did) reads names and enums but none
+    # of the values, which is why the first inspection found 208 service
+    # codes but zero times. Include the whole stem so .uexp/.ubulk come
+    # too; the include filter is best-effort anyway since repak may not
+    # support it.
+    stem = os.path.splitext(asset_path)[0]
     unpacked = pak_tools.unpack_pak(
         pak_path, out_dir,
-        include=asset_path,
+        include=stem,
         aes_key=(body.get("aes_key") or "").strip() or None,
     )
     if unpacked.get("error"):
         return jsonify(unpacked), 400
 
-    # repak may not support --include, in which case everything landed in
-    # out_dir - either way the asset should now be on disk somewhere below.
     target = None
     wanted = os.path.basename(asset_path).lower()
     for root, _dirs, files in os.walk(out_dir):

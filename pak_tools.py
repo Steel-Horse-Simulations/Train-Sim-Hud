@@ -595,17 +595,43 @@ def inspect_asset(path):
     result["interesting_properties"] = props[:120]
     result["sample_strings"] = strings[:250]
 
-    # A blunt verdict, so the next decision is evidence-based.
-    if times or headcodes:
-        verdict = ("Readable schedule content found - times and/or service "
-                   "codes are present as plain strings, so a parser is "
-                   "realistic.")
-    elif props:
-        verdict = ("Timetable-shaped property names found but no literal "
-                   "times/codes - values are probably packed binary, which "
-                   "makes a parser substantially harder.")
+    # A blunt, specific verdict. An earlier version said "times and/or
+    # service codes" which overstated a result that had 208 codes and zero
+    # times - the two cases need distinguishing because they imply very
+    # different amounts of remaining work.
+    if result["uexp_size"] is None:
+        verdict = ("NOTE: no .uexp alongside this .uasset, so only the header "
+                   "and name table were read - names, enums and identifiers "
+                   "but none of the values. Extract the .uexp to see actual "
+                   "times and stop data. ")
     else:
-        verdict = ("No readable timetable content. Either the wrong asset, "
-                   "or the data is fully binary.")
+        verdict = ""
+
+    if times and headcodes:
+        verdict += ("Times AND service codes present as plain strings - a "
+                    "parser is realistic.")
+    elif headcodes and not times:
+        verdict += (f"{len(headcodes)} service codes found but no literal "
+                    "time strings. Times are almost certainly stored as "
+                    "binary (DateTime/float) rather than text, which is "
+                    "normal for Unreal - reading them means decoding the "
+                    "property data, not just scanning strings.")
+    elif times:
+        verdict += "Times present as plain strings."
+    elif props:
+        verdict += ("Timetable-shaped names found but no values - the data "
+                    "is packed binary.")
+    else:
+        verdict += ("No readable timetable content. Either the wrong asset, "
+                    "or fully binary.")
     result["verdict"] = verdict
+
+    # Structural fingerprints worth reporting: the UObject type and the
+    # enums tell us what the schema actually is.
+    result["object_types"] = sorted({s for s in strings
+                                     if s.startswith("Default__")
+                                     or s.startswith("/Script/")})
+    result["enums"] = sorted({s.split("::")[0] for s in strings if "::" in s})
+    result["stations"] = sorted({s for s in strings
+                                 if " Platform " in s})[:200]
     return result
