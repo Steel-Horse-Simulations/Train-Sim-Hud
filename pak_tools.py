@@ -128,7 +128,7 @@ def capabilities():
     }
 
 
-def list_pak(pak_path, filter_keywords=None, aes_key=None, limit=8000):
+def list_pak(pak_path, filter_keywords=None, aes_key=None, limit=400, path_filter=None):
     """Lists the internal paths inside a pak without extracting.
 
     filter_keywords: optional list of case-insensitive substrings; when
@@ -160,14 +160,17 @@ def list_pak(pak_path, filter_keywords=None, aes_key=None, limit=8000):
         }
 
     entries = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    truncated = len(entries) > limit
-    if truncated:
-        entries = entries[:limit]
+    total_entries = len(entries)
 
+    # Extensions and keyword matches are computed against the FULL list.
+    # Previously the list was truncated to `limit` FIRST, so on a route pak
+    # with more than `limit` entries the keyword search only ever saw the
+    # alphabetically-earliest paths and never reached the folders that
+    # actually matter. Only the returned `sample` is truncated now.
     result = {
         "pak_path": pak_path,
-        "entry_count": len(entries),
-        "truncated": truncated,
+        "entry_count": total_entries,
+        "truncated": False,
         "extensions": {},
     }
 
@@ -175,12 +178,53 @@ def list_pak(pak_path, filter_keywords=None, aes_key=None, limit=8000):
         ext = os.path.splitext(e)[1].lower()
         result["extensions"][ext] = result["extensions"].get(ext, 0) + 1
 
+    # Directory summary: far more useful than tens of thousands of paths
+    # when the question is "where does timetable data live". Counts entries
+    # per plugin and per folder beneath each plugin's Content directory.
+    plugins = {}
+    content_dirs = {}
+    for e in entries:
+        parts = e.replace("\\", "/").split("/")
+        # e.g. TS2Prototype/Plugins/DLC/FifeCircle/Content/Audio/...
+        if "Plugins" in parts:
+            i = parts.index("Plugins")
+            if len(parts) > i + 2:
+                plugin = parts[i + 2]
+                plugins[plugin] = plugins.get(plugin, 0) + 1
+        if "Content" in parts:
+            i = parts.index("Content")
+            if len(parts) > i + 1:
+                # Group by the folder directly under Content, scoped to its
+                # plugin so two routes' folders don't get merged together.
+                scope = parts[i - 1] if i > 0 else "?"
+                key = f"{scope}/Content/{parts[i + 1]}"
+                content_dirs[key] = content_dirs.get(key, 0) + 1
+
+    result["plugins"] = dict(sorted(plugins.items(), key=lambda kv: -kv[1]))
+    result["content_folders"] = dict(
+        sorted(content_dirs.items(), key=lambda kv: -kv[1])[:120])
+
+    if path_filter:
+        pf = path_filter.lower()
+        filtered = [e for e in entries if pf in e.lower()]
+        result["path_filter"] = path_filter
+        result["filtered_count"] = len(filtered)
+        result["filtered"] = filtered[:3000]
+
     if filter_keywords:
         kws = [k.lower() for k in filter_keywords]
-        result["matches"] = [e for e in entries if any(k in e.lower() for k in kws)][:2000]
-        result["match_count"] = len(result["matches"])
-    # A sample is more useful than nothing when there are no keyword hits.
-    result["sample"] = entries[:200]
+        matched = [e for e in entries if any(k in e.lower() for k in kws)]
+        result["match_count"] = len(matched)
+        # Drop .uexp/.ubulk siblings (they double every entry) and asset
+        # categories that swamp the result without being scheduling data.
+        primary = [m for m in matched
+                   if not m.lower().endswith((".uexp", ".ubulk"))
+                   and not looks_like_noise(m)]
+        result["matches"] = primary[:1500]
+        result["matches_shown"] = len(result["matches"])
+
+    result["sample"] = entries[:limit]
+    result["sample_truncated"] = total_entries > limit
     return result
 
 
@@ -224,10 +268,25 @@ def unpack_pak(pak_path, out_dir, include=None, aes_key=None, timeout=DEFAULT_TI
             "stdout": out.strip()[:1000]}
 
 
-# Substrings worth flagging when listing a pak. Deliberately broad - the
-# point of the first listing run is to discover the real naming, not to
-# confirm a guess.
+# Substrings worth flagging when listing a pak. Tightened after a real
+# listing: the first pass matched hundreds of audio cues, station crowd
+# sounds and NPC meshes because "station"/"service"/"stop" appear all over
+# an Unreal route. These are the terms that actually indicate scheduling
+# data, and NOISE_DIRS filters out the asset categories that swamped it.
 TIMETABLE_KEYWORDS = [
-    "timetable", "schedule", "service", "journey", "diagram",
-    "station", "stop", "platform", "route", "formation", "scenario",
+    "timetable", "schedule", "diagram", "servicedefinition",
+    "servicedata", "servicelist", "scenario", "journey",
+    "railnetwork", "railway", "operation", "roster", "duty",
+    "/tt_", "_tt_", "dt_", "datatable",
 ]
+
+NOISE_DIRS = [
+    "/audio/", "/characters/", "/meshes/", "/textures/", "/materials/",
+    "/vfx/", "/fx/", "/animation/", "/anim/", "/collectables/",
+    "/editorresources/", "/enginematerials/", "/enginesky/",
+]
+
+
+def looks_like_noise(path):
+    p = path.lower()
+    return any(n in p for n in NOISE_DIRS)

@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.28.1"
+APP_VERSION = "7.28.2"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1354,6 +1354,7 @@ def paks_list():
         pak_path,
         filter_keywords=pak_tools.TIMETABLE_KEYWORDS,
         aes_key=(body.get("aes_key") or "").strip() or None,
+        path_filter=(body.get("path_filter") or "").strip() or None,
     )
     return jsonify(result)
 

@@ -39,6 +39,8 @@
         <input type="text" id="pak-path" placeholder="e.g. D:\SteamLibrary\...\Train Sim World 6\...\SomeRoute.pak"
                style="width:100%;font-family:var(--mono);font-size:12px;">
         <div class="field-row" style="gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <input type="text" id="pak-filter" placeholder="optional: only show paths containing… e.g. Timetable"
+                 style="flex:1;min-width:220px;font-family:var(--mono);font-size:12px;">
           <button class="btn primary" onclick="listPak()">List contents</button>
         </div>
       </div>
@@ -209,7 +211,8 @@ async function listPak() {
   try {
     const d = await (await fetch('/api/paks/list', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ pak_path: pakPath })
+      body: JSON.stringify({ pak_path: pakPath,
+                             path_filter: document.getElementById('pak-filter').value.trim() })
     })).json();
     lastPakResult = d;
 
@@ -221,23 +224,30 @@ async function listPak() {
     }
 
     status.innerHTML = `<span style="color:var(--status-green);">${d.entry_count} entries</span>`
-      + (d.truncated ? ' (truncated)' : '')
-      + (d.match_count ? ` — <strong>${d.match_count}</strong> match timetable keywords` : ' — no keyword matches');
+      + (d.match_count ? ` — <strong>${d.matches_shown}</strong> likely scheduling assets (of ${d.match_count} raw matches)` : ' — no keyword matches')
+      + (d.filtered_count !== undefined ? ` — <strong>${d.filtered_count}</strong> match your filter` : '');
     status.style.color = '';
 
-    const extRows = Object.entries(d.extensions || {})
-      .sort((a,b) => b[1]-a[1]).slice(0,12)
-      .map(([e,c]) => `<tr><td class="mono" style="padding:2px 12px 2px 0;">${esc(e || '(none)')}</td>
+    const folderRows = Object.entries(d.content_folders || {}).slice(0, 40)
+      .map(([f,c]) => `<tr><td class="mono" style="padding:2px 12px 2px 0;font-size:11px;">${esc(f)}</td>
                            <td style="padding:2px 0;text-align:right;">${c}</td></tr>`).join('');
 
-    const matches = (d.matches || []).slice(0, 60);
+    const filtered = (d.filtered || []).slice(0, 80);
+    const matches = (d.matches || []).slice(0, 80);
+
     out.innerHTML = `
-      <p class="small" style="margin:0 0 6px;font-weight:600;">Contents by type</p>
-      <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">${extRows}</table>
-      <p class="small" style="margin:0 0 6px;font-weight:600;">Entries matching timetable keywords</p>
+      <p class="small" style="margin:0 0 6px;font-weight:600;">Folders inside the pak (where the data lives)</p>
+      <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">${folderRows}</table>
+      ${d.filtered_count !== undefined ? `
+        <p class="small" style="margin:0 0 6px;font-weight:600;">Your filter: “${esc(d.path_filter)}”</p>
+        ${filtered.length
+          ? filtered.map(m => `<div class="mono" style="font-size:11px;color:var(--accent-bright);">${esc(m)}</div>`).join('')
+          : '<p class="small dim">Nothing matched.</p>'}
+        <div style="height:14px;"></div>` : ''}
+      <p class="small" style="margin:0 0 6px;font-weight:600;">Likely scheduling assets</p>
       ${matches.length
         ? matches.map(m => `<div class="mono" style="font-size:11px;color:var(--accent-bright);">${esc(m)}</div>`).join('')
-        : '<p class="small dim">None — copy the results and send them over; the sample list in there will show the real naming so we can widen the search.</p>'}`;
+        : '<p class="small dim">None. Use the folder list above to spot a likely folder, then re-run with it as a filter.</p>'}`;
   } catch (e) {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
