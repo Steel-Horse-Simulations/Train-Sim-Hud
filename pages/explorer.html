@@ -44,6 +44,13 @@
           <button class="btn primary" onclick="listPak()">List contents</button>
         </div>
       </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline);">
+        <p class="small dim" style="margin-bottom:6px;">
+          A route can have more than one timetable, and the extras aren't always in that route's
+          own pak. This scans every pak and reports which timetables exist and where.
+        </p>
+        <button class="btn primary" onclick="scanAllPaks()">Find all timetables</button>
+      </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
     </div>
@@ -256,6 +263,36 @@ async function listPak() {
       ${matches.length
         ? matches.map(m => `<div class="mono" style="font-size:11px;color:var(--accent-bright);">${esc(m)}</div>`).join('')
         : '<p class="small dim">None. Use the folder list above to spot a likely folder, then re-run with it as a filter.</p>'}`;
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+async function scanAllPaks() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  status.textContent = 'Scanning every pak — this reads each pak index, so it can take a few minutes…';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/scan_all', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+    })).json();
+    lastPakResult = d;
+    if (d.error) {
+      status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`;
+      return;
+    }
+    status.innerHTML = `<span style="color:var(--status-green);">${d.total_timetables} timetables</span>`
+      + ` across ${d.paks_with_timetables} of ${d.paks_scanned} paks`;
+    status.style.color = '';
+    out.innerHTML = (d.results || []).map(r => `
+      <div style="padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:6px;margin-bottom:8px;">
+        <div class="mono" style="font-size:12px;color:var(--accent-bright);">${esc(r.pak_name || '')}</div>
+        ${(r.timetables || []).map(t => `<div class="mono" style="font-size:11px;">${esc(t)}</div>`).join('')}
+        <div class="small dim" style="margin-top:4px;">${(r.layer_datatracks || []).length} layer data tracks</div>
+      </div>`).join('') || '<p class="small dim">No timetables found.</p>';
   } catch (e) {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';

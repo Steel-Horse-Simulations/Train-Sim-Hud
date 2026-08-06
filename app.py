@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.28.3"
+APP_VERSION = "7.29.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1357,6 +1357,73 @@ def paks_list():
         path_filter=(body.get("path_filter") or "").strip() or None,
     )
     return jsonify(result)
+
+
+@app.route("/api/paks/timetables", methods=["POST"])
+def paks_timetables():
+    """Timetable assets in ONE pak, grouped by kind. Body: {"pak_path": ...}"""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    pak_path = (body.get("pak_path") or "").strip()
+    if not pak_path:
+        return jsonify({"error": "pak_path required"}), 400
+    return jsonify(pak_tools.find_timetables(
+        pak_path, aes_key=(body.get("aes_key") or "").strip() or None))
+
+
+@app.route("/api/paks/scan_all", methods=["POST"])
+def paks_scan_all():
+    """Scans EVERY pak in a folder for timetables.
+
+    A route can have several timetables (Fife Circle has a Class 170 one and
+    a Sprinter Express one) and the extras aren't necessarily in that route's
+    own pak, so this is what answers "which timetables do I actually have".
+    Body: {"pak_dir": "...\\Content\\DLC"} - omit to auto-detect.
+    """
+    import pak_tools, game_files
+    body = request.get_json(force=True, silent=True) or {}
+    pak_dir = (body.get("pak_dir") or "").strip()
+    aes_key = (body.get("aes_key") or "").strip() or None
+
+    if pak_dir:
+        return jsonify(pak_tools.scan_all_paks(pak_dir, aes_key=aes_key))
+
+    # Auto-detect. Paks are not all in one place - a route's own pak sits
+    # under Content/DLC, but separately-sold content (Fife Circle's Sprinter
+    # Express timetable, for example) ships as its own pak and may land in
+    # Content/Paks instead. Scanning only one folder would silently miss
+    # those, so every folder that actually contains paks gets scanned.
+    scan = game_files.scan()
+    target = scan.get("scanned") or {}
+    content = target.get("content_dir")
+    pak_dirs = []
+    if content:
+        for sub in ("DLC", "Paks", ""):
+            candidate = os.path.join(content, sub) if sub else content
+            if os.path.isdir(candidate) and any(
+                f.lower().endswith(".pak") for f in os.listdir(candidate)
+            ):
+                pak_dirs.append(candidate)
+    # Anything the install scan already spotted as holding paks.
+    for i in scan.get("installs_found", []):
+        for d in i.get("pak_dirs", []) or []:
+            if d not in pak_dirs:
+                pak_dirs.append(d)
+
+    if not pak_dirs:
+        return jsonify({"error": "could not locate any pak folder - pass pak_dir"}), 400
+
+    combined = {"pak_dirs": pak_dirs, "paks_scanned": 0,
+                "paks_with_timetables": 0, "total_timetables": 0, "results": []}
+    for d in pak_dirs:
+        r = pak_tools.scan_all_paks(d, aes_key=aes_key)
+        if r.get("error"):
+            continue
+        combined["paks_scanned"] += r.get("paks_scanned", 0)
+        combined["paks_with_timetables"] += r.get("paks_with_timetables", 0)
+        combined["total_timetables"] += r.get("total_timetables", 0)
+        combined["results"].extend(r.get("results", []))
+    return jsonify(combined)
 
 
 @app.route("/api/paks/unpack", methods=["POST"])

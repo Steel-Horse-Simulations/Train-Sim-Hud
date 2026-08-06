@@ -312,3 +312,128 @@ NOISE_DIRS = [
 def looks_like_noise(path):
     p = path.lower()
     return any(n in p for n in NOISE_DIRS)
+
+
+# ---------------------------------------------------------------------------
+# Timetable asset naming - CONFIRMED from a real Fife Circle listing, not
+# guessed. One timetable is a set of assets:
+#
+#   <Route>_Timetable_TT.uasset                  the timetable itself
+#   .../DataTracks/<...>_TT_MasterDataTrack      the master track
+#   .../DataTracks/<...>_TT_<Group>_Layer_DataTrack   one per service group
+#                                                (Class220, Class380, LNER801,
+#                                                 Leven_Branch, Trams, RHTT...)
+#   .../Formations/<Class>/FRM_*.uasset          consists of what stock
+#
+# The "_TT" suffix marks a timetable. Scenarios and training use it too
+# (FCE_Sc01_TT, FCE_RI_TT), so those are separated out below rather than
+# being mistaken for the route timetable.
+#
+# A route can have MORE THAN ONE timetable (Fife Circle has a Class 170 one
+# and a Sprinter Express one), and the extra ones are not necessarily in the
+# route's own pak - hence scan_all_paks().
+# ---------------------------------------------------------------------------
+
+def classify_timetable_asset(path):
+    """Buckets a pak entry into the kind of timetable asset it is, or None."""
+    p = path.replace("\\", "/")
+    low = p.lower()
+    if low.endswith((".uexp", ".ubulk")):
+        return None
+    name = os.path.basename(p)
+    stem = os.path.splitext(name)[0]
+
+    if "_layer_datatrack" in low:
+        return "layer_datatrack"
+    if "masterdatatrack" in low:
+        return "master_datatrack"
+    if "/scenarios/" in low and stem.lower().endswith("_tt"):
+        return "scenario_timetable"
+    if "/training/" in low and stem.lower().endswith("_tt"):
+        return "training_timetable"
+    if stem.lower().endswith("_tt"):
+        return "timetable"
+    if "/timetable/formations/" in low:
+        return "formation"
+    return None
+
+
+def find_timetables(pak_path, aes_key=None):
+    """Lists one pak and returns only its timetable-related assets, grouped
+    by kind. Much lighter to read than a full listing."""
+    listing = list_pak(pak_path, aes_key=aes_key, limit=1)
+    if listing.get("error"):
+        return listing
+
+    exe = find_repak()
+    args = [exe, "list"]
+    if aes_key:
+        args += ["--aes-key", aes_key]
+    args.append(pak_path)
+    ok, out, err = _run(args)
+    if not ok:
+        return {"error": "repak_list_failed", "stderr": err.strip()[:1000]}
+
+    groups = {}
+    for line in out.splitlines():
+        entry = line.strip()
+        if not entry:
+            continue
+        kind = classify_timetable_asset(entry)
+        if kind:
+            groups.setdefault(kind, []).append(entry)
+
+    return {
+        "pak_path": pak_path,
+        "pak_name": os.path.basename(pak_path),
+        "entry_count": listing.get("entry_count"),
+        "timetables": groups.get("timetable", []),
+        "master_datatracks": groups.get("master_datatrack", []),
+        "layer_datatracks": groups.get("layer_datatrack", []),
+        "formations": groups.get("formation", [])[:200],
+        "scenario_timetables": groups.get("scenario_timetable", []),
+        "training_timetables": groups.get("training_timetable", []),
+        "counts": {k: len(v) for k, v in groups.items()},
+    }
+
+
+def scan_all_paks(pak_dir, aes_key=None, max_paks=60):
+    """Runs find_timetables over every .pak in a folder.
+
+    A route's extra timetables (e.g. Fife Circle's Sprinter Express one)
+    don't necessarily live in that route's own pak, so answering "what
+    timetables do I actually have" means looking across all of them."""
+    if not os.path.isdir(pak_dir):
+        return {"error": "pak_dir_not_found", "pak_dir": pak_dir}
+
+    paks = sorted(
+        os.path.join(pak_dir, f) for f in os.listdir(pak_dir)
+        if f.lower().endswith(".pak")
+    )[:max_paks]
+
+    results = []
+    total_tt = 0
+    for p in paks:
+        r = find_timetables(p, aes_key=aes_key)
+        if r.get("error"):
+            results.append({"pak_name": os.path.basename(p), "error": r["error"]})
+            continue
+        n = len(r["timetables"])
+        total_tt += n
+        # Only report paks that actually contain a route timetable.
+        if n or r["layer_datatracks"]:
+            results.append({
+                "pak_name": r["pak_name"],
+                "pak_path": r["pak_path"],
+                "timetables": r["timetables"],
+                "layer_datatracks": r["layer_datatracks"],
+                "counts": r["counts"],
+            })
+
+    return {
+        "pak_dir": pak_dir,
+        "paks_scanned": len(paks),
+        "paks_with_timetables": len(results),
+        "total_timetables": total_tt,
+        "results": results,
+    }
