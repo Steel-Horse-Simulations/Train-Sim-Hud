@@ -5,28 +5,50 @@ Locates the Train Sim World install on disk and inventories the content
 files, as the first step towards reading timetable data straight out of
 the game rather than importing it from another HUD's database.
 
-WHY THIS EXISTS / WHAT IS AND ISN'T KNOWN
-------------------------------------------
-Confirmed from this project's own code: the app currently gets timetables
-via import_from_other_hud.py, i.e. out of a different application's
-SQLite database. That other application builds its database by reading
-the game's files. Doing that ourselves means answering, in order:
+HOW THE OTHER APP DOES IT (confirmed from its own source, not guessed)
+----------------------------------------------------------------------
+"TSW HUD & Timetable Extractor" is a Tauri app (Rust backend, HTML/JS
+frontend). Its Extraction page calls these Rust commands:
 
-  1. Where is the game installed?              <- this module, solved
-  2. What content files are actually there?    <- this module, inventory
-  3. What format is the timetable data in?     <- NOT yet answered
-  4. Can we parse it?                          <- depends on 3
+    extractor_autodetect_tsw_root   find the install
+    extractor_find_repak            locate the repak binary
+    extractor_list_routes           enumerate route .pak files
+    extractor_run_pak {pak_path}    unpack + parse ONE pak
+    extractor_mark_completed        remember which paks are done
+    extractor_rebuild_train_classes rebuild class metadata
+    extractor_rebuild_thumbnails    decode class thumbnails from paks
 
-Steps 1 and 2 are deterministic and are implemented here. Step 3 is not
-guessed at anywhere in this file, deliberately: TSW is an Unreal Engine
-title whose content ships as .pak archives, and exactly how (and whether)
-timetables are readable varies by game version and by whether the pak is
-encrypted. Rather than hard-code assumptions that might be wrong, this
-scanner reports what is genuinely on disk so the format question can be
-answered from real evidence.
+The key line from its UI, verbatim:
 
-The scan is strictly READ-ONLY. It stats and lists files. It never opens
-paks, never writes to the game directory, and never modifies anything.
+    "Bundled repak.exe handles Oodle-compressed TSW6 paks. Drop it into
+     hud/resources/repak.exe, next to hud.exe, or anywhere on PATH."
+     -> https://github.com/trumank/repak
+
+So the pipeline is:
+    TSW install -> route .pak files -> repak unpacks them (handling Oodle
+    compression) -> parse the unpacked assets -> SQLite
+
+That settles the earlier open question: the timetable data is NOT in the
+live HTTP API, and it IS inside .pak archives that need a real Unreal pak
+unpacker. Its TSW path setting placeholder is:
+
+    D:/SteamLibrary/steamapps/common/Train Sim World 6
+
+i.e. the install ROOT, with the extractor finding route paks beneath it -
+which is why hard-coding a Content subpath was the wrong approach.
+
+WHAT THE LIVE API *DOES* GIVE (no extraction required)
+-------------------------------------------------------
+From real endpoint captures:
+    DriverAid.PlayerInfo -> currentServiceName, e.g. "1A10"
+    DriverAid.TrackData  -> stations[]/markers[] with stationName,
+                            distanceToStationCM, platformLength
+That covers "which service am I on" and "what's my next stop", but not
+scheduled times or the full calling list - those need the pak route.
+
+This module handles install/pak discovery only. It is strictly READ-ONLY:
+it stats and lists files, never opens paks and never writes to the game
+directory.
 """
 
 import os
@@ -114,6 +136,65 @@ def _steam_library_roots():
     return roots
 
 
+def _find_content_dirs(install_dir, max_depth=4):
+    """Finds the real Content directory (or directories) by looking, rather
+    than assuming a fixed layout.
+
+    The first version of this guessed at <install>/TS2Prototype/Content and
+    <install>/Content. On a real TSW5/TSW6 install both were absent, so the
+    scan found the game and then reported nothing useful. This walks the
+    install a few levels deep and identifies directories either named
+    "Content" or containing .pak/.utoc files, which is what actually
+    matters regardless of what the folders are called."""
+    content_dirs = []
+    pak_dirs = []
+    install_dir = os.path.abspath(install_dir)
+    base_depth = install_dir.rstrip("\\/").count(os.sep)
+
+    for dirpath, dirnames, filenames in os.walk(install_dir):
+        depth = dirpath.rstrip("\\/").count(os.sep) - base_depth
+        if depth >= max_depth:
+            dirnames[:] = []
+            continue
+        # Skip obvious noise so the walk stays fast.
+        dirnames[:] = [d for d in dirnames
+                       if d.lower() not in {"engine", "binaries", "saved",
+                                            "intermediate", "_commonredist"}]
+        base = os.path.basename(dirpath)
+        if base.lower() == "content":
+            content_dirs.append(dirpath)
+        if any(f.lower().endswith((".pak", ".utoc", ".ucas")) for f in filenames):
+            pak_dirs.append(dirpath)
+
+    return content_dirs, pak_dirs
+
+
+def describe_layout(install_dir, max_depth=3, max_entries=400):
+    """Returns the actual directory tree under an install, so an unexpected
+    layout can be seen rather than guessed at."""
+    entries = []
+    install_dir = os.path.abspath(install_dir)
+    base_depth = install_dir.rstrip("\\/").count(os.sep)
+    for dirpath, dirnames, filenames in os.walk(install_dir):
+        depth = dirpath.rstrip("\\/").count(os.sep) - base_depth
+        if depth >= max_depth:
+            dirnames[:] = []
+            continue
+        rel = os.path.relpath(dirpath, install_dir)
+        big = [f for f in filenames
+               if f.lower().endswith((".pak", ".utoc", ".ucas", ".uasset",
+                                      ".json", ".csv", ".xml", ".db", ".sqlite"))]
+        entries.append({
+            "dir": "." if rel == "." else rel,
+            "subdirs": sorted(dirnames)[:30],
+            "file_count": len(filenames),
+            "notable_files": sorted(big)[:20],
+        })
+        if len(entries) >= max_entries:
+            break
+    return entries
+
+
 def find_game_installs(extra_roots=None):
     """Returns every TSW install found, each with its resolved Content
     directory if one exists. Cheap - only stats directories."""
@@ -141,17 +222,32 @@ def find_game_installs(extra_roots=None):
                 continue
             seen.add(key)
 
+            # Try the known layouts first (fast), then fall back to
+            # actually searching the install for real content.
             content_dir = None
             for sub in _CONTENT_SUBPATHS:
                 candidate = os.path.join(install, sub)
                 if os.path.isdir(candidate):
                     content_dir = candidate
                     break
+
+            content_dirs, pak_dirs = ([], [])
+            if content_dir is None:
+                content_dirs, pak_dirs = _find_content_dirs(install)
+                if content_dirs:
+                    content_dir = content_dirs[0]
+                elif pak_dirs:
+                    # No folder called Content, but we found the paks -
+                    # that's the directory that actually matters.
+                    content_dir = pak_dirs[0]
+
             found.append({
                 "install_dir": install,
                 "game_name": name,
                 "content_dir": content_dir,
                 "has_content": content_dir is not None,
+                "all_content_dirs": content_dirs,
+                "pak_dirs": pak_dirs,
             })
     return found
 
@@ -223,9 +319,43 @@ def inventory_content(content_dir, max_files=4000):
     }
 
 
+def find_repak():
+    """Looks for the repak binary - the Unreal pak unpacker the other
+    extractor uses (github.com/trumank/repak). Checks next to this app,
+    a resources/ subfolder, and anywhere on PATH, mirroring where that
+    app says to put it."""
+    names = ["repak.exe", "repak"]
+    here = os.path.dirname(os.path.abspath(__file__))
+    search_dirs = [
+        here,
+        os.path.join(here, "resources"),
+        os.path.join(here, "tools"),
+    ]
+    search_dirs += [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+
+    for d in search_dirs:
+        for n in names:
+            try:
+                candidate = os.path.join(d, n)
+                if os.path.isfile(candidate):
+                    return {"found": True, "path": candidate}
+            except OSError:
+                continue
+    return {
+        "found": False,
+        "path": None,
+        "hint": ("repak not found. It's the pak unpacker needed to read timetable "
+                 "data out of the game's .pak files (it handles the Oodle "
+                 "compression TSW uses). Download from "
+                 "https://github.com/trumank/repak/releases and put repak.exe "
+                 "next to this app, in a resources/ folder, or on PATH."),
+    }
+
+
 def scan(extra_roots=None, max_files=4000):
-    """Full scan: locate installs, then inventory the first one that has a
-    Content directory."""
+    """Full scan: locate installs, inventory content, and always report the
+    actual directory layout so an unexpected structure is diagnosable
+    rather than just producing 'not found'."""
     installs = find_game_installs(extra_roots=extra_roots)
     with_content = [i for i in installs if i["has_content"]]
 
@@ -233,21 +363,29 @@ def scan(extra_roots=None, max_files=4000):
         "platform": platform.system(),
         "installs_found": installs,
         "install_count": len(installs),
+        "repak": find_repak(),
     }
 
     if not installs:
         result["conclusion"] = (
             "No Train Sim World install found in any of the usual Steam/Epic "
-            "locations. If it's installed somewhere unusual, pass the folder "
-            "manually and this will scan it."
+            "locations. If it's installed somewhere unusual, paste the folder "
+            "in the box and this will scan it directly."
         )
         return result
 
+    # Always show what's actually inside the installs - this is what makes
+    # an unexpected layout debuggable instead of a dead end.
+    result["layouts"] = {
+        i["install_dir"]: describe_layout(i["install_dir"])
+        for i in installs[:2]
+    }
+
     if not with_content:
         result["conclusion"] = (
-            "Found the game folder but no Content directory inside it. The "
-            "install may be in an unexpected layout - the folder listing "
-            "above shows what was found."
+            "Found the game but couldn't identify a content/pak directory, even "
+            "after searching the install. The 'layouts' section shows the real "
+            "folder structure - that will say where the data actually lives."
         )
         return result
 

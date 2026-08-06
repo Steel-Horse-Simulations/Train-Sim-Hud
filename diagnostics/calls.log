@@ -217,3 +217,5 @@
 17:13:46       2ms  status 200            GET http://127.0.0.1:31270/list/DriverAid
 17:13:46       1ms  status 200            GET http://127.0.0.1:31270/list/TimetableManager
 17:13:46       2ms  status 200            GET http://127.0.0.1:31270/list/DriverAid.Data
+04:09:26       7ms  status 200            GET http://127.0.0.1:31270/get/DriverAid.PlayerInfo
+04:09:26       3ms  status 200            GET http://127.0.0.1:31270/get/DriverAid.TrackData

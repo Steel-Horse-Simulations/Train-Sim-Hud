@@ -15,6 +15,38 @@
 
   <main>
     <div class="panel">
+      <h2>Pak inspection (offline timetables, step 2)</h2>
+      <p class="small dim">
+        Reads what's <em>inside</em> a route's <span class="mono">.pak</span> archive without
+        extracting it. This is the step that pins down where timetable data actually lives in
+        the archive and what format it's in — the one thing still blocking a parser.
+      </p>
+      <p class="small dim">
+        Needs <span class="mono">repak</span>, the Unreal pak unpacker
+        (<a href="https://github.com/trumank/repak/releases" target="_blank" rel="noopener"
+        style="color:var(--accent-bright);">github.com/trumank/repak</a>) — the same tool the other
+        extractor uses, because it handles the Oodle compression TSW's paks use. Put
+        <span class="mono">repak.exe</span> next to this app, in a <span class="mono">resources</span>
+        folder, or on PATH.
+      </p>
+      <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn primary" onclick="checkRepak()">Check repak</button>
+        <button class="btn" onclick="copyPakResults()">Copy results</button>
+      </div>
+      <p class="small" id="repak-status" style="margin-top:8px;"></p>
+      <div style="margin-top:10px;">
+        <p class="small dim" style="margin-bottom:6px;">Pak file to inspect (full path — the game files scan above lists them):</p>
+        <input type="text" id="pak-path" placeholder="e.g. D:\SteamLibrary\...\Train Sim World 6\...\SomeRoute.pak"
+               style="width:100%;font-family:var(--mono);font-size:12px;">
+        <div class="field-row" style="gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <button class="btn primary" onclick="listPak()">List contents</button>
+        </div>
+      </div>
+      <p class="small" id="pak-status" style="margin-top:8px;"></p>
+      <div id="pak-results" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
       <h2>Game files (timetable source investigation)</h2>
       <p class="small dim">
         Finds your Train Sim World install and lists what content files are actually in it.
@@ -138,6 +170,89 @@
 
 <script>
 let lastSafetyResults = null;
+
+let lastPakResult = null;
+
+async function checkRepak() {
+  const el = document.getElementById('repak-status');
+  el.textContent = 'Checking…';
+  el.style.color = 'var(--text-dim)';
+  try {
+    const d = await (await fetch('/api/paks/repak')).json();
+    lastPakResult = d;
+    if (!d.found) {
+      el.innerHTML = '<span style="color:var(--status-amber);">Not found.</span>'
+        + '<br><span class="dim">Put <span class="mono">repak.exe</span> in this exact folder:</span>'
+        + `<br><span class="mono" style="color:var(--accent-bright);font-size:12px;">${esc(d.put_it_here || '')}</span>`
+        + '<br><span class="dim">then press Check repak again.</span>';
+      return;
+    }
+    el.innerHTML = '<span style="color:var(--status-green);">Found</span> '
+      + `<span class="mono">${esc(d.path)}</span>`
+      + (d.version ? ` — ${esc(d.version)}` : '')
+      + (d.subcommands && d.subcommands.length
+          ? `<br><span class="dim">supports: ${esc(d.subcommands.join(', '))}</span>` : '');
+  } catch (e) {
+    el.textContent = 'Error: ' + e.message;
+    el.style.color = 'var(--status-red)';
+  }
+}
+
+async function listPak() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  const pakPath = document.getElementById('pak-path').value.trim();
+  if (!pakPath) { alert('Paste the full path to a .pak file first.'); return; }
+  status.textContent = 'Reading the pak index… (no extraction, but can take a moment on a big route)';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/list', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ pak_path: pakPath })
+    })).json();
+    lastPakResult = d;
+
+    if (d.error) {
+      status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`;
+      out.innerHTML = (d.stderr ? `<pre class="mono" style="font-size:11px;white-space:pre-wrap;color:var(--status-amber);">${esc(d.stderr)}</pre>` : '')
+        + (d.hint ? `<p class="small dim">${esc(d.hint)}</p>` : '');
+      return;
+    }
+
+    status.innerHTML = `<span style="color:var(--status-green);">${d.entry_count} entries</span>`
+      + (d.truncated ? ' (truncated)' : '')
+      + (d.match_count ? ` — <strong>${d.match_count}</strong> match timetable keywords` : ' — no keyword matches');
+    status.style.color = '';
+
+    const extRows = Object.entries(d.extensions || {})
+      .sort((a,b) => b[1]-a[1]).slice(0,12)
+      .map(([e,c]) => `<tr><td class="mono" style="padding:2px 12px 2px 0;">${esc(e || '(none)')}</td>
+                           <td style="padding:2px 0;text-align:right;">${c}</td></tr>`).join('');
+
+    const matches = (d.matches || []).slice(0, 60);
+    out.innerHTML = `
+      <p class="small" style="margin:0 0 6px;font-weight:600;">Contents by type</p>
+      <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">${extRows}</table>
+      <p class="small" style="margin:0 0 6px;font-weight:600;">Entries matching timetable keywords</p>
+      ${matches.length
+        ? matches.map(m => `<div class="mono" style="font-size:11px;color:var(--accent-bright);">${esc(m)}</div>`).join('')
+        : '<p class="small dim">None — copy the results and send them over; the sample list in there will show the real naming so we can widen the search.</p>'}`;
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+function copyPakResults() {
+  if (!lastPakResult) { alert('Run a check or listing first.'); return; }
+  const text = JSON.stringify(lastPakResult, null, 2);
+  navigator.clipboard.writeText(text).then(
+    () => alert('Copied — paste it into the chat.'),
+    () => { const w = window.open('', '_blank');
+            if (w) w.document.write('<pre>' + esc(text) + '</pre>'); else console.log(text); }
+  );
+}
 
 let lastGameFileScan = null;
 

@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.26.0"
+APP_VERSION = "7.28.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1329,6 +1329,127 @@ def proxy_raw(subpath):
     return jsonify(body), status
 
 
+@app.route("/api/paks/repak", methods=["GET"])
+def paks_repak_status():
+    """Reports whether repak is present and what its CLI supports."""
+    import pak_tools
+    return jsonify(pak_tools.capabilities())
+
+
+@app.route("/api/paks/list", methods=["POST"])
+def paks_list():
+    """Lists what's inside a route pak WITHOUT extracting it.
+
+    This is the step that answers where timetable data actually lives
+    inside the archive and in what format - the one remaining unknown
+    blocking the offline-timetable parser. Body:
+        {"pak_path": "...", "aes_key": "optional"}
+    """
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    pak_path = (body.get("pak_path") or "").strip()
+    if not pak_path:
+        return jsonify({"error": "pak_path required"}), 400
+    result = pak_tools.list_pak(
+        pak_path,
+        filter_keywords=pak_tools.TIMETABLE_KEYWORDS,
+        aes_key=(body.get("aes_key") or "").strip() or None,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/paks/unpack", methods=["POST"])
+def paks_unpack():
+    """Unpacks a pak to a working directory under this app (never into the
+    game folder). Body: {"pak_path": "...", "include": "optional",
+    "aes_key": "optional"}"""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    pak_path = (body.get("pak_path") or "").strip()
+    if not pak_path:
+        return jsonify({"error": "pak_path required"}), 400
+    out_dir = os.path.join(APP_DIR, "extracted",
+                            os.path.splitext(os.path.basename(pak_path))[0])
+    result = pak_tools.unpack_pak(
+        pak_path, out_dir,
+        include=(body.get("include") or "").strip() or None,
+        aes_key=(body.get("aes_key") or "").strip() or None,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/journey", methods=["GET"])
+def journey_live():
+    """Live service/next-stop info, straight from the game API.
+
+    Two paths carry this, both confirmed from real captures of the other
+    HUD's endpoint dumps rather than guessed at:
+
+      DriverAid.PlayerInfo -> currentServiceName ("1A10"), the headcode of
+                              the service currently being driven.
+      DriverAid.TrackData  -> stations[] and markers[], each with
+                              stationName, distanceToStationCM,
+                              platformLength, markerType, markerName.
+
+    DriverAid.TrackData was not in the original candidate list at all, and
+    DriverAid.PlayerInfo only ever returned a dropped connection during
+    scanning, so neither had been seen before. Together they give the live
+    "what am I running / what's my next stop" half of timetable data with
+    no pak extraction needed. Scheduled times still require the offline
+    timetable data - see the extraction notes in game_files.py.
+
+    Distances are in CENTIMETRES, matching distanceToSignal elsewhere in
+    this API.
+    """
+    result = {"service_name": None, "stations": [], "markers": [], "errors": []}
+
+    body, status = api_get("get/DriverAid.PlayerInfo", timeout=(2, 4))
+    if status == 200 and isinstance(body, dict) and body.get("Result") == "Success":
+        values = body.get("Values") or {}
+        result["service_name"] = values.get("currentServiceName")
+        geo = values.get("geoLocation") or {}
+        result["latitude"] = geo.get("latitude")
+        result["longitude"] = geo.get("longitude")
+    else:
+        result["errors"].append({"path": "DriverAid.PlayerInfo", "status": status})
+
+    body, status = api_get("get/DriverAid.TrackData", timeout=(2, 4))
+    if status == 200 and isinstance(body, dict) and body.get("Result") == "Success":
+        values = body.get("Values") or {}
+
+        def clean(entry):
+            if not isinstance(entry, dict):
+                return None
+            cm = entry.get("distanceToStationCM")
+            return {
+                "station_name": entry.get("stationName"),
+                "marker_name": entry.get("markerName") or None,
+                "marker_type": entry.get("markerType"),
+                "distance_cm": cm,
+                "distance_m": round(cm / 100.0, 1) if isinstance(cm, (int, float)) else None,
+                "platform_length_m": (round(entry["platformLength"] / 100.0, 1)
+                                       if isinstance(entry.get("platformLength"), (int, float)) else None),
+            }
+
+        for key in ("stations", "markers"):
+            raw = values.get(key)
+            if isinstance(raw, list):
+                result[key] = [c for c in (clean(e) for e in raw) if c]
+    else:
+        result["errors"].append({"path": "DriverAid.TrackData", "status": status})
+
+    # Nearest upcoming stop, for a simple HUD readout.
+    everything = [s for s in (result["stations"] + result["markers"])
+                  if s.get("distance_cm") is not None]
+    if everything:
+        nearest = min(everything, key=lambda s: s["distance_cm"])
+        result["next_stop"] = nearest
+    else:
+        result["next_stop"] = None
+
+    return jsonify(result)
+
+
 @app.route("/api/gamefiles/scan", methods=["GET", "POST"])
 def gamefiles_scan():
     """Locates the TSW install and inventories its content files.
@@ -1464,17 +1585,52 @@ def timetable_scan():
     if headers is None:
         return jsonify({"error": "no_key"}), 400
 
-    def probe(path):
-        body, status = api_get(f"get/{path}", timeout=(1, 2))
+    def probe(path, retries=2):
+        """Probes a path, retrying on connection drops.
+
+        The game's HTTP API drops connections when hit rapidly, which
+        api_get surfaces as 502/connection_failed. That is NOT the same as
+        "this path doesn't exist", and treating it as such produced false
+        negatives on the first pass - including on a real top-level
+        Timetable node. Three outcomes are distinguished:
+          responded=True                    -> exists, returned data
+          exists=False                      -> game said "not found"
+          responded=False, exists=True      -> exists but no data right now
+          unreachable=True                  -> connection dropped, unknown
+        """
+        last = None
+        for attempt in range(retries + 1):
+            body, status = api_get(f"get/{path}", timeout=(2, 4))
+            last = (body, status)
+            if status != 502:
+                break
+            time.sleep(0.25 * (attempt + 1))  # back off, let the API recover
+        body, status = last
+        msg = body.get("Message") if isinstance(body, dict) else None
         ok = (status == 200 and isinstance(body, dict)
               and body.get("Result") == "Success")
+        unreachable = status == 502
+        # "Node X not found" means it genuinely isn't there; "failed to
+        # return valid data" means the node exists but has nothing for us.
+        not_found = bool(msg and "not found" in msg.lower())
         return {
             "path": path,
             "status": status,
             "responded": ok,
+            "exists": (not not_found) if not unreachable else None,
+            "unreachable": unreachable,
             "values": body.get("Values") if ok else None,
-            "message": (body.get("Message") if isinstance(body, dict) else None) if not ok else None,
+            "message": msg if not ok else None,
         }
+
+    def api_list(path):
+        """/list with the same retry treatment."""
+        for attempt in range(3):
+            body, status = api_get(f"list/{path}" if path else "list", timeout=(2, 4))
+            if status != 502:
+                return body, status
+            time.sleep(0.25 * (attempt + 1))
+        return body, status
 
     if request.method == "POST":
         body = request.get_json(force=True, silent=True) or {}
@@ -1500,7 +1656,7 @@ def timetable_scan():
         if path in visited:
             continue
         visited.add(path)
-        body, status = api_get(f"list/{path}" if path else "list")
+        body, status = api_list(path)
         if status != 200 or not isinstance(body, dict):
             continue
         nodes = _get_ci(body, ["Nodes", "nodes"], [])
@@ -1518,19 +1674,46 @@ def timetable_scan():
                 result = probe(child_path)
                 result["name"] = child_name
                 matches.append(result)
+                # Any node matching a timetable keyword is worth expanding
+                # even if it returned nothing itself - the data may sit on
+                # a child. This is how the top-level Timetable node gets
+                # explored rather than just noted and dropped.
+                child_body, child_status = api_list(child_path)
+                if child_status == 200 and isinstance(child_body, dict):
+                    grandkids = _get_ci(child_body, ["Nodes", "nodes"], [])
+                    if isinstance(grandkids, list):
+                        for gk in grandkids:
+                            if not isinstance(gk, dict):
+                                continue
+                            gk_name = _get_ci(gk, ["NodeName", "nodename"])
+                            if not gk_name:
+                                continue
+                            gk_path = f"{child_path}.{gk_name}"
+                            gk_result = probe(gk_path)
+                            gk_result["name"] = gk_name
+                            gk_result["parent"] = child_path
+                            matches.append(gk_result)
             queue.append(child_path)
 
-    responding = [r for r in candidates + matches if r["responded"]]
+    everything = candidates + matches
+    responding = [r for r in everything if r["responded"]]
+    unreachable = [r for r in everything if r.get("unreachable")]
+    exists_no_data = [r for r in everything
+                      if not r["responded"] and r.get("exists") is True]
+
     return jsonify({
         "candidates": candidates,
         "tree_matches": matches,
         "nodes_visited": len(visited),
         "responding": responding,
         "responding_count": len(responding),
+        "exists_but_no_data": exists_no_data,
+        "unreachable": unreachable,
         "summary": (
-            f"{len(responding)} of {len(candidates) + len(matches)} probed paths returned data. "
-            "Run this while actually driving a service - nothing under DriverAid or "
-            "CurrentDrivableActor responds from the main menu."
+            f"{len(responding)} of {len(everything)} probed paths returned data. "
+            f"{len(exists_no_data)} exist but had no data right now. "
+            f"{len(unreachable)} could not be reached even after retries. "
+            "Run this while actually driving a timetabled service."
         ),
     })
 
