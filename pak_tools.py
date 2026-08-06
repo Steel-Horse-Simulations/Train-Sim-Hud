@@ -364,7 +364,13 @@ def classify_timetable_asset(path):
 
     # Folders that contain look-alike names but never timetables.
     if any(n in low for n in ("/textures/", "/font/", "/localization/",
-                              "/internationalization/", "/fonts/")):
+                              "/internationalization/", "/fonts/",
+                              # Core/Assets/HUD/MenuScreens/Timetable/ is the
+                              # game's own timetable MENU - 23 UI widgets
+                              # (ChapterMenu, StarRatingWidget, filter bars).
+                              # Real timetable data never lives under HUD/UI.
+                              "/hud/", "/menuscreens/", "/widgets/", "/ui/",
+                              "/core/assets/")):
         return None
 
     parts = p.split("/")
