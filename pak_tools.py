@@ -335,26 +335,66 @@ def looks_like_noise(path):
 # ---------------------------------------------------------------------------
 
 def classify_timetable_asset(path):
-    """Buckets a pak entry into the kind of timetable asset it is, or None."""
+    """Buckets a pak entry into the kind of timetable asset it is, or None.
+
+    Rewritten after a real 67-pak scan exposed three problems with keying
+    off the "_TT" filename suffix:
+
+      1. It is NOT universal. CL-Intermodal, CL-Nuclear and CreweManchester
+         all have <name>_Layer_DataTrack assets whose parent timetable is
+         called e.g. CLI_EMKTimetable - no _TT anywhere. Those routes came
+         back with layer tracks but zero timetables.
+      2. It matched non-assets: ART_TT.uplugin, ART_TT.dlc, ART_TT.locres
+         (a plugin that happens to be NAMED ART_TT), and en_TT.res - ICU
+         locale data for Trinidad & Tobago.
+      3. It matched a font texture, T_uc_TT.uasset.
+
+    So the primary rule is now WHERE the asset sits, not what it's called:
+    a .uasset directly inside a Timetable/ or ServiceMode/ folder is a
+    timetable. The _TT suffix is kept only as a fallback, and only for
+    .uasset files outside obvious non-timetable folders.
+    """
     p = path.replace("\\", "/")
     low = p.lower()
-    if low.endswith((".uexp", ".ubulk")):
-        return None
-    name = os.path.basename(p)
-    stem = os.path.splitext(name)[0]
 
-    if "_layer_datatrack" in low:
-        return "layer_datatrack"
-    if "masterdatatrack" in low:
-        return "master_datatrack"
+    # Only real assets. Kills .uplugin/.dlc/.locres/.res, and the
+    # .uexp/.ubulk siblings that would double every entry.
+    if not low.endswith(".uasset"):
+        return None
+
+    # Folders that contain look-alike names but never timetables.
+    if any(n in low for n in ("/textures/", "/font/", "/localization/",
+                              "/internationalization/", "/fonts/")):
+        return None
+
+    parts = p.split("/")
+    parent = parts[-2].lower() if len(parts) >= 2 else ""
+    grandparent = parts[-3].lower() if len(parts) >= 3 else ""
+    stem = os.path.splitext(parts[-1])[0]
+
+    if parent == "datatracks":
+        if "masterdatatrack" in low:
+            return "master_datatrack"
+        if "_layer_datatrack" in low:
+            return "layer_datatrack"
+        return "datatrack"
+    if parent == "formations" or grandparent == "formations":
+        return "formation"
+
+    # Directly inside a Timetable/ or ServiceMode/ folder - the reliable
+    # signal. ServiceMode covers MML, whose timetable is
+    # .../ServiceMode/LDN_ServiceMode_TT.uasset
+    if parent in ("timetable", "timetables", "servicemode"):
+        return "timetable"
+
     if "/scenarios/" in low and stem.lower().endswith("_tt"):
         return "scenario_timetable"
-    if "/training/" in low and stem.lower().endswith("_tt"):
+    # "training" as a path segment, not just "/training/" - the Training
+    # Centre uses TrainingND24/, which the stricter test missed.
+    if "training" in low and stem.lower().endswith("_tt"):
         return "training_timetable"
     if stem.lower().endswith("_tt"):
-        return "timetable"
-    if "/timetable/formations/" in low:
-        return "formation"
+        return "timetable_by_name"
     return None
 
 
@@ -388,6 +428,7 @@ def find_timetables(pak_path, aes_key=None):
         "pak_name": os.path.basename(pak_path),
         "entry_count": listing.get("entry_count"),
         "timetables": groups.get("timetable", []),
+        "timetables_by_name": groups.get("timetable_by_name", []),
         "master_datatracks": groups.get("master_datatrack", []),
         "layer_datatracks": groups.get("layer_datatrack", []),
         "formations": groups.get("formation", [])[:200],
@@ -418,14 +459,15 @@ def scan_all_paks(pak_dir, aes_key=None, max_paks=60):
         if r.get("error"):
             results.append({"pak_name": os.path.basename(p), "error": r["error"]})
             continue
-        n = len(r["timetables"])
+        n = len(r["timetables"]) + len(r.get("timetables_by_name", []))
         total_tt += n
         # Only report paks that actually contain a route timetable.
-        if n or r["layer_datatracks"]:
+        if n or r["layer_datatracks"] or r.get("counts", {}).get("datatrack"):
             results.append({
                 "pak_name": r["pak_name"],
                 "pak_path": r["pak_path"],
                 "timetables": r["timetables"],
+                "timetables_by_name": r.get("timetables_by_name", []),
                 "layer_datatracks": r["layer_datatracks"],
                 "counts": r["counts"],
             })
