@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.30.1"
+APP_VERSION = "7.30.2"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1456,9 +1456,14 @@ def paks_inspect():
     # too; the include filter is best-effort anyway since repak may not
     # support it.
     stem = os.path.splitext(asset_path)[0]
+    # Glob, not a bare stem: repak's --include expects a pattern, and a
+    # stem with no wildcard matches nothing. The previous attempt passed
+    # the bare stem, which silently extracted nothing - the .uasset that
+    # got inspected was left over from an earlier run in the same output
+    # folder, so it still reported uexp_size: null.
     unpacked = pak_tools.unpack_pak(
         pak_path, out_dir,
-        include=stem,
+        include=stem + "*",
         aes_key=(body.get("aes_key") or "").strip() or None,
     )
     if unpacked.get("error"):
@@ -1480,6 +1485,25 @@ def paks_inspect():
 
     result = pak_tools.inspect_asset(target)
     result["extracted_to"] = target
+    result["unpack_files_written"] = unpacked.get("files_written")
+
+    if result.get("uexp_size") is None:
+        # Distinguish "the pak has no .uexp for this asset" from "we failed
+        # to extract it" - very different problems, and guessing between
+        # them wasted a round trip already.
+        listing = pak_tools.list_pak(pak_path, path_filter=os.path.basename(stem))
+        in_pak = [e for e in (listing.get("filtered") or [])
+                  if e.lower().endswith(".uexp")]
+        result["uexp_in_pak"] = in_pak
+        result["extraction_note"] = (
+            "The .uexp IS in the pak but did not reach disk - the include "
+            "filter or the output folder is the problem. Try deleting the "
+            "app's 'extracted' folder and running again."
+            if in_pak else
+            "No .uexp for this asset exists in the pak at all, so the "
+            "header/name-table really is everything this asset carries. "
+            "The values likely live in the linked DataTrack assets instead."
+        )
     return jsonify(result)
 
 
