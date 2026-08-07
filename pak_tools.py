@@ -717,6 +717,8 @@ def scan_timespans(path, max_hits=400, min_run=8):
         "size": len(data),
         "hit_count": len(hits),
         "ascending_ratio": round(ratio, 3),
+        "phase": phase,
+        "distinct_times": distinct,
         "earliest": min(hits, key=lambda h: h[0])[1] if hits else None,
         "sample_times": [t for _o, t in hits[:80]],
         "run_count": len(runs),
@@ -963,7 +965,7 @@ def diff_records(path, stride=None, count=6, max_report=120):
     }
 
 
-def decode_stride(path, stride=2828, offset=0, limit=4000):
+def decode_stride(path, stride=2828, offset=0, limit=4000, start=None):
     """Reads the FTimespan at a fixed offset in EVERY record.
 
     Motivation: on the real Leven Branch file the stride-based record count
@@ -978,11 +980,29 @@ def decode_stride(path, stride=2828, offset=0, limit=4000):
     with open(path, "rb") as f:
         data = f.read()
 
-    total = len(data) // stride
+    # Record boundaries are NOT at multiples of stride from byte 0. On the
+    # real file the detected times sat at phase 372 and 2644 within the
+    # stride, so reading at k*stride+0 sampled a different part of each
+    # record and returned near-zero values that merely LOOKED like times.
+    # Anchor on a genuinely detected time instead and step from there.
+    if start is None:
+        start = None
+        i, n = 0, len(data) - 8
+        while i <= n:
+            (v,) = struct.unpack_from("<q", data, i)
+            if 0 < v < TICKS_PER_DAY and v % TICKS_PER_SECOND == 0:
+                start = i
+                break
+            i += 4
+        if start is None:
+            return {"error": "no_anchor_time_found"}
+
+    phase = start % stride
+    total = (len(data) - phase) // stride
     rows, zero, out_of_range, fractional = [], 0, 0, 0
 
     for k in range(min(total, limit)):
-        pos = k * stride + offset
+        pos = phase + k * stride + offset
         if pos + 8 > len(data):
             break
         (val,) = struct.unpack_from("<q", data, pos)
@@ -1004,8 +1024,11 @@ def decode_stride(path, stride=2828, offset=0, limit=4000):
         })
 
     times = [r["time"] for r in rows]
-    ordered = sum(1 for a, b in zip(times, times[1:]) if b >= a)
+    # STRICTLY increasing. An earlier version used >=, so a run of identical
+    # values scored ~100% and a meaningless result looked like a strong one.
+    ordered = sum(1 for a, b in zip(times, times[1:]) if b > a)
     ratio = ordered / (len(times) - 1) if len(times) > 1 else 0
+    distinct = len(set(times))
 
     return {
         "path": path,
@@ -1018,6 +1041,8 @@ def decode_stride(path, stride=2828, offset=0, limit=4000):
         "out_of_range": out_of_range,
         "with_fractional_seconds": fractional,
         "ascending_ratio": round(ratio, 3),
+        "phase": phase,
+        "distinct_times": distinct,
         "first_times": times[:40],
         "sample_rows": rows[:40],
         "verdict": (
@@ -1025,9 +1050,10 @@ def decode_stride(path, stride=2828, offset=0, limit=4000):
             f"+{offset} ({fractional} with sub-second precision). "
             + (f"{ratio:.0%} run forwards. "
                if len(times) > 1 else "")
-            + ("Far more than the whole-second scan found, so the earlier "
-               "filter was discarding real data."
-               if fractional else
-               "All whole seconds - the earlier filter was not the limit.")
+            + (f"{distinct} distinct values. "
+               + ("Looks like real running times."
+                  if distinct > 20 and ratio > 0.5 else
+                  "Too few distinct values to be a timetable - this offset "
+                  "is probably not the time field, or the phase is wrong."))
         ),
     }
