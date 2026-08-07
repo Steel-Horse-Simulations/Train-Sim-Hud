@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.30.2"
+APP_VERSION = "7.30.3"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1424,6 +1424,26 @@ def paks_scan_all():
         combined["total_timetables"] += r.get("total_timetables", 0)
         combined["results"].extend(r.get("results", []))
     return jsonify(combined)
+
+
+@app.route("/api/paks/clear_extracted", methods=["POST"])
+def paks_clear_extracted():
+    """Deletes the app's own 'extracted' working folder.
+
+    Stale files here caused a real misdiagnosis: an inspection reported a
+    header-only read when in fact nothing new had been extracted and the
+    inspector had picked up a leftover .uasset from an earlier run. Making
+    this a button avoids repeating that. Only ever touches the app's own
+    folder - never the game install."""
+    import shutil
+    target = os.path.join(APP_DIR, "extracted")
+    if not os.path.isdir(target):
+        return jsonify({"ok": True, "existed": False, "path": target})
+    try:
+        shutil.rmtree(target)
+        return jsonify({"ok": True, "existed": True, "path": target})
+    except Exception as e:
+        return jsonify({"error": str(e), "path": target}), 500
 
 
 @app.route("/api/paks/inspect", methods=["POST"])

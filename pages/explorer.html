@@ -62,6 +62,7 @@
         <input type="text" id="pak-asset" placeholder="e.g. TS2Prototype/Plugins/DLC/FifeCircle_Route_Gameplay/Content/Timetable/FCE_Timetable_TT.uasset"
                style="width:100%;font-family:var(--mono);font-size:12px;margin-bottom:8px;">
         <button class="btn primary" onclick="inspectAsset()">Extract &amp; inspect</button>
+        <button class="btn" onclick="clearExtracted()">Clear extracted folder</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -309,6 +310,18 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function clearExtracted() {
+  const status = document.getElementById('pak-status');
+  try {
+    const d = await (await fetch('/api/paks/clear_extracted', {method:'POST'})).json();
+    if (d.error) { status.textContent = 'Error: ' + d.error; status.style.color = 'var(--status-red)'; return; }
+    status.innerHTML = d.existed
+      ? `<span style="color:var(--status-green);">Cleared</span> <span class="mono" style="font-size:11px;">${esc(d.path)}</span>`
+      : '<span class="dim">Nothing to clear - the folder does not exist yet.</span>';
+    status.style.color = '';
+  } catch (e) { status.textContent = 'Error: ' + e.message; }
 }
 
 async function inspectAsset() {
