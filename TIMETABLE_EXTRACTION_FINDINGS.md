@@ -114,7 +114,16 @@ genuine time as "isolated coincidence" — nearly discarding a correct result.
 The gap is now scaled to hit density, and the ascending-ratio test is the
 primary evidence.
 
-## 7. What remains
+## 7. Decision: build our own parser
+
+Confirmed direction from the user: **this app must do everything itself.**
+No runtime dependency on the other app's database or its JSON exports. That
+app is a reference for understanding the format only - not a data source.
+
+The export-import path (`/api/timetable/find_exports`) therefore exists only
+as a fallback/diagnostic, not the plan.
+
+## 8. What remains
 
 Associating times with services and stops: walking the `ServiceDataTracks`
 records rather than scanning values in isolation. This means decoding
@@ -126,6 +135,37 @@ patterns around known values, not to walk a standard property tree.
 
 This is real work and should not be under-estimated. But it is now
 *bounded* work: the data is confirmed present, unencrypted and decodable.
+
+## Reverse-engineering the record layout
+
+`/api/paks/analyse` (pak_tools.analyse_records) dumps the bytes around each
+recovered time to work out the record structure from evidence:
+  - hex/ASCII window either side of every time
+  - any OTHER FTimespan within the window - a StopPoint should carry both an
+    arrival and a departure, so a nearby second time is a strong signal
+  - small int32s nearby, which in Unreal are usually FName table indices
+    (i.e. the station name) or enum/platform values
+  - the distribution of gaps between times across the whole file: a
+    repeating stride means fixed-size records, which is far simpler to
+    parse than a variable-length stream
+
+Validated against synthetic records of known layout: it correctly recovered
+the arrival->departure gap, the record stride, and the FName index position.
+
+## Domain rules that constrain the parser
+
+From the user (real TSW behaviour, not inferred):
+  - The **first stop** of a service has a departure time but **no arrival** -
+    the train is already there.
+  - The **last stop** has an arrival but **no departure**.
+  - **Freight** services often have **no scheduled arrival times** at all;
+    they are not timetabled the way passenger services are.
+
+So arrival and departure are both OPTIONAL fields. A stop with a single
+time is correct data, not a parse failure - do not treat unpaired times as
+a fault. The analyser also looks for 0 / -1 / int64-max values adjacent to
+a time, since an absent time is likely stored as a sentinel, and that
+marker is precisely what identifies first/last stops and freight workings.
 
 ## Tooling in the app (Discovery page)
 

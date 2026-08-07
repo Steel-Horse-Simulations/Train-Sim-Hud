@@ -16,6 +16,16 @@
   <main>
     <div class="panel">
       <h2>Pak inspection (offline timetables, step 2)</h2>
+      <div style="padding:10px;background:rgba(255,255,255,0.04);border-radius:6px;margin-bottom:12px;">
+        <p class="small dim" style="margin:0 0 8px;">
+          <strong>Check this first.</strong> The other extractor can export one JSON per service
+          with times and coordinates already decoded. If you have ever run it, those files may
+          already be on disk — importing them is far less work than decoding the game's binary.
+        </p>
+        <button class="btn primary" onclick="findExports()">Search for exported timetables</button>
+        <p class="small" id="exp-status" style="margin-top:8px;"></p>
+        <div id="exp-results"></div>
+      </div>
       <p class="small dim">
         Reads what's <em>inside</em> a route's <span class="mono">.pak</span> archive without
         extracting it. This is the step that pins down where timetable data actually lives in
@@ -64,6 +74,7 @@
         <button class="btn primary" onclick="inspectAsset()">Extract &amp; inspect</button>
         <button class="btn" onclick="clearExtracted()">Clear extracted folder</button>
         <button class="btn primary" onclick="scanTimes()">Scan for times</button>
+        <button class="btn primary" onclick="analyseRecords()">Analyse record layout</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -196,6 +207,34 @@ let lastSafetyResults = null;
 
 let lastPakResult = null;
 
+async function findExports() {
+  const status = document.getElementById('exp-status');
+  const out = document.getElementById('exp-results');
+  status.textContent = 'Searching (time-limited, about 20s)…';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/timetable/find_exports')).json();
+    lastPakResult = d;
+    if (d.error) { status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`; return; }
+    const n = (d.exports || []).length;
+    if (!n) {
+      status.innerHTML = '<span style="color:var(--status-amber);">No exported timetables found.</span>'
+        + (d.timed_out ? ' <span class="dim">(search hit its time limit)</span>' : '')
+        + '<br><span class="dim">If you know where that app saved its exports, say so and I can point the search at it.</span>';
+      return;
+    }
+    status.innerHTML = `<span style="color:var(--status-green);">${n} exported timetable file(s) found</span>`;
+    status.style.color = '';
+    out.innerHTML = d.exports.map(e => `
+      <div style="padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:6px;margin-top:6px;">
+        <div class="mono" style="font-size:11px;color:var(--accent-bright);word-break:break-all;">${esc(e.path)}</div>
+        <div class="small dim">${e.row_count} rows${e.has_coords ? ' · has coordinates' : ''}</div>
+        <div class="mono" style="font-size:10px;color:var(--text-dim);">${esc((e.row_keys||[]).join(', '))}</div>
+      </div>`).join('');
+  } catch (e) { status.textContent = 'Error: ' + e.message; status.style.color='var(--status-red)'; }
+}
+
 async function checkRepak() {
   const el = document.getElementById('repak-status');
   el.textContent = 'Checking…';
@@ -311,6 +350,38 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function analyseRecords() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  const asset = document.getElementById('pak-asset').value.trim();
+  if (!asset) { alert('Put the DataTrack asset path in the box first.'); return; }
+  status.textContent = 'Analysing record layout…';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/analyse', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ asset_name: asset.split('/').pop() })
+    })).json();
+    lastPakResult = d;
+    if (d.error) { status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`; return; }
+    status.innerHTML = `<span style="color:var(--status-green);">${d.time_count} times</span>`
+      + ` — ${d.records_with_paired_time} paired, ${d.records_with_single_time} single`
+      + (d.records_with_absent_markers ? `, ${d.records_with_absent_markers} with absent-time markers` : '');
+    status.style.color = '';
+    out.innerHTML = `<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      + '<p class="small" style="margin:10px 0 4px;font-weight:600;">Most common gaps between times</p>'
+      + `<div class="mono" style="font-size:11px;">${(d.common_gaps||[]).map(g=>`${g.gap_bytes}b ×${g.count}`).join(' · ')}</div>`
+      + '<p class="small" style="margin:10px 0 4px;font-weight:600;">First records</p>'
+      + (d.records||[]).slice(0,4).map(r=>`
+          <div style="padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:6px;">
+            <div class="mono" style="font-size:11px;color:var(--accent-bright);">@${r.offset} ${esc(r.time)}</div>
+            <div class="small dim">paired: ${(r.nearby_times||[]).map(t=>esc(t.time)+' @'+t.offset_delta).join(', ')||'none'}</div>
+          </div>`).join('')
+      + '<p class="small dim">Use Copy results and send the JSON — the hex windows are in there.</p>';
+  } catch (e) { status.textContent='Error: '+e.message; status.style.color='var(--status-red)'; }
 }
 
 async function scanTimes() {

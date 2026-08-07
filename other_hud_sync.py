@@ -25,6 +25,7 @@ If this guess is wrong, image sync will simply find nothing and skip
 silently rather than erroring - confirm and adjust IMAGES_SUBPATH below
 once verified.
 """
+import json
 import glob
 import os
 import shutil
@@ -235,3 +236,95 @@ def other_hud_sync_loop(config, save_config_fn, enabled_fn=lambda: True, log_fn=
             images_dir = config.get("other_hud_images_path") or None
             sync_once(db_path, images_dir, config, save_config_fn, log_fn=log_fn)
         time.sleep(RECHECK_INTERVAL_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# Exported-JSON discovery
+#
+# Separate from the database above. The other app can EXPORT one JSON file
+# per service, in a documented shape: a "PackageService" wrapper with route
+# and formation metadata, containing "TimetableRow" entries each carrying
+# arrival, departure, location, latitude and longitude.
+#
+# That export is by far the cheapest route to full offline timetables - the
+# data is already decoded, so importing it is ordinary work rather than
+# reverse-engineering Unreal's binary format. If the user has ever run that
+# app's extractor, these files may already be sitting on disk.
+#
+# Detection is by CONTENT, not filename: a file is only accepted if it
+# actually has the expected fields, so an unrelated .json can't be mistaken
+# for an export.
+# ---------------------------------------------------------------------------
+
+EXPORT_SIGNATURE_KEYS = ("arrival", "departure", "location")
+
+
+def _looks_like_timetable_export(path, max_bytes=400_000):
+    """Reads the head of a JSON file and decides whether it is one of the
+    other app's service exports. Returns a short description, or None."""
+    try:
+        if os.path.getsize(path) > max_bytes:
+            return None
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+
+    def rows_of(obj):
+        if isinstance(obj, list):
+            return obj
+        if isinstance(obj, dict):
+            for key in ("rows", "timetableRows", "TimetableRows",
+                        "stops", "Stops", "service", "Service"):
+                v = obj.get(key)
+                if isinstance(v, list):
+                    return v
+            for v in obj.values():
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    return v
+        return None
+
+    rows = rows_of(data)
+    if not rows or not isinstance(rows[0], dict):
+        return None
+    keys = {k.lower() for k in rows[0].keys()}
+    if not any(sig in k for k in keys for sig in EXPORT_SIGNATURE_KEYS):
+        return None
+
+    return {
+        "path": path,
+        "row_count": len(rows),
+        "row_keys": sorted(rows[0].keys()),
+        "has_coords": any("lat" in k for k in keys),
+        "sample_row": rows[0],
+    }
+
+
+def find_timetable_exports(extra_roots=None, max_seconds=20, max_hits=40):
+    """Searches the usual folders for the other app's exported service JSON.
+    Time-bounded so it can't hang on a huge Downloads folder."""
+    start = time.time()
+    hits = []
+    seen = set()
+    roots = list(extra_roots or []) + list(_candidate_roots())
+
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            continue
+        try:
+            for match in glob.iglob(os.path.join(root, "**", "*.json"),
+                                    recursive=True):
+                if time.time() - start > max_seconds or len(hits) >= max_hits:
+                    return {"exports": hits, "timed_out": True,
+                            "searched_roots": roots}
+                key = os.path.normcase(match)
+                if key in seen:
+                    continue
+                seen.add(key)
+                info = _looks_like_timetable_export(match)
+                if info:
+                    hits.append(info)
+        except Exception:
+            continue
+
+    return {"exports": hits, "timed_out": False, "searched_roots": roots}

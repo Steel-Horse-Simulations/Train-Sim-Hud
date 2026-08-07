@@ -727,3 +727,124 @@ def scan_timespans(path, max_hits=400, min_run=8):
         ],
         "verdict": verdict,
     }
+
+
+def analyse_records(path, window=64, max_records=40):
+    """Reverse-engineering aid: dumps the bytes AROUND each recovered time
+    so the record layout can be worked out from real evidence.
+
+    Reports, for each time found:
+      - a hex/ASCII window either side
+      - any other FTimespan within the window (a StopPoint should carry
+        BOTH an arrival and a departure, so a nearby second time is a
+        strong structural signal)
+      - plausible int32 values, which in Unreal are usually FName table
+        indices - i.e. the station name for that stop
+
+    Plus, across all hits, the gaps between consecutive records: a
+    repeating stride means fixed-size records, which makes parsing
+    dramatically simpler than a variable-length stream.
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    with open(path, "rb") as f:
+        data = f.read()
+
+    # Reuse the same detection as scan_timespans.
+    hits = []
+    i, n = 0, len(data) - 8
+    while i <= n:
+        (val,) = struct.unpack_from("<q", data, i)
+        if 0 < val < TICKS_PER_DAY and val % TICKS_PER_SECOND == 0:
+            hits.append((i, val // TICKS_PER_SECOND))
+            i += 8
+            continue
+        i += 4
+    if not hits:
+        return {"path": path, "error": "no_times_found"}
+
+    def hhmmss(s):
+        return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+
+    records = []
+    for off, secs in hits[:max_records]:
+        lo = max(0, off - window)
+        hi = min(len(data), off + 8 + window)
+        chunk = data[lo:hi]
+
+        # Other timespans inside the window - arrival/departure pairing.
+        # NOTE: a single time is NORMAL, not a fault. The first stop of a
+        # service has only a departure (the train is already there), the
+        # last has only an arrival, and freight often has no scheduled
+        # arrival at all. So absence of a pair is expected data, and the
+        # parser must treat these fields as optional.
+        neighbours = []
+        sentinels = []
+        for j in range(0, len(chunk) - 8, 4):
+            (v,) = struct.unpack_from("<q", chunk, j)
+            abs_off = lo + j
+            if abs_off == off:
+                continue
+            if 0 < v < TICKS_PER_DAY and v % TICKS_PER_SECOND == 0:
+                neighbours.append({
+                    "offset_delta": abs_off - off,
+                    "time": hhmmss(v // TICKS_PER_SECOND),
+                })
+            elif v == 0 or v == -1 or v == (1 << 63) - 1:
+                # Candidate "no time set" markers. These matter: an absent
+                # arrival/departure is exactly what marks a first/last stop
+                # or a freight working, so they carry real meaning rather
+                # than being padding to ignore.
+                sentinels.append({"offset_delta": abs_off - off, "value": v})
+
+        # Small int32s - candidate FName indices / enum values / platform nos.
+        ints = []
+        for j in range(0, len(chunk) - 4, 4):
+            (v,) = struct.unpack_from("<i", chunk, j)
+            if 0 < v < 200000:
+                ints.append({"offset_delta": lo + j - off, "value": v})
+
+        records.append({
+            "offset": off,
+            "time": hhmmss(secs),
+            "hex_before": data[lo:off].hex(),
+            "hex_after": data[off + 8:hi].hex(),
+            "ascii": "".join(chr(b) if 32 <= b < 127 else "." for b in chunk),
+            "nearby_times": neighbours[:6],
+            "nearby_absent_markers": sentinels[:8],
+            "nearby_ints": ints[:14],
+        })
+
+    # Stride analysis across ALL hits, not just the sampled ones.
+    gaps = [hits[k + 1][0] - hits[k][0] for k in range(len(hits) - 1)]
+    freq = {}
+    for g in gaps:
+        freq[g] = freq.get(g, 0) + 1
+    common = sorted(freq.items(), key=lambda kv: -kv[1])[:10]
+    paired = sum(1 for r in records if r["nearby_times"])
+    singles = len(records) - paired
+    with_sentinels = sum(1 for r in records if r.get("nearby_absent_markers"))
+
+    return {
+        "path": path,
+        "size": len(data),
+        "time_count": len(hits),
+        "records": records,
+        "common_gaps": [{"gap_bytes": g, "count": c} for g, c in common],
+        "records_with_paired_time": paired,
+        "records_with_single_time": singles,
+        "records_with_absent_markers": with_sentinels,
+        "verdict": (
+            f"{paired} paired, {singles} single. Both are expected: a stop "
+            "can legitimately have only one time - the first stop of a "
+            "service has just a departure, the last has just an arrival, "
+            "and freight often has no scheduled arrival. "
+            + (f"{with_sentinels} records have a zero/-1 value next to the "
+               "time, which is likely how an absent time is stored - worth "
+               "confirming, since that marker is what identifies first and "
+               "last stops."
+               if with_sentinels else
+               "No zero/-1 markers alongside the times, so an absent time is "
+               "probably encoded by the field simply not being written.")
+        ),
+    }

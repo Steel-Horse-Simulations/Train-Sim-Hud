@@ -1,0 +1,36 @@
+# Line endings.
+#
+# Files in this project are authored on Linux (LF) but run on Windows, so
+# Git's autocrlf shows a "this file uses LF, Git will convert to CRLF"
+# warning on checkout. That warning is harmless, but leaving it to
+# autocrlf means the result depends on each machine's Git config. This
+# makes it explicit instead.
+
+# Default: let Git normalise text files, checking out native endings.
+* text=auto
+
+# Windows batch/PowerShell MUST be CRLF. A .bat with LF endings can fail
+# in odd ways - notably a trailing command on the last line may not run.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# These are fine either way; pinned to LF so diffs stay clean.
+*.py    text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+
+# Binary - never touch these.
+*.png   binary
+*.ico   binary
+*.zip   binary
+*.db    binary
+*.sqlite binary
+*.pak   binary
+*.uasset binary
+*.uexp  binary
+*.exe   binary

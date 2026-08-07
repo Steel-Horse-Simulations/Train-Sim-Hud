@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.31.2"
+APP_VERSION = "7.33.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1426,6 +1426,35 @@ def paks_scan_all():
     return jsonify(combined)
 
 
+@app.route("/api/timetable/find_exports", methods=["GET", "POST"])
+def timetable_find_exports():
+    """Searches the machine for the other app's exported service JSON.
+
+    Per the earlier investigation, that app can export one JSON per
+    service with arrival, departure, location, latitude and longitude
+    already decoded. If any exist on disk, importing them is ordinary
+    work - far cheaper than reverse-engineering the Unreal binary. This
+    checks before committing to the harder route.
+
+    Files are identified by CONTENT (they must actually carry those
+    fields), so an unrelated .json cannot be mistaken for an export.
+    Body (optional): {"path": "folder to also search"}
+    """
+    import other_hud_sync
+    extra = []
+    if request.method == "POST":
+        body = request.get_json(force=True, silent=True) or {}
+        p = (body.get("path") or "").strip()
+        if p:
+            extra.append(p)
+    try:
+        return jsonify(other_hud_sync.find_timetable_exports(extra_roots=extra))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/paks/timespans", methods=["POST"])
 def paks_timespans():
     """Scans an already-extracted .uexp for FTimespan-shaped values.
@@ -1458,6 +1487,29 @@ def paks_timespans():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.scan_timespans(path))
+
+
+@app.route("/api/paks/analyse", methods=["POST"])
+def paks_analyse():
+    """Dumps the bytes around each recovered time so the record layout can
+    be worked out. Body: {"asset_name": "...DataTrack.uasset"} - looks for
+    the matching .uexp under the app's extracted folder."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    return jsonify(pak_tools.analyse_records(path))
 
 
 @app.route("/api/paks/clear_extracted", methods=["POST"])
