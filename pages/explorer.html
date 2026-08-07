@@ -76,6 +76,7 @@
         <button class="btn primary" onclick="scanTimes()">Scan for times</button>
         <button class="btn primary" onclick="analyseRecords()">Analyse record layout</button>
         <button class="btn primary" onclick="diffRecords()">Map fields</button>
+        <button class="btn primary" onclick="decodeStride()">Decode all times</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -351,6 +352,26 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function decodeStride() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Decoding the time field in every record…'; status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/decode',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop(),stride:2828,offset:0})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">${d.valid_times} times</span>`
+      +` from ${d.records_read} records — ${d.with_fractional_seconds} sub-second, ${Math.round(d.ascending_ratio*100)}% ascending`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      +`<p class="small" style="margin:10px 0 4px;font-weight:600;">First times</p>`
+      +`<div class="mono" style="font-size:11px;color:var(--accent-bright);">${(d.first_times||[]).map(esc).join(', ')}</div>`
+      +`<p class="small dim" style="margin-top:8px;">zero: ${d.zero_value} · out of range: ${d.out_of_range}</p>`;
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }
 
 async function diffRecords() {

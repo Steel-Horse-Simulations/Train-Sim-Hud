@@ -961,3 +961,73 @@ def diff_records(path, stride=None, count=6, max_report=120):
             "structure. Those varying slots are the fields worth decoding."
         ),
     }
+
+
+def decode_stride(path, stride=2828, offset=0, limit=4000):
+    """Reads the FTimespan at a fixed offset in EVERY record.
+
+    Motivation: on the real Leven Branch file the stride-based record count
+    (8.6 MB / 2828 = 3055 records) was ~23x the number of times found by
+    scanning (133). The scanner required exact whole seconds, so anything
+    with sub-second precision was silently discarded. This reads the field
+    directly at its known offset with NO whole-second filter, which is the
+    correct way round now that the layout is known.
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    with open(path, "rb") as f:
+        data = f.read()
+
+    total = len(data) // stride
+    rows, zero, out_of_range, fractional = [], 0, 0, 0
+
+    for k in range(min(total, limit)):
+        pos = k * stride + offset
+        if pos + 8 > len(data):
+            break
+        (val,) = struct.unpack_from("<q", data, pos)
+        if val == 0:
+            zero += 1
+            continue
+        if not (0 < val < TICKS_PER_DAY):
+            out_of_range += 1
+            continue
+        secs_total = val / TICKS_PER_SECOND
+        if val % TICKS_PER_SECOND:
+            fractional += 1
+        s = int(secs_total)
+        rows.append({
+            "record": k,
+            "offset": pos,
+            "time": f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}",
+            "fractional": round(secs_total - s, 3),
+        })
+
+    times = [r["time"] for r in rows]
+    ordered = sum(1 for a, b in zip(times, times[1:]) if b >= a)
+    ratio = ordered / (len(times) - 1) if len(times) > 1 else 0
+
+    return {
+        "path": path,
+        "stride": stride,
+        "field_offset": offset,
+        "records_total": total,
+        "records_read": min(total, limit),
+        "valid_times": len(rows),
+        "zero_value": zero,
+        "out_of_range": out_of_range,
+        "with_fractional_seconds": fractional,
+        "ascending_ratio": round(ratio, 3),
+        "first_times": times[:40],
+        "sample_rows": rows[:40],
+        "verdict": (
+            f"{len(rows)} of {min(total, limit)} records carry a time at "
+            f"+{offset} ({fractional} with sub-second precision). "
+            + (f"{ratio:.0%} run forwards. "
+               if len(times) > 1 else "")
+            + ("Far more than the whole-second scan found, so the earlier "
+               "filter was discarding real data."
+               if fractional else
+               "All whole seconds - the earlier filter was not the limit.")
+        ),
+    }
