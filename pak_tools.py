@@ -1057,3 +1057,82 @@ def decode_stride(path, stride=2828, offset=0, limit=4000, start=None):
                   "is probably not the time field, or the phase is wrong."))
         ),
     }
+
+
+def extract_time_series(path, min_run=4, max_runs=200):
+    """Extracts times in FILE ORDER and splits them into ascending runs.
+
+    This replaces the fixed-stride approach, which was wrong: 2828 was
+    merely the GCD of a sample of gaps, and stepping by it stayed aligned
+    for about 20 records before drifting into garbage (1321 values but
+    only 48 distinct, 3% ascending). The type is named
+    RouteTimetableDataTrackStream - a STREAM, i.e. variable-length
+    records - so any fixed stride was always going to fail.
+
+    Scanning in file order needs no record size. A service runs forwards
+    in time, so each ascending run is a candidate service; a drop back to
+    an earlier time marks the boundary to the next one. Sub-second
+    precision is allowed (it was discarding ~90% of values before).
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    with open(path, "rb") as f:
+        data = f.read()
+
+    times = []
+    i, n = 0, len(data) - 8
+    while i <= n:
+        (val,) = struct.unpack_from("<q", data, i)
+        # Plausible time of day, and at least whole tenths of a second -
+        # arbitrary raw bytes rarely land on a clean sub-multiple.
+        if 0 < val < TICKS_PER_DAY and val % (TICKS_PER_SECOND // 10) == 0:
+            times.append((i, val / TICKS_PER_SECOND))
+            i += 8
+            continue
+        # Step ONE byte, not four. In a variable-length stream the values
+        # are not guaranteed to sit on 4-byte boundaries, and a 4-byte
+        # stride missed three quarters of them in testing.
+        i += 1
+
+    runs, cur = [], []
+    for off, secs in times:
+        if cur and secs > cur[-1][1]:
+            cur.append((off, secs))
+        else:
+            if len(cur) >= min_run:
+                runs.append(cur)
+            cur = [(off, secs)]
+    if len(cur) >= min_run:
+        runs.append(cur)
+
+    def fmt(s):
+        s = int(s)
+        return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+
+    runs.sort(key=len, reverse=True)
+    out = []
+    for r in runs[:max_runs]:
+        out.append({
+            "start_offset": r[0][0],
+            "stop_count": len(r),
+            "first": fmt(r[0][1]),
+            "last": fmt(r[-1][1]),
+            "duration_min": round((r[-1][1] - r[0][1]) / 60, 1),
+            "times": [fmt(s) for _o, s in r[:40]],
+        })
+
+    return {
+        "path": path,
+        "total_times": len(times),
+        "run_count": len(runs),
+        "runs": out,
+        "verdict": (
+            f"{len(runs)} ascending runs found from {len(times)} times. "
+            f"Longest has {out[0]['stop_count']} entries spanning "
+            f"{out[0]['duration_min']} minutes ({out[0]['first']} to "
+            f"{out[0]['last']}). Each run is a candidate service."
+            if out else
+            f"{len(times)} times but no ascending runs of {min_run}+ - "
+            "the values may not be times, or services are interleaved."
+        ),
+    }

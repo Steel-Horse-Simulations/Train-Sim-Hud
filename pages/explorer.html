@@ -77,6 +77,7 @@
         <button class="btn primary" onclick="analyseRecords()">Analyse record layout</button>
         <button class="btn primary" onclick="diffRecords()">Map fields</button>
         <button class="btn primary" onclick="decodeStride()">Decode all times</button>
+        <button class="btn primary" onclick="extractServices()">Extract services</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -352,6 +353,29 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function extractServices() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Extracting services (scans every byte, takes a moment on 8 MB)…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/services',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">${d.run_count} candidate services</span> from ${d.total_times} times`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      +(d.runs||[]).slice(0,25).map(r=>`
+        <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+          <div><strong>${r.stop_count} stops</strong> <span class="mono" style="color:var(--accent-bright);">${esc(r.first)} → ${esc(r.last)}</span>
+            <span class="small dim">(${r.duration_min} min)</span></div>
+          <div class="mono" style="font-size:10px;color:var(--text-dim);">${(r.times||[]).slice(0,14).map(esc).join(', ')}</div>
+        </div>`).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }
 
 async function decodeStride() {
