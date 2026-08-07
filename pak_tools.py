@@ -671,10 +671,16 @@ def scan_timespans(path, max_hits=400, min_run=8):
             continue
         i += 4  # 4-byte stride: int64s are usually 4- or 8-aligned
 
+    # Cluster detection, fixed. The first version required hits within 128
+    # bytes of each other, but each stop-point record is a large struct -
+    # on the real Leven Branch layer the 133 hits averaged 65,000 bytes
+    # apart, so every genuine time was reported as "isolated". The gap is
+    # now scaled to the file's own hit density.
+    gap = max(4096, (len(data) // max(1, len(hits))) * 3)
     runs = []
     current = []
-    for idx, (off, t) in enumerate(hits):
-        if current and off - current[-1][0] <= 128:
+    for off, t in hits:
+        if current and off - current[-1][0] <= gap:
             current.append((off, t))
         else:
             if len(current) >= min_run:
@@ -683,23 +689,41 @@ def scan_timespans(path, max_hits=400, min_run=8):
     if len(current) >= min_run:
         runs.append(current)
 
+    # Stronger evidence than clustering: real schedules run forwards in
+    # time, so mostly-ascending values are very unlikely to be coincidence
+    # (random data sits at ~50%).
+    secs = []
+    for _o, t in hits:
+        h, m, s = (int(x) for x in t.split(":"))
+        secs.append(h * 3600 + m * 60 + s)
+    ascending = sum(1 for a, b in zip(secs, secs[1:]) if b >= a)
+    ratio = (ascending / (len(secs) - 1)) if len(secs) > 1 else 0.0
+
+    if ratio >= 0.7 and len(hits) >= 20:
+        verdict = (f"{len(hits)} times found and {ratio:.0%} of them run "
+                   "forwards - random data sits near 50%, so these are real "
+                   "schedule values. A parser is realistic.")
+    elif runs:
+        verdict = (f"{len(runs)} clusters of times found - that is what a "
+                   "stop-time table looks like.")
+    elif hits:
+        verdict = (f"{len(hits)} plausible values, {ratio:.0%} ascending - "
+                   "not clearly distinguishable from coincidence.")
+    else:
+        verdict = "No plausible time values found."
+
     return {
         "path": path,
         "size": len(data),
         "hit_count": len(hits),
-        "sample_times": [t for _o, t in hits[:60]],
+        "ascending_ratio": round(ratio, 3),
+        "earliest": min(hits, key=lambda h: h[0])[1] if hits else None,
+        "sample_times": [t for _o, t in hits[:80]],
         "run_count": len(runs),
         "largest_runs": [
             {"start_offset": r[0][0], "count": len(r),
              "times": [t for _o, t in r[:40]]}
             for r in sorted(runs, key=len, reverse=True)[:5]
         ],
-        "verdict": (
-            f"{len(runs)} clusters of consecutive plausible times found - "
-            "that is what a stop-time table looks like, so the values are "
-            "readable and a parser is realistic."
-            if runs else
-            f"{len(hits)} isolated plausible values but no clusters. Could "
-            "be coincidence; the times may be stored differently."
-        ),
+        "verdict": verdict,
     }
