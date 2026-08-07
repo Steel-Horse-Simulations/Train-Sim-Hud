@@ -635,3 +635,71 @@ def inspect_asset(path):
     result["stations"] = sorted({s for s in strings
                                  if " Platform " in s})[:200]
     return result
+
+
+# FTimespan is an int64 count of 100-nanosecond ticks. A time-of-day
+# therefore falls between 0 and 24h = 864,000,000,000 ticks. Scanning for
+# int64s in that range, aligned to whole seconds, is a cheap way to find
+# the schedule values without first decoding the property layout.
+TICKS_PER_SECOND = 10_000_000
+TICKS_PER_DAY = 86_400 * TICKS_PER_SECOND
+
+
+def scan_timespans(path, max_hits=400, min_run=8):
+    """Looks for FTimespan-shaped int64 values in a .uexp.
+
+    Reports both raw hits and 'runs' - places where several plausible
+    times sit close together, which is what a table of stop times looks
+    like. A run is far stronger evidence than scattered hits, which can
+    just be coincidental byte patterns."""
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    with open(path, "rb") as f:
+        data = f.read()
+
+    hits = []
+    n = len(data) - 8
+    i = 0
+    while i <= n:
+        (val,) = struct.unpack_from("<q", data, i)
+        # Whole seconds, within a day, and not zero (zero is far too common
+        # in padding to be meaningful).
+        if 0 < val < TICKS_PER_DAY and val % TICKS_PER_SECOND == 0:
+            secs = val // TICKS_PER_SECOND
+            hits.append((i, f"{secs // 3600:02d}:{(secs % 3600) // 60:02d}:{secs % 60:02d}"))
+            i += 8
+            continue
+        i += 4  # 4-byte stride: int64s are usually 4- or 8-aligned
+
+    runs = []
+    current = []
+    for idx, (off, t) in enumerate(hits):
+        if current and off - current[-1][0] <= 128:
+            current.append((off, t))
+        else:
+            if len(current) >= min_run:
+                runs.append(current)
+            current = [(off, t)]
+    if len(current) >= min_run:
+        runs.append(current)
+
+    return {
+        "path": path,
+        "size": len(data),
+        "hit_count": len(hits),
+        "sample_times": [t for _o, t in hits[:60]],
+        "run_count": len(runs),
+        "largest_runs": [
+            {"start_offset": r[0][0], "count": len(r),
+             "times": [t for _o, t in r[:40]]}
+            for r in sorted(runs, key=len, reverse=True)[:5]
+        ],
+        "verdict": (
+            f"{len(runs)} clusters of consecutive plausible times found - "
+            "that is what a stop-time table looks like, so the values are "
+            "readable and a parser is realistic."
+            if runs else
+            f"{len(hits)} isolated plausible values but no clusters. Could "
+            "be coincidence; the times may be stored differently."
+        ),
+    }

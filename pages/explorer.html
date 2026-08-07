@@ -63,6 +63,7 @@
                style="width:100%;font-family:var(--mono);font-size:12px;margin-bottom:8px;">
         <button class="btn primary" onclick="inspectAsset()">Extract &amp; inspect</button>
         <button class="btn" onclick="clearExtracted()">Clear extracted folder</button>
+        <button class="btn primary" onclick="scanTimes()">Scan for times</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -310,6 +311,31 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function scanTimes() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  const asset = document.getElementById('pak-asset').value.trim();
+  if (!asset) { alert('Put the asset path in the box first (the one you inspected).'); return; }
+  status.textContent = 'Scanning the .uexp for time values… (26 MB takes a moment)';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/timespans', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ asset_name: asset.split('/').pop() })
+    })).json();
+    lastPakResult = d;
+    if (d.error) { status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`; return; }
+    status.innerHTML = `<span style="color:var(--status-green);">${d.hit_count} plausible times</span>`
+      + ` in ${d.run_count} clusters`;
+    status.style.color = '';
+    out.innerHTML = `<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      + (d.largest_runs || []).map(r => `
+        <p class="small" style="margin:10px 0 4px;font-weight:600;">Cluster of ${r.count} at offset ${r.start_offset}</p>
+        <div class="mono" style="font-size:11px;color:var(--accent-bright);">${r.times.map(esc).join(', ')}</div>`).join('');
+  } catch (e) { status.textContent = 'Error: ' + e.message; status.style.color='var(--status-red)'; }
 }
 
 async function clearExtracted() {

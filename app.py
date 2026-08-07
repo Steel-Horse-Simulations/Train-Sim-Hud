@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.30.3"
+APP_VERSION = "7.31.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1424,6 +1424,40 @@ def paks_scan_all():
         combined["total_timetables"] += r.get("total_timetables", 0)
         combined["results"].extend(r.get("results", []))
     return jsonify(combined)
+
+
+@app.route("/api/paks/timespans", methods=["POST"])
+def paks_timespans():
+    """Scans an already-extracted .uexp for FTimespan-shaped values.
+
+    The DataTrack assets carry a 'Timespan' property and 8-26 MB of .uexp
+    data but no readable time strings, because Unreal stores FTimespan as
+    an int64 of 100ns ticks. This looks for those directly, and reports
+    clusters rather than isolated hits - a run of consecutive plausible
+    times is what a stop-time table looks like, whereas scattered ones can
+    be coincidental byte patterns.
+
+    Body: {"path": "<full path to the extracted .uexp>"}  - or omit and
+    pass asset_name to search the extracted folder for it.
+    """
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+
+    if not path and name:
+        root_dir = os.path.join(APP_DIR, "extracted")
+        want = os.path.splitext(name)[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(root_dir):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    return jsonify(pak_tools.scan_timespans(path))
 
 
 @app.route("/api/paks/clear_extracted", methods=["POST"])
