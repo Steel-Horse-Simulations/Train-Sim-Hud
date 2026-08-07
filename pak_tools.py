@@ -848,3 +848,116 @@ def analyse_records(path, window=64, max_records=40):
                "probably encoded by the field simply not being written.")
         ),
     }
+
+
+def diff_records(path, stride=None, count=6, max_report=120):
+    """Compares consecutive fixed-size records byte-for-byte.
+
+    Once a stride is known, this is the fastest route to a field map:
+    bytes that are IDENTICAL across every record are structure, padding or
+    type tags; bytes that VARY are the actual data. Reporting only the
+    varying offsets turns 2828 opaque bytes into a short list of candidate
+    fields.
+
+    stride: bytes per record. If omitted, inferred from the most common
+    gap between detected times (they were all exact multiples of 2828 on
+    the real Leven Branch file).
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    with open(path, "rb") as f:
+        data = f.read()
+
+    # Find times, as the anchor for record boundaries.
+    hits = []
+    i, n = 0, len(data) - 8
+    while i <= n:
+        (val,) = struct.unpack_from("<q", data, i)
+        if 0 < val < TICKS_PER_DAY and val % TICKS_PER_SECOND == 0:
+            hits.append(i)
+            i += 8
+            continue
+        i += 4
+    if len(hits) < 3:
+        return {"error": "not_enough_times", "found": len(hits)}
+
+    if not stride:
+        gaps = [hits[k + 1] - hits[k] for k in range(len(hits) - 1)]
+        # The true stride is the greatest common divisor of the gaps -
+        # every gap was an exact multiple of it on real data.
+        from math import gcd
+        g = 0
+        for gap in gaps:
+            g = gcd(g, gap)
+        stride = g if g >= 16 else min(gaps)
+
+    # Take records anchored at time offsets that are exactly `stride` apart.
+    anchors = [hits[0]]
+    for h in hits[1:]:
+        if h - anchors[-1] == stride:
+            anchors.append(h)
+        if len(anchors) >= count:
+            break
+    if len(anchors) < 2:
+        anchors = hits[:count]
+
+    start = anchors[0]
+    recs = []
+    for a in anchors:
+        lo = a - (start % stride if False else 0)
+        recs.append(data[a: a + stride])
+    recs = [r for r in recs if len(r) == stride]
+    if len(recs) < 2:
+        return {"error": "could_not_extract_records", "stride": stride}
+
+    varying = []
+    for off in range(0, stride - 4, 4):
+        vals = []
+        for r in recs:
+            (v,) = struct.unpack_from("<i", r, off)
+            vals.append(v)
+        if len(set(vals)) > 1:
+            varying.append({"offset": off, "values": vals[:8]})
+
+    # Interpret the most interesting varying offsets.
+    annotated = []
+    for v in varying[:max_report]:
+        off = v["offset"]
+        note = ""
+        if off % 8 == 0 and off + 8 <= stride:
+            longs = []
+            for r in recs:
+                (lv,) = struct.unpack_from("<q", r, off)
+                longs.append(lv)
+            if all(0 < x < TICKS_PER_DAY and x % TICKS_PER_SECOND == 0 for x in longs):
+                note = "FTimespan (time value)"
+                v["as_times"] = [
+                    f"{(x // TICKS_PER_SECOND) // 3600:02d}:"
+                    f"{((x // TICKS_PER_SECOND) % 3600) // 60:02d}:"
+                    f"{(x // TICKS_PER_SECOND) % 60:02d}" for x in longs[:8]
+                ]
+        floats = []
+        for r in recs:
+            (fv,) = struct.unpack_from("<f", r, off)
+            floats.append(fv)
+        if not note and all(abs(x) > 1e-6 and abs(x) < 1e9 for x in floats):
+            note = "plausible float (position/distance?)"
+            v["as_floats"] = [round(x, 3) for x in floats[:8]]
+        v["note"] = note
+        annotated.append(v)
+
+    constant_bytes = stride - len(varying) * 4
+    return {
+        "path": path,
+        "stride": stride,
+        "records_compared": len(recs),
+        "anchor_offsets": anchors[:count],
+        "varying_field_count": len(varying),
+        "constant_bytes_approx": constant_bytes,
+        "varying_fields": annotated,
+        "verdict": (
+            f"Record size {stride} bytes. {len(varying)} of ~{stride // 4} "
+            f"int-sized slots differ between records - the rest is identical "
+            "structure. Those varying slots are the fields worth decoding."
+        ),
+    }
