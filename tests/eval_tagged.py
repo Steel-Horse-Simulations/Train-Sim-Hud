@@ -156,8 +156,53 @@ def run_probe():
     return ok
 
 
+def run_template_recovery():
+    """Layout recovery by repetition must find the real field order, and must
+    NOT be fooled by a tiny name table where most 'FName references' are
+    coincidences. The noise-heavy control is the point: on the real Leven
+    layer 29% of all byte offsets read as a valid FName."""
+    print("\n--- record template recovered by repetition ---")
+    base, truth = T.main("/tmp/eval_tmpl")
+    r = pak_tools.record_template(base + ".uexp")
+    ok = True
+    if "error" in r:
+        print("  FAIL:", r["error"]); return False
+    fields = [n for _rel, n in r["stable_fields"]]
+    print(f"  anchor           {r['anchor']}")
+    print(f"  record count     {r['record_count']}")
+    print(f"  stable fields    {fields[:6]}")
+    for want in ("InstructionIndex", "Distance", "NetworkRibbonLocation"):
+        if want not in fields:
+            print(f"  FAIL: missed {want}"); ok = False
+    # order must match how the fixture writes them
+    try:
+        if not (fields.index("InstructionIndex") < fields.index("Distance")
+                < fields.index("NetworkRibbonLocation")):
+            print("  FAIL: field order wrong"); ok = False
+        else:
+            print("  field order matches the fixture")
+    except ValueError:
+        ok = False
+
+    # noise control: random bytes must not yield a confident template
+    d = "/tmp/eval_tmpl_noise"
+    os.makedirs(d, exist_ok=True)
+    nb = os.path.join(d, "Noise_DataTrack")
+    T.build_uasset(nb + ".uasset")
+    rng = random.Random(3)
+    with open(nb + ".uexp", "wb") as f:
+        f.write(bytes(rng.randrange(256) for _ in range(300_000)))
+    n = pak_tools.record_template(nb + ".uexp")
+    stable = [] if "error" in n else n.get("stable_fields", [])
+    print(f"  noise control    {'refused' if 'error' in n else str(len(stable)) + ' stable fields'}")
+    if len(stable) > 3:
+        print("  FAIL: invented a template from random bytes"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
-               run_opaque_control(), run_probe(), run_window_diagnostic()]
+               run_opaque_control(), run_probe(), run_window_diagnostic(),
+               run_template_recovery()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

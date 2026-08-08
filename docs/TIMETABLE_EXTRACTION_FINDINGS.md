@@ -588,3 +588,71 @@ width outright; then **Read records**, which now tries both. The counts above
 are a ground truth worth checking the parser against: it should find 12,207
 records, with 5,198 StopPoint and 5,198 TrackSectionEntry among them. If it
 does not reproduce those, it is wrong however clean the output looks.
+
+## The name table is too small to parse against - recover the layout by REPETITION (v7.40.0)
+
+`/api/paks/records` on the real Leven layer still returns `no_records_parsed`
+at both field widths. The attached probe explains why, and it invalidates
+some of what the previous section concluded.
+
+### The 88-name table makes the FName test almost meaningless
+
+`total_fname_references: 2,539,329` in an 8,638,791 byte file. **29% of every
+byte offset in the file passes the "valid FName reference" test.** With only
+88 names, any int32 in 0..87 followed by a zero looks like a name reference,
+and small ints and zeros are what binary data is mostly made of.
+
+That invalidates the diagnostics built on it:
+  - the hex windows around `DataType` are mostly coincidence - window 3 shows
+    `DataType` at +0 followed by `Distance` at +8, i.e. two FIELD names
+    adjacent, which is not a thing FPropertyTag can produce;
+  - `chain_break` read exactly one "tag": `SignalRef` / `EnumProperty` with a
+    declared **size of 27**. An EnumProperty value is an 8-byte FName. Size 27
+    is impossible, so that tag was noise too.
+
+So "property TYPE names ARE referenced, therefore it is tagged" was over-read.
+Some of those 61,036 `EnumProperty` hits are real; most are not.
+
+### What IS real: sixteen names at exactly 12,207
+
+| References | Names |
+|---|---|
+| 48,830 | `DataType` |
+| 36,658 | `InstructionIndex`, `NetworkRibbonLocation` |
+| 24,414 (= 2 x 12,207) | `Distance`, `RibbonLocation`, `FCE_..._DataTrack` |
+| **12,207** | **sixteen names** - `IntProperty`, `NameProperty`, `StructProperty`, `FloatProperty`, `PropertyReference`, `SignalPropertyReference`, `RibbonReference`, `Time`, `DirectionOfTravel`, `Direction`, `Guid`, `Class`, `Package`, `ServiceDataTracks`, `Default__RouteTimetableDataTrackStream`, `S5K84` |
+| 5,198 | `StopPoint` **and** `TrackSectionEntry` - identical |
+
+Coincidence does not land on the same integer sixteen times. **12,207 is the
+record count** (mean record size 708 bytes) and those are once-per-record
+fields.
+
+### `record_template()` - use the repetition, not the parse
+
+`/api/paks/template`, button **Recover record template**.
+
+Take a name occurring exactly once per record, treat each occurrence as a
+record boundary, and ask which (relative offset, name) pairs recur ACROSS
+records. A real field sits at the same offset in every record; a coincidence
+does not recur. The noise cancels itself, which is exactly what parsing could
+not do here.
+
+Validated on the tagged fixture: recovers the true field ORDER
+(`InstructionIndex` -> `Distance` -> `NetworkRibbonLocation`, with their
+`IntProperty` / `FloatProperty` / `NameProperty` type names in the right
+places), and refuses to produce a template from random bytes.
+
+### Next step
+
+**Recover record template** on the real Leven layer. Expect `record_count`
+12,207. The `stable_fields` list is then the record layout, read from
+evidence rather than assumed, and the offsets in it are what a real parser
+should be built from.
+
+### Standing lesson, now with a fourth data point
+
+Four format conclusions, three of them wrong. Every wrong one came from
+trusting a signal that had not been checked for how often it fires by chance.
+The FName test firing on 29% of all offsets should have been measured BEFORE
+anything was built on top of it - `total_fname_references` was in the probe
+output the whole time and says exactly that.

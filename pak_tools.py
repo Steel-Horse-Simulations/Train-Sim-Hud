@@ -2236,3 +2236,142 @@ def probe_name_references(path, top=40, single_tag_sample=8,
         "head_hex": data[:256].hex(),
         "verdict": verdict,
     }
+
+
+def _name_ref_offsets(data, names, width=4):
+    """Offsets where an FName reference reads, per name index."""
+    fmt = "<ii" if width == 4 else "<qq"
+    step = 2 * width
+    # Name index 0 is "None", which every run of zero bytes reads as - 1.8M
+    # of the 2.5M hits on the real Leven layer. Skipping it is not a filter
+    # on the data so much as on a tautology, and it keeps the offset index
+    # from running to hundreds of megabytes on a desktop.
+    out = defaultdict(list)
+    for off in range(0, len(data) - step):
+        idx, num = struct.unpack_from(fmt, data, off)
+        if 0 < idx < len(names) and num == 0:
+            out[idx].append(off)
+    return out
+
+
+def record_template(path, anchor=None, samples=24, min_share=0.6, width=4):
+    """Recovers the record layout by REPETITION rather than by parsing.
+
+    Why this exists. On the real Leven layer the name table has only 88
+    entries, so any int32 in 0..87 followed by a zero reads as a valid FName
+    reference - 29% of every byte offset in the file passes that test. Both
+    the hex-window diagnostic and the tag walker were fooled by it: the
+    walker's best "tag" was SignalRef/EnumProperty with a declared size of
+    27, which is impossible for an EnumProperty and was pure coincidence.
+
+    What is NOT coincidence is that sixteen different names are referenced
+    exactly 12,207 times each. Coincidence does not land on the same integer
+    sixteen times. That number is the record count, and those names are
+    once-per-record fields.
+
+    So: take a name that occurs exactly once per record, treat each of its
+    occurrences as a record boundary, and ask which (relative offset, name)
+    pairs recur ACROSS records. A real field sits at the same place in every
+    record; a coincidental hit does not recur. The noise cancels itself out,
+    which is exactly what parsing could not do here.
+
+    Returns the recovered field template, ordered by position in the record.
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    uasset = _sibling_uasset(path)
+    if not uasset:
+        return {"error": "no_sibling_uasset", "path": path}
+    with open(uasset, "rb") as f:
+        names = _read_fname_strings(f.read())
+    if not names:
+        return {"error": "no_name_table", "path": uasset}
+    with open(path, "rb") as f:
+        data = f.read()
+
+    refs = _name_ref_offsets(data, names, width)
+    counts = {names[i]: len(v) for i, v in refs.items() if names[i] != "None"}
+    if not counts:
+        return {"error": "no_name_references", "path": path}
+
+    # The record count is the count shared by the MOST names. One name
+    # hitting a number proves nothing; sixteen agreeing on it is structure.
+    by_count = defaultdict(list)
+    for nm, c in counts.items():
+        if c >= 8:
+            by_count[c].append(nm)
+    if not by_count:
+        return {"error": "no_repeated_names", "path": path, "counts": counts}
+    modal_count = max(by_count, key=lambda c: (len(by_count[c]), c))
+    cluster = sorted(by_count[modal_count])
+
+    if anchor is None:
+        # Prefer the most evenly spaced member - the one least likely to be
+        # riding on coincidence.
+        def spread(nm):
+            idx = next(i for i, n in enumerate(names) if n == nm)
+            offs = refs[idx]
+            gaps = [b - a for a, b in zip(offs, offs[1:])]
+            if not gaps:
+                return float("inf")
+            mean = sum(gaps) / len(gaps)
+            return sum(abs(g - mean) for g in gaps) / len(gaps) / max(mean, 1)
+        anchor = min(cluster, key=spread) if cluster else None
+    if anchor not in counts:
+        return {"error": "anchor_not_referenced", "anchor": anchor,
+                "candidates": cluster}
+
+    anchor_idx = next(i for i, n in enumerate(names) if n == anchor)
+    anchor_offs = refs[anchor_idx]
+    gaps = [b - a for a, b in zip(anchor_offs, anchor_offs[1:])]
+
+    # Which (relative offset, name) pairs recur across records?
+    lookup = {}
+    for i, offs in refs.items():
+        for o in offs:
+            lookup.setdefault(o, i)
+    seen = Counter()
+    n_samples = 0
+    for a, b in list(zip(anchor_offs, anchor_offs[1:]))[:samples]:
+        if not (0 < b - a < 65536):
+            continue
+        n_samples += 1
+        for o in range(a, b):
+            i = lookup.get(o)
+            if i is not None and names[i] != "None":
+                seen[(o - a, names[i])] += 1
+    if not n_samples:
+        return {"error": "no_usable_records", "anchor": anchor}
+
+    template = [{"rel": rel, "name": nm, "share": round(c / n_samples, 3)}
+                for (rel, nm), c in seen.items() if c / n_samples >= min_share]
+    template.sort(key=lambda x: x["rel"])
+    stable = [t for t in template if t["share"] >= 0.95]
+
+    med_gap = sorted(gaps)[len(gaps) // 2] if gaps else None
+    return {
+        "path": path, "uasset": uasset,
+        "uexp_size": len(data), "name_count": len(names),
+        "record_count": modal_count,
+        "names_at_that_count": cluster,
+        "anchor": anchor,
+        "samples_used": n_samples,
+        "record_size_median": med_gap,
+        "record_size_min": min(gaps) if gaps else None,
+        "record_size_max": max(gaps) if gaps else None,
+        "fixed_length": bool(gaps) and min(gaps) == max(gaps),
+        "template": template[:120],
+        "stable_fields": [(t["rel"], t["name"]) for t in stable][:120],
+        "verdict": (
+            f"{modal_count} records, {len(cluster)} names appearing exactly "
+            f"that many times. Anchored on {anchor!r}: "
+            f"{len(stable)} fields sit at the SAME offset in every sampled "
+            f"record, out of {len(template)} that recur in most. Those are "
+            "the record layout; everything else at these offsets is noise "
+            "from an 88-entry name table."
+            if stable else
+            f"{modal_count} records but NO field recurs at a stable offset. "
+            "Records are variable-length, so the layout has to be walked "
+            "rather than indexed."
+        ),
+    }

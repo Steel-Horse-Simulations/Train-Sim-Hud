@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.39.2**
+**App version at end of session: 7.40.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -25,7 +25,29 @@ work and should be read before touching any of it.
 
 ---
 
-## What changed in v7.39.2 - it IS tagged; the parser had the wrong field width
+## What changed in v7.40.0 - the name table is too small to parse against
+
+Records still do not parse at either field width, and the probe says why:
+**29% of every byte offset in the 8.6 MB file passes the "valid FName" test**
+(2,539,329 hits). With 88 names, any int32 in 0..87 followed by a zero looks
+like a name reference. That invalidates the hex windows AND the previous
+turn's "it IS tagged" conclusion - chain_break's one tag was
+SignalRef/EnumProperty with size 27, and an EnumProperty value is 8 bytes, so
+it was noise.
+
+What survives is the count structure: sixteen names referenced EXACTLY 12,207
+times each. That is the record count (mean 708 bytes/record). StopPoint and
+TrackSectionEntry are 5,198 each - identical.
+
+`record_template()` / `/api/paks/template` / **Recover record template** uses
+that: anchor on a once-per-record name, and keep only what recurs at the same
+relative offset across records. Noise does not recur; real fields do.
+Validated on the fixture (recovers true field order) and refuses random bytes.
+
+**Next: Recover record template on the real Leven layer.** Expect record_count
+12,207; stable_fields is then the layout to build a parser from.
+
+## What changed in v7.39.2 - field width made a parameter
 
 The probe on the real Leven layer settles it: property TYPE names ARE
 referenced (EnumProperty 61,036, IntProperty/NameProperty/StructProperty/

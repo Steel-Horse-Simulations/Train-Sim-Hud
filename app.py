@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.39.2"
+APP_VERSION = "7.40.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1478,6 +1478,35 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/template", methods=["POST"])
+def paks_template():
+    """Recovers a DataTrack's record layout by REPETITION rather than by
+    parsing. Body: {"asset_name": "...", "anchor": "optional name"}
+
+    Needed because the Leven layer's name table has only 88 entries, so 29%
+    of all byte offsets read as a valid FName reference and both the tag
+    walker and the hex windows were swamped by coincidences. Sixteen names
+    being referenced exactly 12,207 times each is not a coincidence - that
+    is the record count. Anchoring on a once-per-record name and asking what
+    recurs at the same relative offset across records cancels the noise."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    return jsonify(pak_tools.record_template(path, anchor=body.get("anchor")))
 
 
 @app.route("/api/paks/probe", methods=["POST"])
