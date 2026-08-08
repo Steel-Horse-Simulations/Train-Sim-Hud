@@ -82,6 +82,7 @@
         <button class="btn primary" onclick="readRecords()">Read records (tagged properties)</button>
         <button class="btn primary" onclick="probeFormat()">Probe format</button>
         <button class="btn primary" onclick="recordTemplate()">Recover record template</button>
+        <button class="btn primary" onclick="decodeFixed()">Decode fixed records</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -357,6 +358,39 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function decodeFixed() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Decoding at a fixed stride and checking against the whole-file scan…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/decode_fixed',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`
+      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');return;}
+    const good=d.confirmed;
+    status.innerHTML=`<span style="color:var(--status-${good?'green':'amber'});">`
+      +`${d.record_starts} records, stride ${d.stride}</span>`
+      +` <span class="small dim">· anchor ${esc(d.anchor)} · type at +${d.type_field_offset}`
+      +` · ${Math.round(d.coverage*100)}% typed</span>`;
+    status.style.color='';
+    const pair=(o)=>Object.entries(o||{}).map(([k,v])=>`${esc(k)} <span class="dim">${v}</span>`).join(' · ');
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);
+        border-left:3px solid var(--status-${good?'green':'amber'});">${esc(d.verdict)}</p>
+      <p class="small" style="margin:6px 0;">Decoded at +${d.type_field_offset}: ${pair(d.type_distribution)}</p>
+      <p class="small" style="margin:6px 0;">Whole-file upper bound: ${pair(d.reference_distribution)}</p>
+      <p class="small dim" style="margin:6px 0;">Candidate time fields (offset, share):
+        ${(d.time_field_offsets||[]).map(t=>`+${t[0]} <span class="dim">${Math.round(t[1]*100)}%</span>`).join(' · ')}</p>
+      <p class="small dim" style="margin:8px 0 4px;">First records:</p>
+      <div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">
+      ${(d.sample_records||[]).map(r=>`<div>${Object.entries(r).map(([k,v])=>
+        `<span class="dim">${esc(k)}</span> <span style="color:var(--accent-bright);">${esc(String(v))}</span>`).join('  ')}</div>`).join('')}
+      </div>`;
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }
 
 async function recordTemplate() {

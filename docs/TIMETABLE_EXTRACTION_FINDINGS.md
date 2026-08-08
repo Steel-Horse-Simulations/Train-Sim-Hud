@@ -656,3 +656,76 @@ trusting a signal that had not been checked for how often it fires by chance.
 The FName test firing on 29% of all offsets should have been measured BEFORE
 anything was built on top of it - `total_fname_references` was in the probe
 output the whole time and says exactly that.
+
+## FIXED-LENGTH RECORDS - 12,207 x 707 bytes (v7.41.0)
+
+`record_template()` on the real Leven Branch layer:
+
+```
+record_count        12207
+record_size_min     707
+record_size_median  707
+record_size_max     958
+anchor              Class   (one of the 16 names at exactly 12,207)
+stable_fields       57 fields at 100% share
+```
+
+`12207 x 707 = 8,630,349` against a file of `8,638,791` - the entire .uexp is
+records plus about 8 KB. `min == median` says the stride is 707 with a few
+larger gaps, not a variable-length stream.
+
+**The type is a `Stream` and the records are still fixed length.** Section 8's
+inference from the type name was wrong in both directions.
+
+### Why "57 fields at 100%" is NOT yet proof
+
+Once records are fixed length, "recurs at the same offset in every record" is
+true of any constant byte pattern as well as of a real field. The repetition
+test that beat the noise for variable-length records stops discriminating
+here, and only 24 of 12,207 records were sampled. The documented 2828-byte
+stride failure is the same trap: alignment held for twenty records, then
+drifted.
+
+So the template's `stable_fields` are candidates, not findings.
+
+### `decode_fixed_records()` - the check that does discriminate
+
+`/api/paks/decode_fixed`, button **Decode fixed records**.
+
+Read the type enum at one fixed offset inside every record, then compare the
+result against a whole-file scan that assumed NO stride and no record
+structure. Three conditions must hold:
+
+  - **coverage** - nearly every record carries a type at that single offset.
+    A wrong stride cannot produce that.
+  - **within the upper bound** - no decoded count exceeds the whole-file
+    count. The whole-file scan counts every genuine occurrence PLUS every
+    coincidence, so it is a ceiling, never a target.
+  - **rank order agrees** with the whole-file scan.
+
+Requiring the decoded counts to EQUAL the whole-file counts was tried first
+and is wrong: on a fixture whose decode matched ground truth exactly, the
+whole-file reference read 284 where the truth was 263, and a correct answer
+was reported as unconfirmed.
+
+Validated on a fixed-stride fixture built with realistic payload bytes
+(floats, tick counts, GUIDs - NOT small ints, which would make every offset
+read as a valid FName): recovers the stride, the type offset and the time
+offset exactly, reproduces the ground-truth distribution to the record, and
+**refuses a stride one byte wrong**.
+
+Time-field candidates must VARY across records - an all-zero word scored 100%
+coverage and decoded to 00:00:00 in every record.
+
+### What to expect on the real file
+
+`Decode fixed records` on the Leven layer should report stride 707 and a type
+offset where the distribution lands at or below 5,198 StopPoint / 5,198
+TrackSectionEntry / 908 ReversePoint / 36 MultiOccupancy / 27 GoVia / 4
+ActionPoint. If `confirmed` comes back true, the record layout is settled and
+the remaining work is reading the time and distance fields at their offsets
+and writing journeys into `timetables.db`.
+
+If it comes back false, the 707 stride is coincidence and the template
+offsets go in the bin - which is exactly what this endpoint exists to find
+out before anything is built on them.

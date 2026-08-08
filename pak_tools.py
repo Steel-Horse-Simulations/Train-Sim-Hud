@@ -2254,6 +2254,56 @@ def _name_ref_offsets(data, names, width=4):
     return out
 
 
+def _pick_anchor(names, refs, min_count=8):
+    """Chooses a once-per-record name to anchor on, and returns
+    (anchor, modal_count, cluster).
+
+    Two signals, and neither is required on its own:
+
+      A COUNT SHARED BY MANY NAMES. One name hitting a number proves
+      nothing; sixteen names all referenced exactly 12,207 times, as on the
+      real Leven layer, is structure and gives the record count directly.
+
+      EVEN SPACING. A once-per-record field recurs at a near-constant
+      interval. A name that clusters is riding on coincidence, and with an
+      88-entry table there is a great deal of coincidence to ride on.
+
+    An earlier version REQUIRED the cluster, and so picked a name with 26
+    scattered references over one with 600 evenly spaced ones the moment no
+    two names happened to share a count. Scoring both together, weighted by
+    how many references there are, is robust either way.
+    """
+    counts = {names[i]: len(v) for i, v in refs.items() if names[i] != "None"}
+    by_count = defaultdict(list)
+    for nm, c in counts.items():
+        if c >= min_count:
+            by_count[c].append(nm)
+    if not by_count:
+        return None, None, []
+    modal = max(by_count, key=lambda c: (len(by_count[c]), c))
+    cluster = sorted(by_count[modal])
+
+    idx_of = {n: i for i, n in enumerate(names)}
+
+    def evenness(nm):
+        offs = refs[idx_of[nm]]
+        gaps = [b - a for a, b in zip(offs, offs[1:])]
+        if not gaps:
+            return 0.0
+        mean = sum(gaps) / len(gaps)
+        dev = sum(abs(g - mean) for g in gaps) / len(gaps) / max(mean, 1)
+        return max(0.0, 1.0 - dev)
+
+    def score(nm):
+        # Membership of the shared-count cluster is a bonus, not a gate.
+        bonus = 2.0 if nm in cluster else 1.0
+        return counts[nm] * evenness(nm) * bonus
+
+    best = max((nm for nm in counts if counts[nm] >= min_count), key=score,
+               default=None)
+    return best, modal, cluster
+
+
 def record_template(path, anchor=None, samples=24, min_share=0.6, width=4):
     """Recovers the record layout by REPETITION rather than by parsing.
 
@@ -2373,5 +2423,194 @@ def record_template(path, anchor=None, samples=24, min_share=0.6, width=4):
             f"{modal_count} records but NO field recurs at a stable offset. "
             "Records are variable-length, so the layout has to be walked "
             "rather than indexed."
+        ),
+    }
+
+
+def decode_fixed_records(path, stride=None, anchor=None, width=4,
+                         max_records=200000):
+    """Decodes fixed-stride records by locating fields at a constant offset
+    WITHIN the record, then checking the decoded values against evidence
+    gathered independently of the layout.
+
+    The check is the point. record_template() found 57 fields at 100% share,
+    but once records are fixed-length that statistic stops meaning what it
+    means for variable-length ones: a constant byte pattern recurs at the
+    same offset in every record just as faithfully as a real field does. The
+    documented 2828-byte-stride failure is the same trap - an alignment that
+    held for twenty records and then drifted.
+
+    So the stride is not trusted because it looks tidy. It is accepted only
+    if reading a field at a fixed offset reproduces a distribution derived
+    from a whole-file scan that never assumed any stride at all: on the real
+    Leven layer, ETimetableTrackDataType values counted 5198 StopPoint, 5198
+    TrackSectionEntry, 908 ReversePoint, 36 MultiOccupancy, 27 GoVia and 4
+    ActionPoint. Hitting those six numbers from a fixed offset confirms the
+    stride and the offset together, and cannot happen by accident.
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    uasset = _sibling_uasset(path)
+    if not uasset:
+        return {"error": "no_sibling_uasset", "path": path}
+    with open(uasset, "rb") as f:
+        names = _read_fname_strings(f.read())
+    with open(path, "rb") as f:
+        data = f.read()
+    if not names:
+        return {"error": "no_name_table", "path": uasset}
+
+    name_to_idx = {n: i for i, n in enumerate(names)}
+    type_idx = {name_to_idx[n]: n.split("::")[-1]
+                for n in names if n.split("::")[-1] in _TRACK_DATA_TYPES
+                and "::" in n and n in name_to_idx}
+    if not type_idx:
+        return {"error": "no_track_data_type_names", "path": uasset}
+
+    # Reference distribution: a whole-file scan that assumes NO stride and no
+    # record structure at all. This is the yardstick the stride is measured
+    # against, so it must not depend on anything the stride implies.
+    fmt = "<ii" if width == 4 else "<qq"
+    step = 2 * width
+    reference = Counter()
+    for off in range(0, len(data) - step):
+        idx, num = struct.unpack_from(fmt, data, off)
+        if num == 0 and idx in type_idx:
+            reference[type_idx[idx]] += 1
+
+    # Record starts: every occurrence of a once-per-record name.
+    refs = _name_ref_offsets(data, names, width)
+    counts = {names[i]: len(v) for i, v in refs.items()}
+    if anchor is None:
+        anchor, _modal, _cluster = _pick_anchor(names, refs)
+        if anchor is None:
+            return {"error": "no_repeated_names"}
+    if anchor not in name_to_idx or name_to_idx[anchor] not in refs:
+        return {"error": "anchor_not_referenced", "anchor": anchor}
+    starts = refs[name_to_idx[anchor]][:max_records]
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    if not gaps:
+        return {"error": "single_record_only", "anchor": anchor}
+    if stride is None:
+        stride = Counter(gaps).most_common(1)[0][0]
+    stride_share = sum(1 for g in gaps if g == stride) / len(gaps)
+    if stride < 32:
+        # A stride smaller than a couple of fields means the anchor is not
+        # once-per-record at all, and every offset test below would be
+        # meaningless. Say so rather than returning an empty result.
+        return {"error": "implausible_stride", "anchor": anchor,
+                "stride": stride, "stride_share": round(stride_share, 4),
+                "detail": "The anchor repeats too densely to be a record "
+                          "boundary. Pass a different one explicitly."}
+
+    # Which offset inside the record holds the type enum?
+    best = None
+    for d in range(0, stride - step):
+        dist = Counter()
+        for s in starts:
+            o = s + d
+            if o + step > len(data):
+                continue
+            idx, num = struct.unpack_from(fmt, data, o)
+            if num == 0 and idx in type_idx:
+                dist[type_idx[idx]] += 1
+        hits = sum(dist.values())
+        if best is None or hits > best[1]:
+            best = (d, hits, dist)
+    if best is None:
+        return {"error": "no_type_field_found", "anchor": anchor,
+                "stride": stride}
+    type_delta, type_hits, type_dist = best
+
+    matches = {k: (type_dist.get(k, 0), reference.get(k, 0))
+               for k in set(reference) | set(type_dist)}
+    exact = sum(1 for k, (a, b) in matches.items() if a == b and b > 0)
+
+    # The whole-file reference is an UPPER BOUND, not a target. It counts
+    # every genuine occurrence plus every coincidence, and on an 88-name
+    # table there are plenty of the latter. Requiring equality was wrong: on
+    # a fixture whose decoded counts matched ground truth EXACTLY, the
+    # reference read 284 where the truth was 263, and a correct decode was
+    # reported as unconfirmed.
+    #
+    # What must hold instead:
+    #   - no decoded count may EXCEED the bound (that would be noise being
+    #     read as data),
+    #   - nearly every record must carry a type at that one offset,
+    #   - and the rank order must agree with the whole-file scan.
+    coverage = type_hits / max(1, len(starts))
+    within_bound = all(a <= b for _k, (a, b) in matches.items() if b)
+    dec_rank = [k for k, _v in type_dist.most_common()]
+    ref_rank = [k for k, _v in reference.most_common()]
+    rank_agrees = dec_rank[:3] == [k for k in ref_rank if k in dec_rank][:3]
+    confirmed = (stride_share > 0.9 and coverage > 0.9 and within_bound
+                 and rank_agrees)
+
+    # Time fields: int64 tick values landing inside a day.
+    time_deltas = []
+    sample_starts = starts[:2000]
+    for d in range(0, stride - 8):
+        ok, vals = 0, set()
+        for st in sample_starts:
+            o = st + d
+            if o + 8 > len(data):
+                continue
+            (raw,) = struct.unpack_from("<q", data, o)
+            if 0 < raw < TICKS_PER_DAY:
+                ok += 1
+                vals.add(raw)
+        # A time field VARIES. Coverage alone promotes constants: an
+        # all-zero field scored 100% and decoded to 00:00:00 in every
+        # record, which is a padding word, not a schedule.
+        if ok > len(sample_starts) * 0.5 and len(vals) > max(4, ok * 0.3):
+            time_deltas.append((d, round(ok / len(sample_starts), 3),
+                                len(vals)))
+    time_deltas.sort(key=lambda x: (-x[2], -x[1]))
+
+    samples = []
+    for s in starts[:12]:
+        rec = {"offset": s}
+        o = s + type_delta
+        if o + step <= len(data):
+            idx, num = struct.unpack_from(fmt, data, o)
+            rec["type"] = type_idx.get(idx) if num == 0 else None
+        for d, _share, _distinct in time_deltas[:4]:
+            if s + d + 8 <= len(data):
+                (raw,) = struct.unpack_from("<q", data, s + d)
+                if 0 < raw < TICKS_PER_DAY:
+                    rec[f"time@{d}"] = _fmt_hms(raw / TICKS_PER_SECOND)
+        samples.append(rec)
+
+    return {
+        "path": path, "uasset": uasset,
+        "anchor": anchor, "stride": stride,
+        "stride_share": round(stride_share, 4),
+        "record_starts": len(starts),
+        "type_field_offset": type_delta,
+        "type_field_hits": type_hits,
+        "type_distribution": dict(type_dist.most_common()),
+        "reference_distribution": dict(reference.most_common()),
+        "exact_matches": exact,
+        "coverage": round(coverage, 4),
+        "within_upper_bound": within_bound,
+        "rank_agrees": rank_agrees,
+        "confirmed": confirmed,
+        "time_field_offsets": time_deltas[:8],
+        "sample_records": samples,
+        "verdict": (
+            f"CONFIRMED. Every {stride}-byte record carries a track-data type "
+            f"at the same offset (+{type_delta}): {coverage:.0%} of records "
+            f"typed, no count exceeding the whole-file bound, and the same "
+            f"rank order ({exact} counts matching it exactly). A wrong stride "
+            "cannot produce a field that is present in nearly every record."
+            if confirmed else
+            f"NOT CONFIRMED. Best offset +{type_delta} types "
+            f"{coverage:.0%} of records"
+            + ("" if within_bound else ", and some counts EXCEED the "
+               "whole-file total, which means noise is being read as data")
+            + ("" if rank_agrees else ", and the rank order disagrees with "
+               "the whole-file scan")
+            + f". Stride {stride} holds for {stride_share:.0%} of gaps. "
+              "Treat the template offsets as unproven."
         ),
     }

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.40.0**
+**App version at end of session: 7.41.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,32 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.41.0 - FIXED-LENGTH records, 12,207 x 707 bytes
+
+`record_template()` on the real Leven layer: 12,207 records, min AND median
+gap 707 bytes, 57 fields at 100% share, anchored on `Class`. 12,207 x 707 =
+8,630,349 against a file of 8,638,791 - the whole .uexp is records plus ~8 KB.
+So the records are FIXED length despite the type being called a "Stream".
+
+But 57 fields at 100% is not proof: with fixed-length records, "same offset in
+every record" is equally true of a constant byte pattern, and only 24 of
+12,207 records were sampled. The old 2828-byte stride failure held alignment
+for twenty records before drifting.
+
+`decode_fixed_records()` / `/api/paks/decode_fixed` / **Decode fixed records**
+is the check that does discriminate: read the type at one fixed offset in
+every record and test the result against a whole-file scan that assumed no
+stride at all - coverage near-total, no count exceeding the whole-file bound,
+rank order agreeing. Validated on a fixed-stride fixture: recovers stride,
+type offset and time offset exactly, matches ground truth to the record, and
+refuses a stride one byte wrong.
+
+**Next: Decode fixed records on the real Leven layer.** Expect stride 707 and
+a type distribution at or below 5198/5198/908/36/27/4. If confirmed, the
+layout is settled and the rest is reading times and writing to timetables.db.
+If not, the 707 stride is coincidence - which is what this exists to find out
+before anything gets built on it.
 
 ## What changed in v7.40.0 - the name table is too small to parse against
 

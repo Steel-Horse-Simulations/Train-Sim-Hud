@@ -55,6 +55,10 @@ NAMES = [
     "StructProperty",
     "Time",
     "Timespan",
+    "Package",
+    "PropertyReference",
+    "ServiceDataTracks",
+    "SignalRef",
 ] + [f"P2K{n}" for n in range(50, 60)]   # NetworkRibbonLocation values, as in the real table
 IDX = {n: i for i, n in enumerate(NAMES)}
 
@@ -285,3 +289,69 @@ def main_wide(out="/tmp/synth_wide"):
     print(f"ground truth: {len(truth)} records, "
           f"{sum(1 for r in truth if r['type'] == 'StopPoint')} StopPoints")
     return base, truth
+
+
+def build_uexp_fixed(path, rng, stride=707, n_records=600):
+    """FIXED-stride records, like the real Leven layer (707 bytes, 12,207 of
+    them). Padding is random rather than zeros, so the file is full of values
+    that read as valid FName references - which is the actual difficulty:
+    with an 88-name table, 29% of all offsets in the real file pass that test.
+
+    The type distribution is deliberately lopsided (many StopPoint and
+    TrackSectionEntry, a handful of ActionPoint) to match the real counts, so
+    that reproducing it from a fixed offset is a real test and not a
+    coin-flip.
+    """
+    TYPE_AT, TIME_AT, ANCHOR_AT = 120, 300, 0   # five anchors at 0,8,16,24,32
+    weights = [("StopPoint", 42), ("TrackSectionEntry", 42), ("ReversePoint", 8),
+               ("MultiOccupancy", 4), ("GoVia", 3), ("ActionPoint", 1)]
+    pool = [t for t, w in weights for _ in range(w)]
+    buf = bytearray()
+    truth = []
+    t = 5 * 3600
+    for i in range(n_records):
+        # Padding must look like real record data - floats, tick counts,
+        # GUIDs - NOT small ints. An earlier version filled records with
+        # ints in 1..90, which on an 88-name table meant every offset read
+        # as a valid FName reference and the whole-file reference counts
+        # came out at double the truth. Real payload bytes rarely produce a
+        # small-int-followed-by-zero pair, which is why on the actual Leven
+        # layer sixteen names land on exactly 12,207.
+        rec = bytearray()
+        while len(rec) < stride:
+            r = rng.random()
+            if r < 0.35:
+                rec += struct.pack("<i", 0)
+            elif r < 0.75:
+                rec += struct.pack("<f", rng.uniform(-4e4, 4e4))
+            else:
+                rec += struct.pack("<i", rng.randint(1 << 20, (1 << 31) - 1))
+        rec = bytearray(rec[:stride])
+        kind = rng.choice(pool)
+        # The real layer has SIXTEEN names referenced exactly once per
+        # record, which is how the record count was found at all. One
+        # anchor is not a faithful fixture.
+        for k, nm in enumerate(("Class", "Package", "Guid", "ServiceDataTracks",
+                                "PropertyReference")):
+            rec[ANCHOR_AT + k * 8:ANCHOR_AT + k * 8 + 8] = _fname(nm)
+        rec[TYPE_AT:TYPE_AT + 8] = _fname(f"ETimetableTrackDataType::{kind}")
+        t += rng.randint(20, 200)
+        rec[TIME_AT:TIME_AT + 8] = struct.pack("<q", int(t * TICKS))
+        buf += rec
+        truth.append(kind)
+    with open(path, "wb") as f:
+        f.write(bytes(buf))
+    return truth, stride, TYPE_AT, TIME_AT
+
+
+def main_fixed(out="/tmp/synth_fixed"):
+    os.makedirs(out, exist_ok=True)
+    base = os.path.join(out, "FCE_Test_Layer_DataTrack")
+    rng = random.Random(1234)
+    build_uasset(base + ".uasset")
+    truth, stride, type_at, time_at = build_uexp_fixed(base + ".uexp", rng)
+    from collections import Counter
+    print(f"built {base}.uexp - {len(truth)} fixed {stride}-byte records")
+    print(f"  type at +{type_at}, time at +{time_at}")
+    print(f"  true distribution: {dict(Counter(truth).most_common())}")
+    return base, truth, stride, type_at, time_at

@@ -200,9 +200,43 @@ def run_template_recovery():
     return ok
 
 
+def run_fixed_stride():
+    """Fixed-stride decoding, as the real Leven layer appears to be (707-byte
+    records, 12,207 of them). The decoded type distribution must match ground
+    truth, and a WRONG stride must be rejected - the documented 2828-byte
+    failure held alignment for twenty records before drifting, so 'it looked
+    right at first' is not evidence."""
+    from collections import Counter
+    print("\n--- fixed-stride records ---")
+    base, truth, stride, type_at, time_at = T.main_fixed("/tmp/eval_fixed")
+    r = pak_tools.decode_fixed_records(base + ".uexp")
+    ok = True
+    if "error" in r:
+        print("  FAIL:", r["error"]); return False
+    print(f"  anchor {r['anchor']}  stride {r['stride']}  type offset +{r['type_field_offset']}")
+    print(f"  coverage {r['coverage']}  confirmed {r['confirmed']}")
+    if r["stride"] != stride:
+        print(f"  FAIL: stride {r['stride']} != {stride}"); ok = False
+    if r["type_field_offset"] != type_at:
+        print(f"  FAIL: type offset {r['type_field_offset']} != {type_at}"); ok = False
+    if r["type_distribution"] != dict(Counter(truth).most_common()):
+        print("  FAIL: distribution does not match ground truth"); ok = False
+    else:
+        print("  decoded distribution matches ground truth exactly")
+    if not r["confirmed"]:
+        print("  FAIL: refused a correct decode"); ok = False
+
+    # A wrong stride must not be confirmed.
+    bad = pak_tools.decode_fixed_records(base + ".uexp", stride=stride + 1)
+    print(f"  wrong stride ({stride + 1}): confirmed={bad.get('confirmed')}")
+    if bad.get("confirmed"):
+        print("  FAIL: confirmed a wrong stride"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
-               run_template_recovery()]
+               run_template_recovery(), run_fixed_stride()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

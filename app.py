@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.40.0"
+APP_VERSION = "7.41.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1478,6 +1478,36 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/decode_fixed", methods=["POST"])
+def paks_decode_fixed():
+    """Decodes fixed-stride records and CHECKS the result against a whole-file
+    scan that assumed no stride at all.
+    Body: {"asset_name": "...", "stride": optional, "anchor": optional}
+
+    The check is the point. Once records are fixed length, "recurs at the
+    same offset in every record" is true of any constant byte pattern, so
+    the template alone proves nothing - and the documented 2828-byte-stride
+    failure held alignment for twenty records before drifting."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    stride = body.get("stride")
+    return jsonify(pak_tools.decode_fixed_records(
+        path, stride=int(stride) if stride else None, anchor=body.get("anchor")))
 
 
 @app.route("/api/paks/template", methods=["POST"])
