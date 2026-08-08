@@ -172,3 +172,53 @@ def main(out="/tmp/synth_tagged", guid_byte=True):
 
 if __name__ == "__main__":
     main()
+
+
+def build_uexp_unversioned(path, rng):
+    """UE4.25+ UNVERSIONED property serialisation: no property tags at all.
+
+    Fields are identified positionally against the class schema, so the
+    property NAMES and TYPE names never appear in the stream. Enum values
+    still do, because an EnumProperty value is an FName either way. That
+    asymmetry is exactly what probe_name_references() keys off, so this
+    fixture exists to prove the probe can tell the two modes apart rather
+    than only recognising the one it was written for.
+    """
+    buf = bytearray()
+    truth = []
+    for service in range(8):
+        t = (6 + service) * 3600
+        n_stops = rng.randint(3, 9)
+        for i in range(n_stops):
+            for _ in range(rng.randint(2, 5)):
+                t += rng.randint(20, 90)
+                kind = rng.choice(["GoVia", "ActionPoint", "TrackSectionEntry"])
+                buf += struct.pack("<H", 0x0007)          # unversioned header
+                buf += _fname(f"ETimetableTrackDataType::{kind}")
+                buf += struct.pack("<f", rng.uniform(0, 40000))
+                buf += _fname("EDirectionOfTravel::Forwards")
+                buf += struct.pack("<q", int(t * TICKS))
+                truth.append({"type": kind})
+            buf += struct.pack("<H", 0x001F)
+            buf += _fname("ETimetableTrackDataType::StopPoint")
+            buf += struct.pack("<i", rng.randint(0, 200))
+            buf += struct.pack("<f", rng.uniform(0, 40000))
+            buf += _fname(f"P2K{50 + i}")
+            t += rng.randint(60, 200)
+            buf += struct.pack("<q", int(t * TICKS))
+            truth.append({"type": "StopPoint"})
+    with open(path, "wb") as f:
+        f.write(bytes(buf))
+    return truth
+
+
+def main_unversioned(out="/tmp/synth_unversioned"):
+    os.makedirs(out, exist_ok=True)
+    base = os.path.join(out, "FCE_Test_Layer_DataTrack")
+    rng = random.Random(4242)
+    build_uasset(base + ".uasset")
+    truth = build_uexp_unversioned(base + ".uexp", rng)
+    print(f"built {base}.uexp ({os.path.getsize(base + '.uexp')} bytes) - UNVERSIONED")
+    print(f"ground truth: {len(truth)} records, "
+          f"{sum(1 for r in truth if r['type'] == 'StopPoint')} StopPoints")
+    return base, truth

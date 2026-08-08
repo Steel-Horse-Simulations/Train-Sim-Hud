@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.39.0**
+**App version at end of session: 7.39.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -25,7 +25,28 @@ work and should be read before touching any of it.
 
 ---
 
-## What changed in v7.39.0 - the format is TAGGED PROPERTIES
+## What changed in v7.39.1 - the tagged-property conclusion was ALSO wrong
+
+`parse_track_records()` on the real Leven Branch layer found zero tag chains -
+not one pair of consecutive valid tags in 8.6 MB. So v7.39.0's conclusion was
+wrong too, and for the same reason section 8 was: reasoning from an indirect
+signal rather than measuring. A name being present in the name table does not
+mean the record data references it.
+
+Added `probe_name_references()` / `/api/paks/probe` / **Probe format**, which
+counts how often each name is actually referenced as an FName in the .uexp.
+That separates tagged from unversioned (UE4.25+) serialisation directly:
+unversioned writes no tags, so property TYPE names are referenced ZERO times
+while enum VALUE names still appear. Validated against fixtures built both
+ways. A failed parse now attaches its own probe.
+
+**Next: Probe format on the real Leven Branch layer.** If property type names
+come back with counts, the tag layout just differs from the UE4 one assumed
+here. If they come back at zero with enum values present, it is unversioned
+and tags are never coming - at which point the statistical path
+(/api/paks/stops) is the fallback, and it already segments services usefully.
+
+## What changed in v7.39.0 - what the name table suggested
 
 The name table from the second real run settles the format question, and
 section 8 of the findings doc was wrong. The Leven layer's 88 names include

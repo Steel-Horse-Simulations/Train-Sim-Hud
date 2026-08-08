@@ -81,7 +81,38 @@ def run_opaque_control():
     return True
 
 
+def run_probe():
+    """The probe must tell the two serialisation modes apart, not merely
+    recognise the one it was written for."""
+    print("\n--- probe: distinguishing tagged from unversioned ---")
+    ok = True
+    base, _ = T.main("/tmp/probe_t")
+    a = pak_tools.probe_name_references(base + ".uexp")
+    print("  tagged fixture      :", a["verdict"][:64])
+    if not a["property_type_names_referenced"] or a["longest_tag_chain"] < 2:
+        print("  FAIL: did not see tags in a tagged asset"); ok = False
+
+    base, _ = T.main_unversioned("/tmp/probe_u")
+    b = pak_tools.probe_name_references(base + ".uexp")
+    print("  unversioned fixture :", b["verdict"][:64])
+    if b["property_type_names_referenced"]:
+        print("  FAIL: saw property types where none were written"); ok = False
+    if not b["enum_values_referenced"]:
+        print("  FAIL: missed the enum values, which ARE present"); ok = False
+    if "UNVERSIONED" not in b["verdict"]:
+        print("  FAIL: did not identify unversioned serialisation"); ok = False
+
+    # and the failing parse must carry the probe with it
+    r = pak_tools.parse_track_records(base + ".uexp")
+    if "probe" not in r:
+        print("  FAIL: parse failure did not attach a probe"); ok = False
+    else:
+        print("  parse failure attaches its own probe - correct")
+    return ok
+
+
 if __name__ == "__main__":
-    results = [run_with_guid(), run_without_guid(), run_opaque_control()]
+    results = [run_with_guid(), run_without_guid(), run_opaque_control(),
+               run_probe()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

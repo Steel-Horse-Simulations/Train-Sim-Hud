@@ -1956,10 +1956,14 @@ def parse_track_records(path, max_records=4000, min_props=2):
     guid_byte, records = best
 
     if not records:
+        # Run the probe automatically rather than making someone go and ask
+        # the next question by hand. "No tag chains" on its own says nothing
+        # about WHY, and the difference between "wrong tag layout" and "no
+        # tags were ever written" decides what to do next.
         return {"error": "no_records_parsed", "path": path,
                 "name_count": len(names),
-                "detail": "No readable tag chains. This asset may genuinely "
-                          "be opaque binary - fall back to /api/paks/stops."}
+                "detail": "No readable tag chains. The probe below says why.",
+                "probe": probe_name_references(path)}
 
     field_use = Counter()
     types_seen = Counter()
@@ -2010,4 +2014,123 @@ def parse_track_records(path, max_records=4000, min_props=2):
             f"{len(out)} records read, but none carry a DataType of StopPoint. "
             "Check field_usage for what these records actually are."
         ),
+    }
+
+
+def probe_name_references(path, top=40, single_tag_sample=8):
+    """Counts how often each name in the table is actually REFERENCED as an
+    FName inside the .uexp, and how far a property-tag chain gets.
+
+    This exists because parse_track_records() found zero tag chains in the
+    real Leven Branch layer, and the honest response to that is to measure
+    rather than guess again. The counts settle which serialisation is in use,
+    because the two modes differ in a way that is directly observable:
+
+      TAGGED properties   - every record names its own fields, so the
+                            PROPERTY NAMES (DataType, Distance) appear as
+                            FName references roughly once per record, and so
+                            do the TYPE names (EnumProperty, FloatProperty).
+
+      UNVERSIONED properties (UE4.25+ cooked default when DTG enable it) -
+                            no tags are written at all. Fields are identified
+                            positionally against the class schema, so the
+                            property and type names do NOT appear, while enum
+                            VALUE names still do, since an EnumProperty value
+                            is an FName either way.
+
+    So: if `ETimetableTrackDataType::StopPoint` is referenced but `DataType`
+    and `EnumProperty` are not, it is unversioned and there is no point
+    looking for tags.
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    uasset = _sibling_uasset(path)
+    if not uasset:
+        return {"error": "no_sibling_uasset", "path": path}
+    with open(uasset, "rb") as f:
+        names = _read_fname_strings(f.read())
+    with open(path, "rb") as f:
+        data = f.read()
+    if not names:
+        return {"error": "no_name_table", "path": uasset}
+
+    # Count FName references (int32 index + int32 Number) at EVERY byte
+    # offset - a variable-length stream gives no alignment guarantee.
+    counts = Counter()
+    fname_offsets = []
+    n = len(data) - 8
+    for off in range(0, n):
+        idx, num = struct.unpack_from("<ii", data, off)
+        if 0 <= idx < len(names) and num == 0:
+            counts[idx] += 1
+            fname_offsets.append(off)
+
+    def bucket(pred):
+        return sorted(((names[i], c) for i, c in counts.items() if pred(names[i])),
+                      key=lambda x: -x[1])
+
+    prop_types = bucket(lambda s: s.endswith("Property"))
+    enum_values = bucket(lambda s: "::" in s)
+    field_names = bucket(lambda s: s in (
+        "DataType", "Distance", "Direction", "DirectionOfTravel", "Location",
+        "InstructionIndex", "GoViaIndex", "ActionIndices", "Guid",
+        "NetworkRibbonLocation", "Time", "Timespan", "ArrivalTime",
+        "CompletionTime"))
+
+    # How far does a tag chain actually get, and where does it break?
+    # Only attempt a chain where a valid FName actually reads. A tag must
+    # begin with one, so this skips the ~99.9% of offsets that cannot start a
+    # chain - the difference between seconds and many minutes on an 8.6 MB
+    # .uexp, and this is a diagnostic someone is sitting waiting on.
+    best_chain, best_off = 0, None
+    for guid_byte in (True, False):
+        for off in fname_offsets:
+            cur, count = off, 0
+            while count < 64:
+                tag = _read_tag(data, cur, names, guid_byte=guid_byte)
+                if tag == "None" or tag is None:
+                    break
+                count += 1
+                cur = tag["end"]
+            if count > best_chain:
+                best_chain, best_off = count, (off, guid_byte)
+
+    referenced = sum(counts.values())
+    typed = sum(c for _n, c in prop_types)
+    valued = sum(c for _n, c in enum_values)
+    if typed == 0 and valued > 0:
+        verdict = ("UNVERSIONED property serialisation. Enum VALUE names are "
+                   "referenced but no property TYPE names are, which is only "
+                   "possible if no property tags were written. Fields are "
+                   "identified positionally against the class schema, so "
+                   "there is nothing to walk - the schema has to come from "
+                   "the class, or the values have to be located by offset.")
+    elif typed > 0 and best_chain >= 2:
+        verdict = (f"Tagged properties - longest readable chain is "
+                   f"{best_chain} properties. parse_track_records() should "
+                   "work; if it did not, the chain start is being missed.")
+    elif typed > 0:
+        verdict = (f"Property type names ARE referenced ({typed} times) but no "
+                   "chain of 2+ tags reads. The tag layout differs from the "
+                   "UE4 one assumed here - compare the hex below against "
+                   "FPropertyTag for this engine version.")
+    else:
+        verdict = ("Neither property type names nor enum values are "
+                   "referenced. Either the name table did not read, or this "
+                   "is not the asset holding the records.")
+
+    return {
+        "path": path, "uasset": uasset,
+        "uexp_size": len(data),
+        "name_count": len(names),
+        "total_fname_references": referenced,
+        "fname_reference_offsets": len(fname_offsets),
+        "property_type_names_referenced": prop_types[:top],
+        "enum_values_referenced": enum_values[:top],
+        "field_names_referenced": field_names[:top],
+        "most_referenced": [(names[i], c) for i, c in counts.most_common(top)],
+        "longest_tag_chain": best_chain,
+        "longest_chain_at": best_off,
+        "head_hex": data[:256].hex(),
+        "verdict": verdict,
     }

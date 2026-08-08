@@ -80,6 +80,7 @@
         <button class="btn primary" onclick="extractServices()">Extract services</button>
         <button class="btn primary" onclick="findStops()">Find stop points</button>
         <button class="btn primary" onclick="readRecords()">Read records (tagged properties)</button>
+        <button class="btn primary" onclick="probeFormat()">Probe format</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -357,6 +358,35 @@ async function scanAllPaks() {
   }
 }
 
+function renderProbe(d) {
+  const list=(a)=>((a||[]).map(x=>`${esc(x[0])} <span class="dim">${x[1]}</span>`).join(' · ')||'<span class="dim">none</span>');
+  return `<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);
+      border-left:3px solid var(--accent);">${esc(d.verdict)}</p>
+    <p class="small" style="margin:6px 0;">Property TYPE names referenced: ${list(d.property_type_names_referenced)}</p>
+    <p class="small" style="margin:6px 0;">Field names referenced: ${list(d.field_names_referenced)}</p>
+    <p class="small" style="margin:6px 0;">Enum VALUES referenced: ${list(d.enum_values_referenced)}</p>
+    <p class="small dim" style="margin:6px 0;">${d.uexp_size} bytes · ${d.name_count} names ·
+      ${d.total_fname_references} FName references · longest tag chain ${d.longest_tag_chain}</p>
+    <p class="small dim" style="margin:8px 0 4px;">First 256 bytes:</p>
+    <div class="mono" style="font-size:10px;color:var(--text-dim);word-break:break-all;
+      padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">${esc(d.head_hex||'')}</div>`;
+}
+
+async function probeFormat() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Counting FName references…'; status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/probe',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">format probe complete</span>`;
+    status.style.color=''; out.innerHTML=renderProbe(d);
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
 async function readRecords() {
   const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
   const asset=document.getElementById('pak-asset').value.trim();
@@ -368,7 +398,9 @@ async function readRecords() {
       body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
     lastPakResult=d;
     if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`
-      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');return;}
+      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');
+      if(d.probe) out.innerHTML=renderProbe(d.probe);
+      return;}
     status.innerHTML=`<span style="color:var(--status-green);">${d.records_parsed} records, `
       +`${d.stop_points} StopPoint</span> <span class="small dim">·`
       +` name table ${d.name_count} · guid byte ${d.guid_byte}</span>`;

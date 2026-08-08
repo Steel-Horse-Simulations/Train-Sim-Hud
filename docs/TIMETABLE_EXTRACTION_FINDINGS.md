@@ -385,7 +385,13 @@ Note `name_count` is 88 here and section 5 counts 88 station names in the
 index asset. Probably a coincidence - none of these 88 match the station
 shape - but worth confirming rather than assuming.
 
-## THE FORMAT IS TAGGED PROPERTIES - section 8 was wrong (v7.39.0)
+## The format question - TAGGED PROPERTIES was ALSO wrong (v7.39.0 / 7.39.1)
+
+READ THE CORRECTION AT THE END OF THIS SECTION BEFORE ACTING ON IT. The
+tagged-property reading below is what the name table SUGGESTED; the real file
+then parsed zero records, so the suggestion was not the answer.
+
+### What the name table suggested
 
 `names_sample` from the second real run settles it. The Leven Branch layer's
 88-entry name table contains:
@@ -453,3 +459,57 @@ names is the remaining piece, and the index asset
 Run **Read records** on the real Leven Branch layer. `field_usage` and
 `data_types` will show the actual field set - the 60-name cap has been raised,
 so the full table comes back too.
+
+### CORRECTION: the real file has no tag chains at all
+
+`parse_track_records()` on the real Leven Branch layer returned
+`no_records_parsed` - not one chain of two consecutive valid tags anywhere in
+8.6 MB. Two conclusions were wrong in two turns, from the same mistake both
+times: reasoning from an indirect signal instead of measuring the thing
+itself.
+
+  - Section 8 saw "Stream" in the type name and concluded custom binary.
+  - v7.39.0 saw property TYPE names in the name table and concluded tagged
+    properties. But a name being IN the table does not mean it is REFERENCED
+    by the record data - cooked name maps carry names from the class schema
+    regardless.
+
+### The measurement that settles it
+
+`probe_name_references()` / `/api/paks/probe` / **Probe format** on Discovery.
+It counts how often each name is actually referenced as an FName inside the
+`.uexp`, which separates the two modes directly:
+
+| | property TYPE names referenced | enum VALUE names referenced |
+|---|---|---|
+| Tagged properties | yes, ~once per record | yes |
+| Unversioned properties (UE4.25+ cooked) | **no - none at all** | yes |
+
+Under unversioned serialisation no tags are written; fields are identified
+positionally against the class schema. Enum values still appear because an
+EnumProperty value is an FName either way. So if
+`ETimetableTrackDataType::StopPoint` is referenced but `DataType` and
+`EnumProperty` are not, it is unversioned and there is no point looking for
+tags at all.
+
+Validated both ways in `tests/`: a tagged fixture and an unversioned fixture
+built from the same records. The probe identifies each correctly, and a failed
+`parse_track_records()` now carries its own probe so the "why" arrives with
+the "no".
+
+### What to run next
+
+**Probe format** on the real Leven Branch layer. The answer decides the route:
+
+  - **property type names referenced ~once per record** - it IS tagged and the
+    tag layout differs from the UE4 one assumed here. Compare `head_hex`
+    against FPropertyTag for this engine version.
+  - **none referenced, enum values present** - unversioned. Tags are not
+    coming. The schema then has to come from the class, or fields have to be
+    located positionally - and note the statistical path already works well
+    enough to segment services, so the fallback is not nothing.
+
+### Standing lesson
+
+Three format conclusions now, two of them wrong, and both wrong ones came from
+an indirect signal. Measure the file, do not reason about the file.

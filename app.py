@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.39.0"
+APP_VERSION = "7.39.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1478,6 +1478,32 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/probe", methods=["POST"])
+def paks_probe():
+    """Measures which Unreal serialisation an asset actually uses, by counting
+    how often each name is referenced as an FName inside the .uexp.
+
+    Tagged properties reference the property and TYPE names once per record;
+    unversioned properties reference neither, while still referencing enum
+    VALUE names. That asymmetry settles it without guesswork."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    return jsonify(pak_tools.probe_name_references(path))
 
 
 @app.route("/api/paks/records", methods=["POST"])
