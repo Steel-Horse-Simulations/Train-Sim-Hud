@@ -5,8 +5,6 @@
 <title>TSW Hud - Timetables</title>
 <link rel="stylesheet" href="/pages/style.css">
 <script src="/pages/theme.js"></script>
-<script src="/pages/offline-db.js"></script>
-<script src="/pages/sync-client.js"></script>
 <style>
   main { max-width: 900px; margin: 0 auto; }
 
@@ -35,19 +33,6 @@
   .segment-chip.not-playable { opacity: 0.6; }
   .panel-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
-  .sync-banner {
-    margin: 10px 0; border-radius: 9px; padding: 10px 13px; font-size: 12px;
-    border: 1px solid var(--hairline); display: flex; align-items: center; gap: 9px;
-    background: var(--panel-raised); transition: background .2s ease, border-color .2s ease;
-  }
-  .sync-banner .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .sync-banner .dot.online { background: #5fd07a; box-shadow: 0 0 5px #5fd07a; }
-  .sync-banner .dot.offline { background: #e8b74a; box-shadow: 0 0 5px #e8b74a; }
-  .sync-banner.offline { border-color: rgba(232,183,74,0.35); background: rgba(232,183,74,0.07); }
-  .sync-banner .pending-chip {
-    font-size: 10.5px; font-weight: 700; background: #e8b74a; color: #1a1013;
-    padding: 2px 8px; border-radius: 8px; flex-shrink: 0;
-  }
 </style>
 </head>
 <body>
@@ -71,11 +56,6 @@
       </div>
     </div>
 
-    <div class="sync-banner" id="syncBanner">
-      <span class="dot online" id="syncDot"></span>
-      <span class="txt" id="syncTxt">Checking sync status…</span>
-    </div>
-
     <table id="journeyTable">
       <thead>
         <tr><th>Service</th><th>Route</th><th>Stops</th></tr>
@@ -91,15 +71,6 @@
 let results = [];
 let openJourneyId = null;
 
-function filterCached(all, q) {
-  if (!q) return all;
-  const lower = q.toLowerCase();
-  return all.filter(j =>
-    (j.current_service_name || '').toLowerCase().includes(lower) ||
-    (j.display_name || '').toLowerCase().includes(lower)
-  );
-}
-
 async function load() {
   const q = document.getElementById('search').value.trim();
   const params = new URLSearchParams();
@@ -111,10 +82,7 @@ async function load() {
     const data = await res.json();
     results = data.journeys || [];
   } catch (e) {
-    // Live API unreachable - fall back to whatever's cached in IndexedDB.
-    const cached = await TSWOfflineDB.getAll('journeys');
-    results = filterCached(cached, q).sort((a, b) =>
-      (a.current_service_name || '').localeCompare(b.current_service_name || ''));
+    results = [];
   }
   render();
 }
@@ -155,11 +123,11 @@ async function toggleJourney(id) {
     if (!res.ok) throw new Error('bad response');
     journey = await res.json();
   } catch (e) {
-    journey = await TSWOfflineDB.get('journeys', id); // offline fallback
+    journey = null;
   }
 
   if (!journey) {
-    container.innerHTML = '<div class="detail-panel small dim">Not available offline yet - sync while online first.</div>';
+    container.innerHTML = '<div class="detail-panel small dim">Could not load this service - is the app still running?</div>';
     return;
   }
   document.getElementById(`stopcount-${id}`).textContent = journey.stops.length;
@@ -205,23 +173,28 @@ function renderDetail(journey) {
     </div>`;
 }
 
+function patchJson(url, fields) {
+  return fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  });
+}
+
 async function saveJourney(journeyId) {
-  // Always goes through TSWSync.queueEdit rather than a direct PATCH -
-  // this applies the edit to the local cache immediately (instant-feeling
-  // UI) and attempts a live sync right away if reachable, or queues it for
-  // later if not. Same code path whether online or offline, no branching.
+  // Direct PATCH straight to the server. The app is online-only - there is
+  // no edit queue and no local cache to reconcile against.
   const displayName = document.getElementById(`displayName-${journeyId}`).value;
-  await TSWSync.queueEdit('journeys', journeyId, { display_name: displayName });
+  await patchJson(`/api/timetables/${journeyId}`, { display_name: displayName });
 
   const stopRows = Array.from(document.querySelectorAll(`#detail-${journeyId} .stop-row[data-stop-id]`));
   for (const row of stopRows) {
     const stopId = Number(row.dataset.stopId);
-    const fields = {
+    await patchJson(`/api/timetables/stops/${stopId}`, {
       location_name: row.querySelector('.stop-location').value,
       arrival: row.querySelector('.stop-arrival').value || null,
       departure: row.querySelector('.stop-departure').value || null,
-    };
-    await TSWSync.queueEdit('stops', stopId, fields);
+    });
   }
 
   await load();
@@ -234,49 +207,12 @@ document.getElementById('search').addEventListener('input', () => {
   window._searchDebounce = setTimeout(load, 250);
 });
 
-function updateSyncBanner(status) {
-  const banner = document.getElementById('syncBanner');
-  const dot = document.getElementById('syncDot');
-  const txt = document.getElementById('syncTxt');
-  banner.classList.toggle('offline', !status.online);
-  dot.className = 'dot ' + (status.online ? 'online' : 'offline');
-
-  let text;
-  if (status.syncing) {
-    text = 'Syncing…';
-  } else if (status.online) {
-    text = status.lastSyncedAt ? `Synced ${new Date(status.lastSyncedAt).toLocaleTimeString()}` : 'Synced';
-  } else {
-    text = status.lastSyncedAt
-      ? `Offline — showing cached data from ${new Date(status.lastSyncedAt).toLocaleString()}`
-      : 'Offline — no data synced yet';
-  }
-  txt.innerHTML = text + (status.pendingCount
-    ? ` <span class="pending-chip">${status.pendingCount} pending</span>` : '');
-}
-
-if (typeof TSWSync !== 'undefined') {
-  TSWSync.onStatusChange((status) => {
-    updateSyncBanner(status);
-    load(); // refresh the visible list whenever sync state changes (new data may have arrived)
-  });
-}
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/pages/sw.js').catch(() => {
-    // Expected to fail over plain HTTP on any device other than this PC -
-    // see HTTPS_SETUP.md. The page still works fine without it, just
-    // without the ability to cold-launch while fully offline.
-  });
-}
-
 function exitApp() {
   fetch('/api/shutdown', {method: 'POST'});
 }
 
 load();
 </script>
-<script src="/pages/install-prompt.js"></script>
 <script src="/pages/nav.js"></script>
 </body>
 </html>

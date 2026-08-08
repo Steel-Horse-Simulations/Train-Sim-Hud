@@ -612,7 +612,13 @@ def dedup_train_classes():
         conn.close()
 
 
-def list_train_classes(visible_only=True, query=None):
+def list_train_classes(visible_only=True, query=None, driven_only=False):
+    """driven_only=True restricts the result to trains actually DRIVEN in the
+    game (times_seen > 0), which is what every Known Trains v2 view wants.
+    A row with times_seen = 0 came purely from a catalog import; the catalog
+    enriches data (thumbnails, speeds, livery) but must never surface a train
+    the person has never driven. Callers that want the whole catalog - e.g.
+    the group-members list on the Classes page - leave this False."""
     conn = _connect()
     try:
         sql = "SELECT * FROM train_classes"
@@ -623,6 +629,8 @@ def list_train_classes(visible_only=True, query=None):
         clauses, params = ["variant_of_class_id IS NULL"], []
         if visible_only:
             clauses.append("is_visible = 1")
+        if driven_only:
+            clauses.append("times_seen > 0")
         if query:
             clauses.append("(source_name LIKE ? OR display_name LIKE ?)")
             params += [f"%{query}%", f"%{query}%"]
@@ -1119,16 +1127,23 @@ def compute_completion(train_class_row):
     return {"percent": round(percent * 100), "color": color}
 
 
-def needs_attention():
+def needs_attention(driven_only=False):
     """Anything missing one or more of the COMPLETION_FIELDS - i.e. anything
     that would not show a green completion dot on the Known Trains list.
     Variant rows are excluded - they're nested under their parent train and
-    never shown as their own Known Trains entry."""
+    never shown as their own Known Trains entry.
+
+    driven_only=True matches the Known Trains list filter (times_seen > 0).
+    Without it this panel would nag about catalog entries that were never
+    driven and are not shown on the list at all - an attention list full of
+    items with no visible row to go and fix."""
     conn = _connect()
     try:
-        rows = conn.execute(
-            "SELECT * FROM train_classes WHERE variant_of_class_id IS NULL ORDER BY times_seen DESC"
-        ).fetchall()
+        sql = "SELECT * FROM train_classes WHERE variant_of_class_id IS NULL"
+        if driven_only:
+            sql += " AND times_seen > 0"
+        sql += " ORDER BY times_seen DESC"
+        rows = conn.execute(sql).fetchall()
         result = []
         for r in rows:
             row = dict(r)

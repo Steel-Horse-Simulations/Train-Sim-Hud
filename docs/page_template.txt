@@ -1,0 +1,148 @@
+================================================================================
+PAGE TEMPLATE — TSW Hud
+================================================================================
+Use this as the starting point for any new admin/browser page (not the Dashboard
+HUD itself — that has its own pattern in dashboard.html).
+
+Replace every ALL_CAPS placeholder before use.
+
+================================================================================
+FILE: pages/PAGE_NAME.html
+================================================================================
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - PAGE_TITLE</title>
+<link rel="stylesheet" href="/pages/style.css">
+<script src="/pages/theme.js"></script>
+<style>
+  main { max-width: 960px; margin: 0 auto; }
+  /* PAGE-SPECIFIC STYLES GO HERE */
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><strong>TSW Hud</strong> · PAGE_SUBTITLE</div>
+    <div class="nav">
+      <a href="/">Setup</a>
+      <a href="/pages/dashboard.html">Dashboard (Desktop)</a>
+      <a href="/pages/dashboard_tablet.html">Dashboard (Tablet)</a>
+      <a href="/pages/timetables_browser.html">Timetables</a>
+      <a href="/pages/map.html">Map</a>
+      <a href="/pages/explorer.html">Discovery</a>
+      <a href="/pages/weather.html">Real Weather</a>
+      <a href="/pages/hud_lab.html">HUD Lab</a>
+      <a href="/pages/customisation.html">Customisation</a>
+      <a href="/pages/train_classes.html">Train Classes</a>
+      <a href="/pages/known_trains.html">Known Trains</a>
+      <a href="/pages/PAGE_NAME.html" class="active">PAGE_TITLE</a>
+    </div>
+    <button class="exit-btn" onclick="exitApp()">Exit</button>
+  </div>
+
+  <main>
+    <div class="panel">
+      <h2>PAGE_TITLE</h2>
+      <p class="small dim">Brief description of what this page does.</p>
+    </div>
+    <div class="panel">
+      <h2>Section heading</h2>
+    </div>
+  </main>
+
+<script>
+async function load() {
+  try {
+    const res = await fetch('/api/YOUR_ENDPOINT');
+    if (!res.ok) throw new Error('bad response');
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    console.error('load failed:', e);
+  }
+}
+
+function render(data) {
+  // Render logic here
+}
+
+function exitApp() {
+  fetch('/api/shutdown', {method: 'POST'});
+}
+
+load();
+</script>
+</body>
+</html>
+
+================================================================================
+ADDING THIS PAGE TO THE NAV OF ALL OTHER PAGES
+================================================================================
+Use a uniquely-matching anchor string. Never hand-edit each file individually.
+Always verify the insertion landed exactly once per file before shipping.
+
+  for f in customisation.html explorer.html hud_lab.html index.html \
+            timetables_browser.html train_classes.html known_trains.html \
+            known_trains_edit.html known_trains_group.html weather.html; do
+    python3 -c "
+  path = 'pages/$f'
+  with open(path) as fh: content = fh.read()
+  target = '      <a href=\"/pages/known_trains.html\">Known Trains</a>'
+  replacement = target + '\n      <a href=\"/pages/PAGE_NAME.html\">PAGE_TITLE</a>'
+  count = content.count(target)
+  if count != 1: print('UNEXPECTED', count, 'in', path)
+  else:
+      content = content.replace(target, replacement)
+      with open(path, 'w') as fh: fh.write(content)
+      print('updated', path)
+  "
+  done
+
+Verify: grep -c 'PAGE_NAME.html' pages/*.html   # must be 1 per file
+
+================================================================================
+BACKEND ROUTE CONVENTIONS (app.py)
+================================================================================
+
+List:
+  @app.route("/api/YOUR_RESOURCE", methods=["GET"])
+  def your_resource_list():
+      items = your_db.list_items()
+      return jsonify({"items": items})
+
+Single:
+  @app.route("/api/YOUR_RESOURCE/<int:item_id>", methods=["GET"])
+  def your_resource_get(item_id):
+      item = your_db.get_item(item_id)
+      if not item: return jsonify({"error": "not_found"}), 404
+      return jsonify(item)
+
+PATCH:
+  @app.route("/api/YOUR_RESOURCE/<int:item_id>", methods=["PATCH"])
+  def your_resource_update(item_id):
+      body = request.get_json(force=True, silent=True) or {}
+      ok = your_db.update_item(item_id, body)
+      if not ok: return jsonify({"error": "no_editable_fields_provided"}), 400
+      return jsonify(your_db.get_item(item_id))
+
+================================================================================
+EDITABLE FIELDS PATTERN (db module)
+================================================================================
+
+EDITABLE_FIELDS = {"display_name", "notes", "is_visible"}
+
+def update_item(item_id, fields):
+    safe = {k: v for k, v in fields.items() if k in EDITABLE_FIELDS}
+    if not safe: return False
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = _connect()
+    try:
+        set_clause = ", ".join(f"{col} = ?" for col in safe) + ", updated_at = ?"
+        conn.execute(f"UPDATE items SET {set_clause} WHERE id = ?",
+                     list(safe.values()) + [now, item_id])
+        conn.commit()
+        return True
+    finally:
+        conn.close()

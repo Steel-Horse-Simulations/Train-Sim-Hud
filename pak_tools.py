@@ -502,6 +502,7 @@ def scan_all_paks(pak_dir, aes_key=None, max_paks=60):
 # ---------------------------------------------------------------------------
 
 import struct
+from collections import Counter, defaultdict
 
 UASSET_MAGIC = 0x9E2A83C1
 
@@ -662,14 +663,19 @@ def scan_timespans(path, max_hits=400, min_run=8):
     i = 0
     while i <= n:
         (val,) = struct.unpack_from("<q", data, i)
-        # Whole seconds, within a day, and not zero (zero is far too common
-        # in padding to be meaningful).
-        if 0 < val < TICKS_PER_DAY and val % TICKS_PER_SECOND == 0:
+        # Tenths of a second, within a day, non-zero. NOT whole seconds:
+        # requiring those discarded ~90% of real values (see the findings
+        # doc's list of failed approaches). Zero is excluded because it is
+        # far too common in padding to mean anything.
+        if 0 < val < TICKS_PER_DAY and val % (TICKS_PER_SECOND // 10) == 0:
             secs = val // TICKS_PER_SECOND
             hits.append((i, f"{secs // 3600:02d}:{(secs % 3600) // 60:02d}:{secs % 60:02d}"))
             i += 8
             continue
-        i += 4  # 4-byte stride: int64s are usually 4- or 8-aligned
+        # ONE byte, not four. This is a variable-length stream, so values
+        # are not guaranteed to sit on 4-byte boundaries - a 4-byte stride
+        # missed three of every four in testing.
+        i += 1
 
     # Cluster detection, fixed. The first version required hits within 128
     # bytes of each other, but each stop-point record is a large struct -
@@ -696,8 +702,18 @@ def scan_timespans(path, max_hits=400, min_run=8):
     for _o, t in hits:
         h, m, s = (int(x) for x in t.split(":"))
         secs.append(h * 3600 + m * 60 + s)
-    ascending = sum(1 for a, b in zip(secs, secs[1:]) if b >= a)
+    ascending = sum(1 for a, b in zip(secs, secs[1:]) if b > a)
     ratio = (ascending / (len(secs) - 1)) if len(secs) > 1 else 0.0
+
+    # Both of these were referenced in the return value but never computed,
+    # so every call to this function raised NameError - the endpoint has
+    # been dead. distinct guards the ascending ratio: a run of identical
+    # values scores ~100% ascending under >= and looks like a perfect
+    # result, which is why the test above uses strict > and is reported
+    # alongside a distinct-value count.
+    distinct = len(set(secs))
+    offsets = [o for o, _t in hits]
+    phase = Counter(o % 8 for o in offsets).most_common(1)[0][0] if offsets else None
 
     if ratio >= 0.7 and len(hits) >= 20:
         verdict = (f"{len(hits)} times found and {ratio:.0%} of them run "
@@ -1135,4 +1151,580 @@ def extract_time_series(path, min_run=4, max_runs=200):
             f"{len(times)} times but no ascending runs of {min_run}+ - "
             "the values may not be times, or services are interleaved."
         ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Finding the StopPoint marker
+# ---------------------------------------------------------------------------
+# extract_time_series() gives us services, but each one is 120-151 TRACK
+# POINTS, not station stops - the Leven branch has only a handful of
+# stations. The subset we want carries
+# ETimetableTrackDataType::StopPoint. This finds it.
+#
+# It deliberately does NOT begin by hunting for the enum. Earlier record
+# diffs reported the type field as CONSTANT precisely because every sampled
+# record happened to be the same type, so "find the byte that varies" begs
+# the question. Instead it starts from something identifiable on its own
+# terms - the STATION NAME - and derives the classification from that:
+#
+#   1. Read the name table; mark which entries look like station names.
+#      (Already proven readable: this is where the 88 "Aberdour Platform 1"
+#      names came from.)
+#   2. Unreal writes an FName as an int32 index into that table. Find which
+#      int32s near each time are valid indices resolving to a station.
+#   3. Recover the constant SHIFT between our recovered table position and
+#      the real FName index - the string scan starts partway through the
+#      header, so the two are offset by an unknown constant.
+#   4. A record with a station name is a StopPoint; one without is a track
+#      point. Derived from the data, not assumed.
+#   5. Only then look for the enum, anchored on the station field.
+#
+# THREE THINGS THIS GETS RIGHT THAT AN OBVIOUS IMPLEMENTATION GETS WRONG.
+# All three were caught by running it against synthetic records of known
+# layout, and each produced a confident, entirely wrong answer:
+#
+#   a) An int32 read at +4 from the time is the time's OWN high half. For
+#      times in a working day that lands in 50..72 - a perfectly plausible
+#      name index. It scored better than the real field. Any offset
+#      overlapping the time's 8 bytes is excluded.
+#   b) "The FName field should be in range on most records" is false here.
+#      Only StopPoints carry a station, so the true field is in range on a
+#      small MINORITY of records. Filtering on a high in-range rate throws
+#      away the very field being looked for.
+#   c) The field is NOT at a fixed offset from the time. This is a Stream:
+#      if any variable-length data sits between the station and the time,
+#      the gap moves per record. It searches for the NEAREST resolving
+#      index instead, and reports how tight that distance is - which is
+#      itself the evidence for whether the layout is fixed or variable.
+#
+# Zero is excluded from the shift vote for the same class of reason: it is
+# the single most common int32 in any Unreal asset, and 88 stations x a sea
+# of zeros outvotes the real signal.
+
+# Engine-internal names that would otherwise pass the station shape test
+# ("Texture2D 3", "Material 2"...).
+_ENGINE_NAME_BITS = (
+    "material", "texture", "mesh", "blueprint", "widget", "anim", "sound",
+    "particle", "physic", "skeleton", "montage", "curve", "/game/",
+    "/script/", "default__", "font", "shader", "niagara", "component",
+    "property", "package", "class", "struct", "function",
+)
+
+# "Aberdour Platform 1", "Edinburgh Waverley 1a", "Kirkcaldy 2"
+_STATION_SHAPE_RE = re.compile(r"^[A-Z][A-Za-z'\-\.& ]{2,40}\s\d{1,2}[a-z]?$")
+
+# ETimetableTrackDataType members, per the schema in the findings doc.
+_TRACK_DATA_TYPES = (
+    "StopPoint", "ActionPoint", "GoVia", "ReversePoint",
+    "TrackSectionEntry", "TrackSectionExit", "MultiOccupancy",
+)
+
+
+def _looks_like_station(s):
+    low = s.lower()
+    if any(bit in low for bit in _ENGINE_NAME_BITS):
+        return False
+    if "platform" in low:
+        return True
+    return bool(_STATION_SHAPE_RE.match(s))
+
+
+def _scan_times(data, max_times=40000):
+    """Times in FILE ORDER - same detection as extract_time_series: tenths
+    of a second, one-byte stride. Returns [(offset, seconds_float)]."""
+    times = []
+    i, n = 0, len(data) - 8
+    tenth = TICKS_PER_SECOND // 10
+    while i <= n and len(times) < max_times:
+        (val,) = struct.unpack_from("<q", data, i)
+        if 0 < val < TICKS_PER_DAY and val % tenth == 0:
+            times.append((i, val / TICKS_PER_SECOND))
+            i += 8
+            continue
+        i += 1
+    return times
+
+
+def _sibling_uasset(path):
+    """Name table lives in the .uasset, records in the .uexp."""
+    if path.lower().endswith(".uexp"):
+        cand = path[:-5] + ".uasset"
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _fmt_hms(s):
+    s = int(s)
+    return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+
+
+def _int32s_near(data, centre, radius, exclude_lo, exclude_hi, fname8=False):
+    """Every int32 readable within `radius` bytes of `centre`, at EVERY byte
+    offset - this is a variable-length stream, so values are not guaranteed
+    to be 4-byte aligned.
+
+    exclude_lo/hi masks out the time's own 8 bytes. Without that mask the
+    read at +4 returns the time's high half, which for any working-day time
+    lands in 50..72 - a plausible-looking name index that outscores the real
+    field.
+
+    fname8=True additionally requires the next int32 to be zero. Unreal
+    writes an FName as int32 index + int32 Number, and Number is 0 for any
+    name without a numeric suffix, so this filter keeps real FNames and
+    drops most misaligned reads. It is offered as an alternative rather
+    than imposed, because this is a custom Serialize() and may well write a
+    bare index - which of the two reads more cleanly is decided by
+    measurement in _recover_shift(), not assumed here.
+    """
+    out = {}
+    lo = max(0, centre - radius)
+    hi = min(len(data) - 8, centre + radius)
+    for off in range(lo, hi + 1):
+        if off + 4 > exclude_lo and off < exclude_hi:
+            continue
+        if fname8:
+            idx, num = struct.unpack_from("<ii", data, off)
+            if num != 0:
+                continue
+            v = idx
+        else:
+            (v,) = struct.unpack_from("<i", data, off)
+        # Zero is excluded outright. It is the most common int32 in any
+        # Unreal asset, and name index 0 is "None" - never a real station
+        # or type reference. Left in, whichever table position maps to 0
+        # appears on 100% of records at a unique offset every time - which
+        # is exactly the signature a genuine field is being looked for by.
+        # It beat the true shift twice.
+        if v == 0:
+            continue
+        # Nearest-to-centre wins, so a later, further offset never displaces
+        # a closer one for the same value.
+        if v not in out or abs(off - centre) < abs(out[v] - centre):
+            out[v] = off
+    return out
+
+
+def _drop_ubiquitous(value_maps, max_share=0.6):
+    """Removes values that appear near almost every time.
+
+    Generalises the zero rule. A padding constant present on 90% of records
+    mimics a real field perfectly - a unique offset each time and near-total
+    coverage. No genuine anchor comes close to the threshold: the type enum
+    is spread across its members (~25% each) and a station appears only on
+    the stop subset.
+    """
+    n = max(1, len(value_maps))
+    freq = Counter()
+    for vm in value_maps:
+        for v in vm:
+            freq[v] += 1
+    banned = {v for v, c in freq.items() if c / n > max_share}
+    if not banned:
+        return value_maps, banned
+    return [{v: o for v, o in vm.items() if v not in banned} for vm in value_maps], banned
+
+
+def _name_table(uasset_path):
+    """Names in file order, which positions look like stations, and where
+    each ETimetableTrackDataType member sits."""
+    with open(uasset_path, "rb") as f:
+        names = _read_fname_strings(f.read())
+    stations = {i: s for i, s in enumerate(names) if _looks_like_station(s)}
+    types = {}
+    for i, s in enumerate(names):
+        bare = s.split("::")[-1]
+        if bare in _TRACK_DATA_TYPES:
+            types.setdefault(bare, i)
+    return names, stations, types
+
+
+def _anchor_stats(value_maps, centres, positions, shift, bucket=32):
+    """How much a set of name-table positions behaves like a REAL FIELD at
+    this shift. Returns (mean_rate, unique_coverage, delta_concentration).
+
+    Three measurements, each added because the previous two were fooled:
+
+      mean_rate - fraction of records referencing each position, counted by
+        DISTINCT BYTE OFFSET. Raw vote counts let a few thousand repeated
+        padding values outvote a field that appears once per record.
+
+      unique_coverage - fraction of records whose hit sits at an offset used
+        by almost no other record. One stray byte position within radius of
+        many times otherwise reports a hit on every record from a single
+        shared offset, which looks exactly like a real field.
+
+      delta_concentration - fraction of hits falling in the single best
+        {bucket}-byte band of distance from the time. This is the strongest
+        of the three and the one that finally separated real from
+        coincidental: a genuine field sits a roughly consistent distance
+        from its own time even in a variable-length stream, while
+        coincidences scatter uniformly across the window. Uniform noise
+        scores about bucket/(2*radius); a real field scores far above it.
+    """
+    if not positions or not value_maps:
+        return 0.0, 0.0, 0.0
+    n = len(value_maps)
+    offset_users = Counter()
+    per_record = []
+    deltas = []
+    for vm, centre in zip(value_maps, centres):
+        hits = [vm[p + shift] for p in positions if (p + shift) in vm]
+        per_record.append(hits)
+        for o in set(hits):
+            offset_users[o] += 1
+            deltas.append(o - centre)
+    total = 0.0
+    for p in positions:
+        want = p + shift
+        offsets = {vm[want] for vm in value_maps if want in vm}
+        total += min(len(offsets), n) / n
+    unique = sum(1 for hits in per_record
+                 if any(offset_users[o] <= 2 for o in hits)) / n
+    if deltas:
+        buckets = Counter(d // bucket for d in deltas)
+        concentration = buckets.most_common(1)[0][1] / len(deltas)
+    else:
+        concentration = 0.0
+    return total / len(positions), unique, concentration
+
+
+def _recover_shift(value_maps, centres, names, stations, type_positions,
+                   radius, rng_seed=7):
+    """Finds the constant offset between our recovered table position and the
+    FName index written into the stream.
+
+    _read_fname_strings scans from the start of the file and picks up header
+    strings the real name table does not contain, so position != index by
+    some unknown constant that has to be recovered before anything resolves.
+
+    Candidates are generated from BOTH anchor families and each family is
+    scored separately, because which one carries the signal is not known in
+    advance: if the type is written as a raw byte rather than an FName - the
+    likelier case per the findings doc - the enum anchors resolve nowhere and
+    only the stations can recover the shift. Anchoring on the enums alone
+    made this function chase a bogus shift and invent 18 StopPoints in a file
+    containing no StopPoint FName at all.
+
+    Every candidate is scored against a NULL MODEL. The control positions are
+    drawn from the anchors' immediate NEIGHBOURHOOD in the table, not at
+    random from the whole of it: a random control maps to values of a
+    different magnitude than the anchors do, and small values are common in
+    any binary, so any shift mapping the anchors onto small numbers scored an
+    enormous lift on padding alone.
+    """
+    import random
+    rnd = random.Random(rng_seed)
+    enum_pos = sorted(type_positions.values())
+    station_pos = sorted(stations.keys())
+    banned = set(enum_pos) | set(station_pos)
+    control_pool = sorted({i for a in (enum_pos + station_pos)
+                           for i in range(max(0, a - 64), min(len(names), a + 65))
+                           if i not in banned})
+    if len(control_pool) < 8:
+        control_pool = [i for i in range(len(names)) if i not in banned]
+    control = rnd.sample(control_pool, min(32, len(control_pool))) if control_pool else []
+    eps = 1.0 / max(1, len(value_maps))
+    noise_floor = 32.0 / max(1, 2 * radius)
+
+    candidates = defaultdict(set)
+    for vm in value_maps:
+        for v, o in vm.items():
+            for p in enum_pos + station_pos:
+                sh = v - p
+                if -100000 < sh < 100000:
+                    candidates[sh].add(o)
+    if not candidates:
+        return None
+    shortlist = sorted(candidates, key=lambda k: len(candidates[k]), reverse=True)[:120]
+
+    results = []
+    for shift in shortlist:
+        c_rate, c_uniq, c_conc = _anchor_stats(value_maps, centres, control, shift)
+        e_rate, e_uniq, e_conc = _anchor_stats(value_maps, centres, enum_pos, shift)
+        s_rate, s_uniq, s_conc = _anchor_stats(value_maps, centres, station_pos, shift)
+        # A family only counts as found if its hits are BOTH concentrated at
+        # a consistent distance and spread across records at their own
+        # offsets. Either alone is reachable by padding.
+        # Both families scored identically. An earlier version multiplied the
+        # station score by 4 to "compensate" for stations appearing on only a
+        # minority of records - an unprincipled fudge that let a bogus shift
+        # win by finding 142 stations among 182 track points. A station
+        # genuinely IS on a minority of records; that lower coverage is the
+        # truth, not something to correct for.
+        enum_score = (e_conc - max(c_conc, noise_floor)) * e_uniq
+        stn_score = (s_conc - max(c_conc, noise_floor)) * s_uniq
+        results.append({
+            "shift": shift,
+            "enum_rate": round(e_rate, 4), "enum_unique_coverage": round(e_uniq, 4),
+            "enum_concentration": round(e_conc, 4), "enum_score": round(enum_score, 4),
+            "station_rate": round(s_rate, 4), "station_unique_coverage": round(s_uniq, 4),
+            "station_concentration": round(s_conc, 4), "station_score": round(stn_score, 4),
+            "control_concentration": round(c_conc, 4),
+            "control_rate": round(c_rate, 4),
+            "enum_lift": round((e_rate + eps) / (c_rate + eps), 2),
+            "noise_floor": round(noise_floor, 4),
+            "score": round(max(enum_score, stn_score), 4),
+        })
+    results.sort(key=lambda r: (r["score"], r["enum_unique_coverage"]), reverse=True)
+    return results
+
+
+def find_stop_points(path, radius=192, max_times=8000, min_run=4):
+    """Separates STATION STOPS from the running track points around them.
+
+    extract_time_series() returns runs of 120-151 entries per service, but
+    the Leven branch has only a handful of stations - the rest are
+    EInstructionScheduledTimeTypes::Simulated running times. The subset we
+    want is flagged ETimetableTrackDataType::StopPoint.
+
+    Two INDEPENDENT classifications are computed and cross-checked, because
+    either alone can be talked into a confident wrong answer:
+
+      ENUM-ANCHORED    - if the type is written as an FName, "StopPoint" is
+                         itself in the name table and types the record
+                         directly.
+      STATION-ANCHORED - a record referencing a station name is a stop.
+                         Starts from something identifiable on its own terms
+                         rather than hunting for "the byte that varies",
+                         which begs the question: the earlier record diffs
+                         called the type field constant precisely because
+                         every record sampled happened to be the same type.
+
+    Agreement between the two is the evidence. Disagreement is reported, not
+    averaged away.
+
+    Both FName encodings are tried (bare int32 index, and Unreal's index +
+    Number pair) and whichever separates more cleanly from the null model is
+    used - reported as `encoding`.
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    uasset = _sibling_uasset(path)
+    if not uasset:
+        return {"error": "no_sibling_uasset", "path": path,
+                "detail": "Point this at the .uexp - the name table lives in "
+                          "the matching .uasset next to it."}
+
+    names, stations, type_positions = _name_table(uasset)
+    if not stations and not type_positions:
+        return {"error": "no_anchors", "path": path, "name_count": len(names),
+                "detail": "Neither station names nor ETimetableTrackDataType "
+                          "members are in this asset's name table, so there is "
+                          "nothing to anchor to. Wrong asset, or the name "
+                          "table did not read."}
+
+    with open(path, "rb") as f:
+        data = f.read()
+    times = _scan_times(data, max_times=max_times)
+    if not times:
+        return {"error": "no_times", "path": path}
+
+    # Try both FName encodings and keep whichever gives the better lift.
+    attempts = {}
+    for enc, fname8 in (("index+number", True), ("bare index", False)):
+        near = [_int32s_near(data, off, radius, off, off + 8, fname8=fname8)
+                for off, _s in times]
+        near, banned = _drop_ubiquitous(near)
+        ranked = _recover_shift(near, [o for o, _s in times], names, stations,
+                                type_positions, radius)
+        if ranked:
+            attempts[enc] = (ranked, near, len(banned))
+
+    if not attempts:
+        return {"error": "no_shift_candidates", "path": path}
+
+    # Prefer Unreal's real FName layout (int32 index + int32 Number) unless
+    # dropping the Number==0 constraint scores MATERIALLY better. A bare
+    # index accepts every match the strict form does plus a lot of noise, so
+    # on a hairline margin it is the worse read - it beat the strict form by
+    # 0.0003 on one fixture and took a spurious shift of 64624 with it.
+    strict = attempts.get("index+number")
+    loose = attempts.get("bare index")
+    if strict and (not loose or loose[0][0]["score"] <= strict[0][0]["score"] * 1.25):
+        encoding = "index+number"
+    else:
+        encoding = "bare index"
+    ranked, near, banned_values = attempts[encoding]
+
+    # A lift near 1 means the anchors resolve no better than random table
+    # entries - i.e. nothing was found, and every "stop" below would be an
+    # artefact. Say so rather than returning a confident-looking list.
+
+    pos_to_type = {p: n for n, p in type_positions.items()}
+
+    def classify(sh):
+        out = []
+        for (off, secs), vals in zip(times, near):
+            station = station_delta = None
+            enum_name = enum_delta = None
+            for v, o in vals.items():
+                p = v - sh
+                d = o - off
+                if p in stations and (station_delta is None or abs(d) < abs(station_delta)):
+                    station, station_delta = stations[p], d
+                if p in pos_to_type and (enum_delta is None or abs(d) < abs(enum_delta)):
+                    enum_name, enum_delta = pos_to_type[p], d
+            out.append({
+                "offset": off, "seconds": secs, "time": _fmt_hms(secs),
+                "station": station, "station_delta": station_delta,
+                "enum": enum_name, "enum_delta": enum_delta,
+            })
+        return out
+
+    def band_filter(rows, key, delta_key, bucket=32):
+        """Drops hits sitting far from where that field actually lives.
+
+        The concentration measure has already established that a real field
+        sits a consistent distance from its time. Anything outside the
+        dominant band is a coincidental value that happened to resolve to a
+        valid index - which is exactly what the leftover false positives
+        were: a "station" 180 bytes away on a record whose type says
+        ReversePoint. Keeping the dominant band and one bucket either side
+        allows for the variable-length wobble the stream really has, without
+        accepting hits from halfway across the window.
+        """
+        deltas = [c[delta_key] for c in rows if c[key] is not None]
+        if len(deltas) < 8:
+            return rows, None
+        dominant = Counter(d // bucket for d in deltas).most_common(1)[0][0]
+        lo, hi = (dominant - 1) * bucket, (dominant + 2) * bucket
+        for c in rows:
+            if c[key] is not None and not (lo <= c[delta_key] < hi):
+                c[key] = None
+                c[delta_key] = None
+        return rows, (lo, hi)
+
+    def corroboration(rows):
+        """Jaccard overlap between "has a station" and "typed StopPoint".
+
+        This is the tie-break, and it is the whole design in one number: at
+        the true shift those two sets are the SAME records, because a stop is
+        a stop however you identify it. One position either side maps the
+        enum onto its neighbouring member and the station onto the next
+        station, which scores almost identically on every statistical
+        measure - the top two candidates differed by 0.02 - but scatters the
+        two sets across different records, so the overlap collapses.
+        """
+        a = {i for i, c in enumerate(rows) if c["station"]}
+        b = {i for i, c in enumerate(rows) if c["enum"] == "StopPoint"}
+        if not a or not b:
+            return None
+        return len(a & b) / len(a | b)
+
+    # Disambiguate among the near-ties on score using corroboration between
+    # the two independent families. Falls back to raw score when one family
+    # is absent - e.g. when the type is a raw byte, where there is nothing to
+    # corroborate against.
+    tie_break = []
+    for cand in ranked[:6]:
+        rows = classify(cand["shift"])
+        j = corroboration(rows)
+        tie_break.append((cand["score"] + (j or 0), cand, rows, j))
+    tie_break.sort(key=lambda x: x[0], reverse=True)
+    _total, best, classified, corroborated = tie_break[0]
+    shift = best["shift"]
+    classified, station_band = band_filter(classified, "station", "station_delta")
+    classified, enum_band = band_filter(classified, "enum", "enum_delta")
+    corroborated = corroboration(classified)
+
+    # Confirmed only if a family's hits are clearly more concentrated than
+    # the control at the same shift. Deliberately keyed off concentration
+    # rather than raw counts: every wrong answer this produced during
+    # development was a CONFIDENT wrong answer with plenty of hits.
+    trustworthy = best["score"] >= 0.15
+
+    with_station = [c for c in classified if c["station"]]
+    with_enum = [c for c in classified if c["enum"]]
+    stop_by_enum = [c for c in classified if c["enum"] == "StopPoint"]
+    both = [c for c in classified if c["station"] and c["enum"]]
+    agree = (sum(1 for c in both if c["enum"] == "StopPoint") / len(both)) if both else None
+
+    # Group back into services, carrying the flags through. Same ascending-run
+    # segmentation as extract_time_series - no stride assumption.
+    runs, cur = [], []
+    for c in classified:
+        if cur and c["seconds"] > cur[-1]["seconds"]:
+            cur.append(c)
+        else:
+            if len(cur) >= min_run:
+                runs.append(cur)
+            cur = [c]
+    if len(cur) >= min_run:
+        runs.append(cur)
+
+    services = []
+    for r in sorted(runs, key=len, reverse=True)[:40]:
+        stops = [c for c in r if c["station"] or c["enum"] == "StopPoint"]
+        # A stop should carry BOTH an arrival and a departure - two times at
+        # the same station. First stop (departure only), last stop (arrival
+        # only) and freight (no arrivals at all) are CORRECT data, not parse
+        # failures, so unpaired entries are counted, never dropped.
+        paired = sum(1 for a, b in zip(stops, stops[1:])
+                     if a["station"] and a["station"] == b["station"])
+        services.append({
+            "start_offset": r[0]["offset"],
+            "track_points": len(r),
+            "stop_count": len(stops),
+            "distinct_stations": len({c["station"] for c in stops if c["station"]}),
+            "first": r[0]["time"], "last": r[-1]["time"],
+            "duration_min": round((r[-1]["seconds"] - r[0]["seconds"]) / 60, 1),
+            "paired_times": paired,
+            "unpaired": len(stops) - paired * 2,
+            "stops": [{"time": c["time"], "station": c["station"], "type": c["enum"]}
+                      for c in stops[:60]],
+        })
+
+    deltas = Counter(c["station_delta"] for c in with_station)
+    spread = ({"distinct_deltas": len(deltas), "most_common": deltas.most_common(5),
+               "fixed_layout": len(deltas) <= 3} if deltas else None)
+
+    if not trustworthy:
+        verdict = (f"NOT CONFIRMED. At the best shift ({shift}) the anchors "
+                   f"are no more consistently placed than the control "
+                   f"(best {best['score']}, needs 0.15) - so the hits below "
+                   "are scattered coincidences, not a field. Either the name "
+                   "table did not read cleanly, or neither the type nor the "
+                   "station is written as an FName in this asset.")
+    elif with_station and stop_by_enum:
+        verdict = (f"{len(stop_by_enum)} of {len(classified)} times are typed "
+                   f"StopPoint and {len(with_station)} carry a station name; "
+                   f"where both are present they agree {agree:.0%} of the time. "
+                   + ("The two corroborate each other - the stop subset is "
+                      "identified." if (agree or 0) >= 0.9 else
+                      "They disagree too often to build on yet."))
+    elif with_station:
+        verdict = (f"{len(with_station)} of {len(classified)} times sit next to "
+                   "a station name; those are the stops. No StopPoint FName "
+                   "resolves, so the type is a raw byte - run /api/paks/diff "
+                   "anchored on one of these station records to find it.")
+    else:
+        verdict = (f"{len(stop_by_enum)} times typed StopPoint but none carry a "
+                   "station name - station text may live in the index asset "
+                   "rather than this layer.")
+
+    return {
+        "path": path, "uasset": uasset,
+        "name_count": len(names), "station_names": len(stations),
+        "sample_stations": [stations[k] for k in list(stations)[:12]],
+        "enum_members_in_table": type_positions,
+        "encoding": encoding,
+        "ubiquitous_values_dropped": banned_values,
+        "shift": shift,
+        "shift_scores": ranked[:5],
+        "score": best["score"],
+        "corroboration": round(corroborated, 3) if corroborated is not None else None,
+        "confirmed": trustworthy,
+        "total_times": len(classified),
+        "with_station": len(with_station),
+        "with_enum": len(with_enum),
+        "typed_stop_point": len(stop_by_enum),
+        "agreement": round(agree, 3) if agree is not None else None,
+        "station_field_distance": spread,
+        "station_delta_band": station_band,
+        "enum_delta_band": enum_band,
+        "service_count": len(runs),
+        "services": services,
+        "verdict": verdict,
     }

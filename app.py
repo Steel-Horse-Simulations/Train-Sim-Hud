@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.36.0"
+APP_VERSION = "7.38.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1013,24 +1013,6 @@ def api_gauges():
         return jsonify(json.load(f))
 
 
-@app.route("/pages/sw.js")
-def service_worker():
-    """Served dynamically (not as a static file) specifically so the cache
-    name inside it changes on every real app version - see the long
-    comment in sw.js itself for why this matters: without it, browsers
-    would keep using an already-installed worker's stale cache forever
-    after an update, since they only re-check a Service Worker when its
-    own bytes change, and a static sw.js's bytes wouldn't change just
-    because the rest of the app did."""
-    sw_path = os.path.join(PAGES_DIR, "sw.js")
-    with open(sw_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    content = content.replace("__APP_VERSION__", APP_VERSION)
-    response = app.response_class(content, mimetype="application/javascript")
-    response.headers["Cache-Control"] = "no-cache"  # always revalidate the SW script itself with the server
-    return response
-
-
 @app.route("/pages/<path:filename>")
 def pages(filename):
     # Force revalidation on every request. Without this, WebView2 (and the
@@ -1079,11 +1061,6 @@ def get_theme():
     return jsonify({"theme": CONFIG.get("theme", "purple"), "themes": THEMES})
 
 
-@app.route("/api/https_cert_status", methods=["GET"])
-def https_cert_status():
-    return jsonify(get_https_cert_status())
-
-
 @app.route("/api/other_hud_sync/status", methods=["GET"])
 def other_hud_sync_status():
     return jsonify({
@@ -1126,86 +1103,6 @@ def other_hud_sync_run_now():
     messages = []
     other_hud_sync.sync_once(db_path, images_dir, CONFIG, save_config, log_fn=messages.append)
     return jsonify({"ok": True, "log": messages, "db_path": db_path})
-
-
-# ---- tablet offline sync (pull changes / push edits made while offline) --
-
-@app.route("/api/sync/changes", methods=["GET"])
-def sync_changes():
-    """Pull side: one PAGE of everything changed since `since` (an ISO
-    timestamp the caller stored from its last successful sync - pass
-    "1970-01-01T00:00:00" for a first-ever full sync). Bounded page sizes
-    (100 journeys, 300 train classes per call) so a single request/response
-    is always fast regardless of total dataset size - a first-ever sync
-    against a large real catalog previously tried to return everything in
-    one response, which could take longer than the client's timeout and
-    fail repeatedly without ever completing. Returns has_more flags and
-    cursor values (last_journey_id/last_train_class_id) for the caller to
-    pass back on the next call to continue paging. Returns the server's
-    own current time as `server_time` - the caller should store THAT as
-    its new baseline once fully paged through, not its own local clock,
-    since the two devices' clocks may not agree."""
-    since = request.args.get("since", "1970-01-01T00:00:00")
-    after_journey_id = request.args.get("after_journey_id", 0, type=int)
-    after_train_class_id = request.args.get("after_train_class_id", 0, type=int)
-    server_time = datetime.now().isoformat(timespec="seconds")
-
-    journeys, journeys_more = timetable_db.get_changes_since(since, after_journey_id=after_journey_id)
-    train_classes, tc_more = train_classes_db.get_changes_since(since, after_id=after_train_class_id)
-
-    return jsonify({
-        "server_time": server_time,
-        "journeys": journeys,
-        "train_classes": train_classes,
-        "journeys_has_more": journeys_more,
-        "train_classes_has_more": tc_more,
-        "last_journey_id": journeys[-1]["id"] if journeys else after_journey_id,
-        "last_train_class_id": train_classes[-1]["id"] if train_classes else after_train_class_id,
-    })
-
-
-@app.route("/api/sync/push", methods=["POST"])
-def sync_push():
-    """Push side: apply a batch of edits made on another device (e.g. the
-    tablet, while offline). Each edit carries its OWN updated_at (recorded
-    on that device at the moment the person actually made the edit) - used
-    for last-write-wins: an edit only applies if it's newer than whatever's
-    currently on the server. Every edit here is still filtered through the
-    exact same EDITABLE_FIELDS allow-lists as any other update - pushed
-    edits can no more touch a protected column than a local one can.
-
-    Body shape:
-    {
-      "journeys":  [{"id": 1, "updated_at": "...", "fields": {"display_name": "..."}}],
-      "segments":  [{"id": 1, "updated_at": "...", "fields": {...}}],
-      "stops":     [{"id": 1, "updated_at": "...", "fields": {...}}],
-      "train_classes": [{"id": 1, "updated_at": "...", "fields": {...}}]
-    }
-    Returns which edits were applied vs rejected (stale), per item, so the
-    caller knows which of its queued changes to drop from its own pending
-    list (applied ones, and rejected ones - both are "resolved" from the
-    caller's point of view; a rejection just means the server's copy wins
-    and the next pull will hand back the current truth)."""
-    body = request.get_json(force=True, silent=True) or {}
-    results = {"journeys": [], "segments": [], "stops": [], "train_classes": []}
-
-    for item in body.get("journeys", []):
-        applied = timetable_db.update_journey(item["id"], item.get("fields", {}), client_updated_at=item.get("updated_at"))
-        results["journeys"].append({"id": item["id"], "applied": applied})
-
-    for item in body.get("segments", []):
-        applied = timetable_db.update_segment(item["id"], item.get("fields", {}), client_updated_at=item.get("updated_at"))
-        results["segments"].append({"id": item["id"], "applied": applied})
-
-    for item in body.get("stops", []):
-        applied = timetable_db.update_stop(item["id"], item.get("fields", {}), client_updated_at=item.get("updated_at"))
-        results["stops"].append({"id": item["id"], "applied": applied})
-
-    for item in body.get("train_classes", []):
-        applied = train_classes_db.update_train_class(item["id"], item.get("fields", {}), client_updated_at=item.get("updated_at"))
-        results["train_classes"].append({"id": item["id"], "applied": applied})
-
-    return jsonify({"ok": True, "results": results, "server_time": datetime.now().isoformat(timespec="seconds")})
 
 
 @app.route("/api/theme", methods=["POST"])
@@ -1581,6 +1478,34 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/stops", methods=["POST"])
+def paks_stops():
+    """Separates real STATION STOPS from the simulated running times around
+    them, by resolving each record's FName references against the name table
+    in the sibling .uasset. Body: {"asset_name": "...DataTrack.uasset"}
+
+    This is the step after /api/paks/services: that one returns runs of
+    120-151 track points per service, which is the whole route profile, not
+    a timetable. Only the subset flagged StopPoint is a station call."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    radius = int(body.get("radius") or 192)
+    return jsonify(pak_tools.find_stop_points(path, radius=radius))
 
 
 @app.route("/api/paks/clear_extracted", methods=["POST"])
@@ -2576,7 +2501,10 @@ def known_trains_list():
     the list page just renders what it's given, no client-side resolution
     logic duplicated."""
     show_hidden = request.args.get("show_hidden") == "1"
-    classes = train_classes_db.list_train_classes(visible_only=not show_hidden)
+    # Known Trains v2 is DRIVEN TRAINS ONLY (times_seen > 0). Catalog imports
+    # enrich existing rows but never surface a train that has not actually
+    # been driven in the game - see the spec, section 3C.
+    classes = train_classes_db.list_train_classes(visible_only=not show_hidden, driven_only=True)
     groups_by_id = {g["id"]: g for g in train_classes_db.list_groups()}
     families_by_id = {f["id"]: f for f in train_classes_db.list_families()}
     operators_by_id = {}
@@ -2630,7 +2558,7 @@ def known_trains_list():
 
     return jsonify({
         "classes": results,
-        "needs_attention": train_classes_db.needs_attention(),
+        "needs_attention": train_classes_db.needs_attention(driven_only=True),
     })
 
 
@@ -2872,53 +2800,6 @@ def run_heartbeat():
         time.sleep(2)
 
 
-def get_ssl_context():
-    """Returns (cert_path, key_path) if both files exist in certs/, else None.
-    Enables HTTPS (required for Service Worker registration from any device
-    other than this PC itself - see HTTPS_SETUP.md) the moment the user has
-    generated a certificate with mkcert, with zero further code changes.
-    Falls back to plain HTTP - the app works exactly as it always has - if
-    the certificate hasn't been set up yet."""
-    certs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs")
-    cert_path = os.path.join(certs_dir, "cert.pem")
-    key_path = os.path.join(certs_dir, "key.pem")
-    if os.path.isfile(cert_path) and os.path.isfile(key_path):
-        return (cert_path, key_path)
-    return None
-
-
-def get_https_cert_status():
-    """Reads certs/cert.pem (if present) and reports how long until it
-    expires. IMPORTANT LIMITATION, documented here and surfaced in the UI:
-    once a certificate is ACTUALLY expired, browsers refuse the TLS
-    handshake outright and show their own native warning page BEFORE this
-    app's HTML/JS ever gets a chance to load - so an in-app banner can only
-    ever be seen and act as a useful warning BEFORE expiry, not after. This
-    is why the UI leans on "expiring soon" as the actionable state, not
-    "expired" (by the time that's true, this page likely can't be reached
-    at all - the warning has to come earlier to be worth anything)."""
-    ssl_ctx = get_ssl_context()
-    if not ssl_ctx:
-        return {"has_cert": False}
-
-    cert_path, _ = ssl_ctx
-    try:
-        from cryptography import x509
-        with open(cert_path, "rb") as f:
-            cert = x509.load_pem_x509_certificate(f.read())
-        expires_at = cert.not_valid_after_utc
-        days_remaining = (expires_at - datetime.now(expires_at.tzinfo)).days
-        return {
-            "has_cert": True,
-            "expires_at": expires_at.isoformat(),
-            "days_remaining": days_remaining,
-            "expired": days_remaining < 0,
-            "expiring_soon": 0 <= days_remaining <= 30,
-        }
-    except Exception as e:
-        return {"has_cert": True, "error": str(e)}
-
-
 def run_flask():
     # 0.0.0.0 = listen on every network interface on this PC, so devices on
     # the same Wi-Fi/LAN (like a tablet) can reach it via this PC's LAN IP.
@@ -2931,15 +2812,12 @@ def run_flask():
     # game, or a tablet polling the dashboard) blocks every other request -
     # including the app's own page loads - and the whole window appears to
     # freeze ("Not Responding").
+    #
+    # Always plain HTTP, deliberately (spec section 3A). TLS was only ever
+    # needed for Service Worker registration on other devices, and offline
+    # sync is not a feature of this app.
     global SERVER_PORT
-    ssl_context = get_ssl_context()
-    if ssl_context:
-        print(f"HTTPS enabled - certificate found in certs/. Reachable at https://<this PC's LAN IP>:{SERVER_PORT}")
-        app.run(host="0.0.0.0", port=SERVER_PORT, debug=False, use_reloader=False, threaded=True, ssl_context=ssl_context)
-    else:
-        print(f"Running HTTP only (no certs/cert.pem + certs/key.pem found yet) - "
-              f"see HTTPS_SETUP.md to enable HTTPS, needed for offline sync on other devices.")
-        app.run(host="0.0.0.0", port=SERVER_PORT, debug=False, use_reloader=False, threaded=True)
+    app.run(host="0.0.0.0", port=SERVER_PORT, debug=False, use_reloader=False, threaded=True)
 
 
 def run_in_system_browser():

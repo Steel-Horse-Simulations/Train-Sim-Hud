@@ -1,0 +1,898 @@
+================================================================================
+TSW HUD — NEW CHAT HANDOFF SPECIFICATION
+================================================================================
+This document is a complete specification for recreating the TSW Hud project in
+a new chat session. Read every section before writing a single line of code.
+
+VERSION THIS SPEC DESCRIBES: 7.38.0
+
+================================================================================
+SECTION 1: WHAT THIS PROJECT IS
+================================================================================
+
+A Windows desktop HUD companion app for Train Sim World 6, built on the game's
+optional -HTTPAPI flag. The game exposes a local REST API at
+http://127.0.0.1:31270 that returns live telemetry: speed, signals, gradient,
+weather, current loco, location, etc.
+
+The app is a Flask backend (app.py) serving HTML/JS/CSS pages that talk to it.
+It can run two ways:
+  - run.bat → pywebview (renders in a real native Windows window)
+  - run_browser.bat → just starts Flask, opens a browser tab
+
+The user plays the game, the HUD shows real-time data. The user also has a
+separate, unrelated "TSW HUD" app (different project, not this one) whose
+SQLite database this app can read to import timetable and train-class data.
+
+IMPORTANT: The API key lives in a file called CommAPIKey.txt (or DTGCommKey.txt)
+in the game's save folder. The app reads it automatically, never asks the user
+to type it. The key goes in every request as a header: DTGCommKey: <key>.
+
+Game API base URL: http://127.0.0.1:31270
+Confirmed real endpoints used (verified against the real game):
+  GET /list                           - lists all top-level nodes
+  GET /list/<path>                    - lists children of a node
+  GET /get/<path>                     - reads a value
+  PATCH /set/<path>                   - sets a value (used for weather)
+  GET /info/<path>                    - metadata about a node
+The response shape for /get is: {"Result": "Success", "Values": {"ReturnValue": <value>}}
+but field names vary per endpoint. Always check "Values" then scan keys.
+
+================================================================================
+SECTION 2: ARCHITECTURE — FILE STRUCTURE
+================================================================================
+
+TSW Hud/
+├── app.py                    Main Flask backend. ~1761 lines. All routes.
+├── loco_profiles.py          Simple loco DB (loco_profiles.db). Records every
+│                             loco driven: raw ObjectClass key, clean name,
+│                             times seen, max speed suggestion. Feeds the old
+│                             "Known Trains" panel on the Customisation page
+│                             and the live Dashboard speed gauge.
+├── timetable_db.py           Timetables DB (data/timetables.db). Journeys +
+│                             segments + stops. Has updated_at on every table
+│                             and a paginated get_changes_since() function.
+├── train_classes_db.py       Train classes DB (data/train_classes.db). Has
+│                             both the flat catalog AND the Known Trains v2
+│                             hierarchy (loco_groups, loco_subclasses tables).
+├── import_from_other_hud.py  One-off CLI import from the other app's DB.
+├── other_hud_sync.py         Background auto-discovery + periodic sync from
+│                             the other app's DB. Runs as a daemon thread.
+├── tsw_timetable_importer.py Chaining/export logic used by the above.
+├── requirements.txt          flask>=3.0, requests>=2.31, pywebview>=5.1
+├── data/                     SQLite DBs (auto-created on first run).
+├── images/train_classes/     Loco PNGs. Served at /images/train_classes/<fn>.
+│                             Path is guessed as sibling of the other app's
+│                             db/ folder — NOT YET CONFIRMED on real hardware.
+└── pages/
+    ├── style.css             Shared theme. See Section 5 for all CSS vars.
+    ├── theme.js              Fetches /api/theme, sets data-theme on <html>.
+    │                         DO NOT include on pages that should always be
+    │                         purple (e.g. admin/setup pages).
+    ├── nav.js                Builds the nav from registry.json. Every page
+    │                         with a topbar includes it — see Section 4B.
+    ├── dashboard.js          Shared dashboard logic (desktop + tablet use it).
+    ├── registry.json         Page registry for the /api/pages endpoint.
+    ├── gauges_registry.json  Gauge registry for the /api/gauges endpoint.
+    ├── index.html            Setup page (API key, network info, other-hud sync)
+    ├── dashboard.html        Desktop HUD (full 16:9 overlay, always open)
+    ├── dashboard_tablet.html Tablet HUD (always in sync with desktop version)
+    ├── timetables_browser.html  Timetable admin/search
+    ├── map.html              Leaflet map + OpenRailwayMap tile overlay
+    ├── explorer.html         Raw CommAPI discovery tool (dev-only)
+    ├── weather.html          Real Weather sync (Open-Meteo → game)
+    ├── hud_lab.html          HUD Lab (multi-pill live API watcher)
+    ├── customisation.html    Theme picker + old simple "Known Trains" panel
+    ├── known_trains.html     Known Trains v2 list (driven trains only)
+    ├── known_trains_edit.html   Known Trains v2 edit individual entry
+    ├── known_trains_group.html  Class settings (one train class + subclasses)
+    ├── classes.html          Classes list — individual train classes. This is
+    │                         the page formerly called "Groups"; the API paths
+    │                         still say groups, deliberately unchanged.
+    ├── groups.html           Groups list — families. Several Classes belong to
+    │                         one Group, e.g. Class 801/802/805 → "Class 8xx".
+    ├── operators.html        Operators and their liveries (colour per livery)
+    └── timetable.html        Colour-theme placeholder (earmarked for a
+                              different timetable feature, not built yet)
+
+================================================================================
+SECTION 3: WHAT NOT TO BUILD (EXPLICIT EXCLUSIONS)
+================================================================================
+
+The following were built in the original project but are EXCLUDED. They were
+all actually REMOVED in v7.37.0 (they had lingered in the tree for several
+versions after this decision was made). Do not add them back.
+
+3A. HTTPS / TLS SUPPORT
+  - No certs/ folder
+  - No HTTPS_SETUP.md
+  - No get_ssl_context() function in app.py
+  - No get_https_cert_status() function in app.py
+  - No /api/https_cert_status route
+  - No certificate status panel on the Setup page (index.html)
+  - run_flask() should just call app.run() directly on HTTP always
+  - The app always runs on plain HTTP. That is fine and intentional.
+
+3B. PWA / TABLET HOME SCREEN APPS
+  - No manifest-*.json files
+  - No pages/icons/ folder or any icon PNG files
+  - No pages/sw.js (Service Worker)
+  - No pages/offline-db.js (IndexedDB layer)
+  - No pages/sync-client.js (sync orchestrator)
+  - No pages/install-prompt.js
+  - No install.html page
+  - No /api/sync/changes or /api/sync/push routes
+  - No offline sync capability at all — the app is online-only
+  - No <link rel="manifest"> tags on any page
+  - timetables_browser.html uses direct PATCH calls to save edits (not any
+    kind of sync queue). Done as of v7.37.0.
+  - timetable_db.get_changes_since() / train_classes_db.get_changes_since()
+    still exist but nothing calls them. They are kept only because they carry
+    the keyset-pagination fix described in Section 9E — do not delete them,
+    and do not take their presence as licence to rebuild sync.
+
+3C. KNOWN TRAINS — DRIVEN TRAINS ONLY (IMPORTANT BEHAVIOUR CHANGE)
+  This is a deliberate design decision, not an oversight.
+  The Known Trains v2 pages (known_trains.html, known_trains_edit.html,
+  known_trains_group.html) should ONLY show train classes where times_seen > 0.
+  
+  "times_seen" is the counter incremented by record_live_sighting() every time
+  the Dashboard detects that loco via the real game API. A value of 0 means the
+  entry came purely from a catalog import (the other app's database), and the
+  user has never actually driven it.
+  
+  The Known Trains pages are specifically for trains the user has driven.
+  The catalog import still runs in the background (to enrich data with
+  thumbnails, speeds, livery info, etc.) but it should NOT surface new entries
+  in Known Trains — only live-detection does that.
+  
+  IMPLEMENTED in v7.37.0 (this had been specified but never actually built —
+  the filter was on variant_of_class_id/is_visible only):
+  - list_train_classes(driven_only=True) adds WHERE times_seen > 0
+  - needs_attention(driven_only=True) adds the same clause
+  - /api/known_trains/list passes True to BOTH. They must always agree: a
+    needs-attention row with no matching list row is an item the person is
+    being nagged about but cannot open and fix.
+  - Other callers (the group-members list on the Classes page) leave
+    driven_only False and still see the whole catalog.
+
+================================================================================
+SECTION 4: GROUND RULES — FOLLOW THESE IN EVERY SESSION
+================================================================================
+
+4A. PREVIEW BEFORE CODE (never skip this)
+  For any new UI element (new panel, new page, new gauge): build an HTML
+  mockup first, screenshot/render it, get approval, THEN build for real.
+  Deliver the actual .html preview file, not just a screenshot.
+  Preview accent colour: roll from the 9 themes
+  (purple, green, blue, amber, crimson, teal, rose, slate, rainbow),
+  excluding 2-3 recently used. Purple is the live app's default theme.
+  Never use purple for a preview, it will be confused with the real app.
+  Fixed real-world colours (e.g. GSM-R radio) override the roll.
+
+4B. NAVIGATION — NEVER HAND-BUILD THE NAV
+  The nav is built at runtime from pages/registry.json by pages/nav.js. Every
+  page with a topbar uses:
+    <div class="topbar">
+      <div class="brand"><strong>TSW Hud</strong> · <page subtitle></div>
+      <div class="nav" id="navContainer"></div>
+      <button class="exit-btn" onclick="exitApp()">Exit</button>
+    </div>
+    ... <script src="/pages/nav.js"></script>
+  nav.js sorts by `order` and marks the current page active by URL match, so
+  adding a page means ONE new entry in registry.json — never an edit to every
+  HTML file. Do not hand-write <a> tags into a nav container.
+  In registry.json today: Setup | Dashboard (Desktop) | Dashboard (Tablet) |
+    Timetables | Map | Discovery | Real Weather | HUD Lab | Known Trains.
+  KNOWN GAP, deliberately left alone: classes.html, groups.html,
+  operators.html, customisation.html and timetable.html are NOT in
+  registry.json and so have no nav link — they are reached by links from the
+  Known Trains pages. Do not "fix" this without being asked.
+  dashboard.html, dashboard_tablet.html, map.html and timetable.html have no
+  nav bar at all, by design.
+
+4C. VERSIONING CONVENTION
+  MAJOR.MINOR.PATCH where:
+  - MAJOR (x.0.0) = a brand new feature
+  - MINOR (x.x.0) = an update/addition to an existing feature
+  - PATCH (x.x.1) = pure bug fixes or cosmetic changes only
+  Always bump APP_VERSION in app.py when shipping a real update.
+
+4D. SHIPPING CHECKLIST (every release)
+  1. python3 -m py_compile on every .py file
+  2. node --check on every external .js file in pages/
+  3. node --check on every inline <script> in every .html file
+  4. python3 -c "import json; json.load(open(...))" on every .json file
+  5. Load every page/route in a real running server (all 200)
+  6. Bump APP_VERSION in app.py
+  7. Update PROJECT_NOTES.md
+  8. Zip as "TSW Hud"
+
+4E. NEVER GUESS AT API SHAPES
+  The game's CommAPI returns different shapes for different endpoints. Never
+  invent a response shape or assume field names. Only use endpoint shapes that
+  have been confirmed via a real capture. Known confirmed shapes are listed
+  in Section 7.
+
+4F. SCREENSHOTS ARE INTERNAL CHECKS ONLY
+  Never deliver a PNG as the output to the user. Deliver the .html file.
+  Screenshots are used by the AI to verify the render before delivering.
+
+4G. DASHBOARD: DESKTOP AND TABLET ARE ALWAYS IDENTICAL
+  dashboard.html and dashboard_tablet.html must always be kept in exact sync
+  on all HUD behaviour. They share dashboard.js. Different layout, identical
+  logic.
+
+4H. TESTING REAL DATA PATHS
+  Before shipping any feature, test it against a real running Flask server
+  (not just compile checks). Use mocked API responses in Playwright for
+  anything that needs live game data.
+
+================================================================================
+SECTION 5: SHARED CSS / DESIGN SYSTEM
+================================================================================
+
+Fonts: Barlow Condensed (headings, monospaced-style data) + Barlow (body).
+Imported from Google Fonts in style.css.
+
+CSS Variables (defined in :root in pages/style.css):
+  --accent: #a06bf0          (purple default, overridden by theme)
+  --accent-bright: #c9a3ff   (lighter variant, used for text)
+  --status-green: #5fd07a    (NEVER themed — carries real meaning)
+  --status-yellow: #d9d24a   (NEVER themed — Known Trains completion)
+  --status-amber: #e8b74a    (NEVER themed — warnings)
+  --status-red: #e05a4e      (NEVER themed — errors, over-speed)
+  --bg: #0b0a10
+  --panel: rgba(20,18,24,0.85)
+  --panel-raised: rgba(30,26,36,0.9)
+  --hairline: rgba(255,255,255,0.08)
+  --text: #f0edf5
+  --text-dim: #a9a4b3
+  --heading: "Barlow Condensed", ...
+  --sans: "Barlow", ...
+  --mono: "Barlow Condensed", ui-monospace, ...
+
+Theme overrides (9 themes):
+  purple:  #a06bf0 / #c9a3ff  ← live app default
+  green:   #5fb87a / #9fe6b0
+  blue:    #5f9be0 / #a3cdff
+  amber:   #e0a83f / #f5cf8f
+  crimson: #d2585a / #f0a3a5
+  teal:    #4fb8a8 / #9fe6da
+  rose:    #dd6ba0 / #f5aecb
+  slate:   #8b96a3 / #c3ccd6
+  rainbow: #c77dff / #ffffff  (gets gradient treatment on text/h2)
+
+Key component classes:
+  .topbar, .topbar .brand, .topbar .nav, .nav a, .nav a.active, .exit-btn
+  .panel, .panel h2 (uppercase, accent-bright, 13px)
+  .panel + .panel { margin-top: 16px }
+  button.btn, button.btn.primary, button.btn:hover, button.btn.primary:hover
+  input[type=text] (dark bg, hairline border, full-width)
+  .small (12px), .dim (text-dim colour), .mono (monospace)
+  .status-dot.ok/.bad/.warn (8px circles with glow)
+  .hud-stage (16:9 aspect-ratio HUD overlay with themed gradient bg)
+  .hud-corner (absolute-positioned HUD panel, frosted glass)
+  .hud-gauge, .hud-limit-chip (speed gauge + circular limit display)
+  .over-max-badge (position:absolute, top:-8px, shows when over max speed)
+  .max-tick (SVG line element rotating to mark max-speed position)
+  select (same styling as input[type=text])
+
+================================================================================
+SECTION 6: DATABASE SCHEMAS
+================================================================================
+
+--- loco_profiles.db (loco_profiles.py) ---
+Table: loco_profiles
+  raw_object_class TEXT PRIMARY KEY   e.g. "RVM_CJP_BNSF_ES44C4_C"
+  clean_name TEXT                     e.g. "Class 66", learned from IS_GetVehicleInfo
+  max_speed_mph REAL                  user-set override
+  suggested_max_speed_mph REAL        learned from formationMaxSpeed API field
+  times_seen INTEGER DEFAULT 0
+  first_seen_at TEXT
+  last_seen_at TEXT
+  panel_prefs_json TEXT               reserved for future per-class panel prefs
+
+--- timetables.db (timetable_db.py) ---
+Table: journeys
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  route_id INTEGER
+  route_name TEXT
+  current_service_name TEXT NOT NULL  (the original imported service name)
+  display_name TEXT                   (user-editable friendly name)
+  notes TEXT
+  imported_at TEXT NOT NULL           ISO timestamp
+  updated_at TEXT NOT NULL            ISO timestamp, updated on every edit
+
+Table: journey_segments
+  id, journey_id (FK→journeys CASCADE), source_timetable_id INTEGER NOT NULL,
+  seq_order INTEGER NOT NULL, service_name TEXT, section_id INTEGER,
+  start_time TEXT, duration TEXT, bound TEXT,
+  conductor_compatible INTEGER, playable INTEGER,
+  updated_at TEXT NOT NULL
+
+Table: journey_stops
+  id, journey_id (FK→journeys CASCADE), source_timetable_id INTEGER,
+  stop_order INTEGER NOT NULL, location_name TEXT,
+  arrival TEXT, departure TEXT, latitude REAL, longitude REAL,
+  updated_at TEXT NOT NULL
+
+EDITABLE (PATCH-safe) fields:
+  journeys: display_name, notes
+  segments: start_time, duration, bound, conductor_compatible, playable
+  stops: location_name, arrival, departure, latitude, longitude
+
+get_changes_since(since_timestamp, after_journey_id=0, limit=100):
+  Returns (page_of_journeys, has_more). Paginated via integer id keyset.
+  Each journey in the page includes its segments and stops embedded.
+
+--- train_classes.db (train_classes_db.py) ---
+Table: train_classes
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  source_id INTEGER UNIQUE             the other app's train_classes.id
+  source_name TEXT NOT NULL            as discovered from the API/other app
+  display_name TEXT                    user-editable
+  livery_id TEXT                       used as "company/operator" in practice
+  livery_name TEXT                     e.g. "ScotRail" for display
+  typical_length_m REAL, typical_car_count INTEGER
+  is_electric INTEGER, is_steam INTEGER, is_diesel INTEGER
+  electrification_types TEXT           JSON array: ["25kv_ac_overhead", etc.]
+  max_speed_kph REAL, max_speed_mph REAL   catalog-sourced reference values
+  max_speed_override_mph REAL          user-set override (Known Trains v2)
+  dial_max_override_mph REAL           separate dial max override
+  max_power_kw REAL, manufacturer_name TEXT
+  engine_description TEXT, type_description TEXT
+  vehicle_category TEXT, thumbnail_path TEXT
+  rail_vehicle_class TEXT, is_drivable INTEGER, powered_axle_count INTEGER
+  is_uk INTEGER NOT NULL DEFAULT 0
+  is_visible INTEGER NOT NULL DEFAULT 0
+  times_seen INTEGER NOT NULL DEFAULT 0    ← KEY FIELD: >0 means driven
+  notes TEXT
+  imported_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  group_id INTEGER REFERENCES loco_groups ON DELETE SET NULL
+  subclass_id INTEGER REFERENCES loco_subclasses ON DELETE SET NULL
+
+Table: loco_groups
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  name TEXT NOT NULL UNIQUE
+  default_max_speed_mph REAL
+  default_dial_max_mph REAL
+  hud_panels TEXT    JSON array e.g. ["speed", "ammeter"]
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+
+Table: loco_subclasses
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  group_id INTEGER NOT NULL REFERENCES loco_groups ON DELETE CASCADE
+  name TEXT NOT NULL
+  max_speed_override_mph REAL
+  dial_max_override_mph REAL
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  UNIQUE(group_id, name)
+
+KNOWN TRAINS: DRIVEN-ONLY FILTER (see Section 3C)
+  All Known Trains v2 queries must add WHERE times_seen > 0.
+  The Classes page's member list does NOT have this filter — it shows every
+  catalog row assigned to that class.
+
+Speed resolution order (resolve_speeds()):
+  1. train_classes.max_speed_override_mph   (individual override)
+  2. loco_subclasses.max_speed_override_mph (subclass override)
+  3. loco_groups.default_max_speed_mph      (group default)
+  4. train_classes.max_speed_mph            (catalog-sourced fallback)
+  5. 100.0 mph hardcoded                    (last resort)
+  Same chain independently for dial_max. Source label returned alongside value.
+
+Completion status (compute_completion()):
+  7 fields: display_name, livery_name, livery_id, group_id, subclass_id,
+            power_set (any of is_steam/is_diesel/is_electric), thumbnail_path
+  0%   → red   | 1-49% → amber | 50-99% → yellow | 100% → green
+
+Power label (compute_power_label(is_steam, is_diesel, is_electric)):
+  1 type  → "Steam" / "Diesel" / "Electric"
+  2 types → "Bi-Mode (X + Y)"
+  3 types → "Tri-Mode (Steam + Diesel + Electric)"
+
+Migration safety: ALWAYS use ALTER TABLE to add new columns, never CREATE/DROP.
+Check via PRAGMA table_info before altering. Idempotent: safe on every startup.
+
+================================================================================
+SECTION 7: CONFIRMED API ENDPOINTS (real game captures)
+================================================================================
+
+These have been verified against the real game. Do not add new ones without
+real verification.
+
+Speed (m/s, convert ×2.23694 for mph):
+  GET /get/CurrentDrivableActor.Function.HUD_GetSpeed
+  Response: {"Values": {"ReturnValue": <float_ms>}}
+
+Speed limit (m/s, same conversion):
+  GET /get/DriverAid.Data
+  Response: {"Values": {"SpeedLimit": <float_ms>, "formationMaxSpeed": <float_ms>, ...}}
+  (use _get_ci() case-insensitive helper for SpeedLimit, formationMaxSpeed)
+
+Gradient (%):
+  GET /get/DriverAid.Data  (same call as above, reuse)
+  Field: "gradient" in Values
+
+Loco identity:
+  GET /get/CurrentDrivableActor.ObjectClass
+  Response: {"Values": {"ObjectClass": "<string>"}} (field name can vary)
+  
+  GET /get/CurrentFormation/0.Function.IS_GetVehicleInfo
+  Response: {"Values": {"Output": {"class_<HASH>": "<clean_name>", ...}}}
+  Match the "class_" prefix (the hash changes between game builds).
+
+Location (for map):
+  GET /get/DriverAid.Data
+  Fields: latitude, longitude, elevation (all floats)
+
+Weather (write, all 0.0–1.0 floats except Temperature):
+  PATCH /set/WeatherSystem.Temperature  (Celsius, any float)
+  PATCH /set/WeatherSystem.Cloudiness
+  PATCH /set/WeatherSystem.Precipitation
+  PATCH /set/WeatherSystem.Wetness
+  PATCH /set/WeatherSystem.GroundSnow
+  PATCH /set/WeatherSystem.PiledSnow
+  PATCH /set/WeatherSystem.FogDensity
+  Body: {"Value": <float>}
+
+Ammeter (raw Amps, divide by 1000 for kA):
+  GET /get/CurrentDrivableActor.Function.HUD_GetAmmeter
+  Response: {"Values": {"Amps": <float>}}
+  Scale: 0-8 kA for a Class 66. Green zone ~3-5 kA, red zone ~6-8 kA.
+  Needle sweep: -50° (0 kA) to +50° (8 kA) — hand-picked, verify vs real gauge.
+
+Brake gauges (confirmed endpoints exist, psi scaling NOT YET CONFIRMED):
+  GET /get/CurrentDrivableActor.Function.HUD_GetBrakeGauge_1
+  GET /get/CurrentDrivableActor.Function.HUD_GetBrakeGauge_2
+  Which is brake pipe, which is main reservoir: NOT YET DETERMINED.
+  Use HUD Lab to watch both side-by-side during real driving to find out.
+
+GSM-R radio (confirmed endpoints for BP_Class375-6_GSMR_Radio):
+  PageData, get() each property during real registration/call.
+  Visual design (Siemens cab replica, fixed real-world colours): approved,
+  NOT YET BUILT. Blocked on: confirming value shapes during a real call.
+
+================================================================================
+SECTION 8: ALL API ROUTES (app.py)
+================================================================================
+
+STATIC / PAGES:
+  GET /                          → index.html (Setup page)
+  GET /images/train_classes/<fn> → serves from images/train_classes/
+  GET /api/pages                 → serves registry.json (page list for nav)
+  GET /api/gauges                → serves gauges_registry.json
+  GET /pages/<filename>          → serves from pages/ directory
+
+CONFIG:
+  GET  /api/config               → {config_folder, api_base, theme, ...}
+  POST /api/config               → save config fields
+  GET  /api/theme                → {theme, themes:[...]}
+  POST /api/theme                → {"theme": "..."} to switch
+
+NETWORK / DIAGNOSTICS:
+  GET  /api/network              → {lan_ips, server_port, ...}
+  GET  /api/diagnostics          → version, uptime, key status
+  POST /api/autodetect           → auto-find CommAPIKey.txt folder
+
+GAME API PROXY (these forward to 127.0.0.1:31270 with the auth header):
+  GET  /api/proxy/get/<path>     → proxies GET /get/<path> to game
+  PATCH /api/proxy/set/<path>    → proxies PATCH /set/<path> to game
+  GET  /api/proxy/raw/<path>     → raw proxy, no response parsing
+
+DISCOVERY:
+  GET  /api/discover             → crawl /info + /list from game root
+  GET  /api/discover/text        → same as above, plain text output
+  POST /api/discover/save        → save crawl result to file
+
+LOCO / PROFILE:
+  GET  /api/loco                 → {name, raw, max_speed_mph, ...}
+  GET  /api/loco/profiles        → list all profiles from loco_profiles.db
+  POST /api/loco/max_speed       → {"raw": "...", "mph": 90} to set custom max
+
+LOCATION:
+  GET  /api/location             → {latitude, longitude, elevation}
+
+TIMETABLES:
+  GET  /api/timetables           → {journeys:[...]} paginated, ?q= search
+  GET  /api/timetables/<id>      → single journey with segments+stops embedded
+  PATCH /api/timetables/<id>     → edit journey (display_name, notes only)
+  PATCH /api/timetables/segments/<id> → edit segment (start_time, duration...)
+  PATCH /api/timetables/stops/<id>    → edit stop (location_name, times...)
+
+KNOWN TRAINS v2 (driven-only view of the catalog):
+  NOTE: the old flat catalog page (train_classes.html) and its /api/train_classes
+  routes NO LONGER EXIST. Everything goes through /api/known_trains/*.
+
+  GET  /api/known_trains/list         → {classes:[...resolved...], needs_attention:[...]}
+                                        Both lists filtered to times_seen > 0.
+                                        Each class includes resolved speeds,
+                                        completion status, power label,
+                                        group_name, family_name, operator_colour.
+  GET    /api/known_trains/classes/<id>  → single train class
+  PATCH  /api/known_trains/classes/<id>  → edit (EDITABLE_FIELDS only)
+  POST   /api/known_trains/restore       → restore a wiped/hidden entry
+  POST   /api/known_trains/wipe_all      → clear the whole Known Trains set
+
+CLASSES (API path still says "groups" — the PAGE is called Classes):
+  GET    /api/known_trains/groups       → {groups:[...]}
+  POST   /api/known_trains/groups       → create {name, default_max_speed_mph, ...}
+  GET    /api/known_trains/groups/<id>  → class + subclasses + members
+  PATCH  /api/known_trains/groups/<id>  → update
+  DELETE /api/known_trains/groups/<id>  → delete
+  POST   /api/known_trains/groups/<id>/subclasses → create subclass
+  PATCH  /api/known_trains/subclasses/<id>        → update subclass
+  DELETE /api/known_trains/subclasses/<id>        → delete subclass
+
+GROUPS = FAMILIES (several Classes under one family name):
+  GET    /api/known_trains/families       → {families:[...]}
+  POST   /api/known_trains/families       → create
+  GET    /api/known_trains/families/<id>  → family + member classes
+  PATCH  /api/known_trains/families/<id>  → update
+  DELETE /api/known_trains/families/<id>  → delete
+
+OPERATORS AND LIVERIES:
+  GET    /api/operators                        → {operators:[...]}
+  POST   /api/operators                        → create {name, short_code, colour}
+  GET    /api/operators/<id>                   → single operator
+  PATCH  /api/operators/<id>                   → update
+  DELETE /api/operators/<id>                   → delete
+  GET    /api/operators/<id>/liveries          → liveries for this operator
+  POST   /api/operators/<id>/liveries          → create {code, name, colour}
+  PATCH  /api/operators/liveries/<id>          → update
+  DELETE /api/operators/liveries/<id>          → delete
+
+VARIANTS / MERGING (non-destructive, fully reversible):
+  GET    /api/known_trains/classes/<id>/variants  → variants folded into this train
+  POST   /api/known_trains/classes/<id>/variants  → attach another train as a variant
+  DELETE /api/known_trains/classes/<id>/variant   → detach (row reappears intact)
+  POST   /api/known_trains/classes/<id>/merge_into → fold this row into another
+  GET    /api/known_trains/classes/<id>/aliases   → aliases recorded by merges
+  DELETE /api/known_trains/aliases/<id>           → drop an alias
+
+LIVE JOURNEY (no pak extraction needed):
+  GET  /api/journey              → {service_name, stations[], markers[], next_stop}
+                                   From DriverAid.PlayerInfo + DriverAid.TrackData.
+                                   NOT YET SURFACED ON THE HUD.
+
+PAK / GAME FILES (Discovery page, offline timetable extraction):
+  GET  /api/paks/repak           → is repak available
+  POST /api/paks/{list,timetables,scan_all,inspect,timespans,analyse,diff,
+                  decode,services,stops,unpack,clear_extracted}
+  /api/paks/services → ascending runs of times, one per candidate service
+  /api/paks/stops    → separates real station stops from the simulated
+                       running times, by resolving FName references against
+                       the name table. See TIMETABLE_EXTRACTION_FINDINGS.md
+                       before changing its scoring - eight documented failed
+                       approaches, all of which produced confident wrong
+                       answers. Validated against tests/ fixtures only, not
+                       yet against a real pak.
+  GET/POST /api/timetable/{scan,find_exports}
+  GET/POST /api/gamefiles/scan
+  GET/POST /api/safety/scan, POST /api/safety/enable_all
+
+WEATHER:
+  POST /api/weather/start        → begin real-weather sync loop
+  POST /api/weather/stop         → stop loop
+  GET  /api/weather/status       → {running, last_data, ...}
+
+OTHER HUD SYNC:
+  GET  /api/other_hud_sync/status    → {db_path, enabled, last_sync_at, ...}
+  POST /api/other_hud_sync/config    → save db/images paths
+  POST /api/other_hud_sync/run_now   → trigger immediate sync
+
+MISC:
+  POST /api/shutdown             → gracefully stop the app (pywebview + Flask)
+
+================================================================================
+SECTION 9: KEY CODE PATTERNS
+================================================================================
+
+9A. API PROXY HELPER (in app.py)
+  def api_get(path):
+      # Returns (response_body_dict_or_None, status_code)
+      # Reads CommAPIKey, sets DTGCommKey header, GET /path
+      # Times out at 4 seconds. Returns (None, 0) on network failure.
+      # Never raises — always returns a tuple.
+
+  def _get_ci(d, keys, default=None):
+      # Case-insensitive dict key lookup, tries each key in the list.
+      # Returns first match found, or default.
+
+9B. LIVE LOCO DETECTION
+  Every Dashboard poll cycle calls find_loco_class(), which:
+    1. GET /get/CurrentDrivableActor.ObjectClass → raw key
+    2. GET /get/CurrentFormation/0.Function.IS_GetVehicleInfo → clean name
+    3. GET /get/DriverAid.Data → formationMaxSpeed (m/s)
+    4. Calls BOTH:
+       loco_profiles.record_sighting(raw, clean_name, formation_max_speed_ms)
+       train_classes_db.record_live_sighting(raw, clean_name, formation_max_speed_ms)
+    5. Returns best available display name (clean > remembered > raw)
+
+  record_live_sighting() in train_classes_db:
+    - If name already exists in train_classes (any source): bumps times_seen
+    - If name is new: creates a NEW row with source_id=NULL, times_seen=1,
+      is_visible=1 immediately (always visible, the user just drove it)
+    - If a later catalog import finds a matching name: RECONCILES (adopts the
+      existing placeholder row, fills in thumbnail/speed/livery/etc) rather
+      than creating a duplicate
+
+9C. DASHBOARD POLLING (dashboard.js)
+  Three independent poll cycles, all using the /api/proxy/get/ endpoint:
+    - Speed: every 300ms via HUD_GetSpeed
+    - DriverAid.Data: every 800ms (gradient, speed limit)
+    - Weather: every 30s
+  Also: pollLoco() every 5s via /api/loco
+  
+  Speed gauge SVG ring: circumference = 314 (r=50 circle), stroke-dasharray
+  set proportionally to currentSpeedMph / dialMax. The ring is SPLIT: the
+  normal segment runs up to max speed and is coloured by the current speed
+  limit; a second segment covers only the portion PAST max speed, in red.
+
+  ANALOGUE SPEEDOMETER — ANGLE CONVENTIONS. Read this before touching the
+  gauge. Two long-lived bugs lived here and both came from getting it wrong.
+    - The gauge SVG is rotated -90° BY CSS. Everything is authored in SVG
+      space; that rotation does the final turn.
+    - Value → SVG angle:  A = 224.5 + (v / dialMax) * 271, clockwise from
+      east. Do not round 224.5 or 271 to tidier numbers — the geometry is a
+      direct transcription of the approved mockup, scaled 50/460.
+    - An element DRAWN POINTING UP (the needle, the max-speed tick) already
+      sits at SVG 270. To place it at value v it needs rotate(A - 270).
+      Using rotate(A) puts it 270° out — which reads as "stuck in the same
+      place" rather than as an obvious rotation error.
+    - polarPoint() must NOT subtract an extra 90. Doing so rotates the whole
+      number ring a quarter turn.
+    - Numbers in 10s; 5s when dialMax ≤ 50, with 1mph minor ticks.
+    - The digital readout is a real 7-segment display (individual bars, ghost
+      segments always drawn), 3 digits, no decimal point, bordered panel.
+    - Digital mode is disabled app-wide but ALL its code is retained;
+      pollLoco() forces setSpeedometerMode('analogue').
+
+  Max-speed tick: SVG line, see the rotate(A - 270) rule above
+  DIAL_HEADROOM_MULTIPLIER = 1.2 is a TEMPORARY placeholder.
+  When Known Trains v2 is eventually rewired to the Dashboard, replace this
+  with the real resolve_speeds() values from train_classes_db. The comment
+  in dashboard.js marks this with "search for this comment" to make it easy
+  to find.
+
+9D. OTHER HUD SYNC BACKGROUND THREAD
+  other_hud_sync.py runs a daemon thread on startup. It:
+    - Scans common folders (Downloads, Desktop, Documents, etc.) for tsw_hud.db
+    - Opens the found DB read-only (mode=ro in connection string)
+    - Checks the row count before doing a full import (skip if unchanged)
+    - Re-checks every 15 minutes
+  Runs alongside import_from_other_hud.py which is the one-off CLI version.
+
+9E. TIMETABLE DB: GET_CHANGES_SINCE PAGINATION
+  get_changes_since(since, after_journey_id=0, limit=100):
+    Step 1: Cheap - collect SET of journey ids where any row (journey,
+            segment, or stop) has updated_at > since
+    Step 2: Sort ids, slice with id > after_journey_id cursor, take limit+1
+    Step 3: Fetch full nested objects for only that page
+    Returns: (list_of_journeys_with_embedded_segments_and_stops, has_more_bool)
+  
+  train_classes_db uses the same pattern (same two-step collect+slice approach).
+  Do NOT use a single SQL query mixing fixed since_timestamp with id cursor
+  via OR — this was tried and had a real bug: when updated_at > since matches
+  all rows (which it does on a full first-ever sync), the OR's id-cursor
+  clause becomes completely ineffective, returning the first page forever.
+
+9F. CONFIG PERSISTENCE
+  config.json in the project root stores:
+    config_folder, api_base, theme, other_hud_db_path,
+    other_hud_db_auto_detected, other_hud_images_path,
+    other_hud_sync_enabled, last_import_row_count, last_import_at
+  load_config() / save_config(cfg) in app.py.
+
+================================================================================
+SECTION 10: HUD LAB PAGE
+================================================================================
+
+pages/hud_lab.html is a sandbox page for testing new gauge/panel ideas
+against live game data before anything touches the real Dashboard.
+
+Contains a multi-pill live watcher:
+  - User enters a CommAPI path + optional label, clicks "Add"
+  - Each path gets its own pill: 168×168px rounded card, centered in a
+    flex-wrap grid (justify-content: center), auto-reflowing as pills are
+    added/removed
+  - Each pill polls its path independently every 300ms via /api/proxy/get/<path>
+  - Displays the first numeric value found in the response (scanned recursively
+    up to depth 3)
+  - Click a pill to expand/collapse raw JSON below it
+  - × button on each pill removes it and stops its timer
+  
+The workflow for a new gauge:
+  1. Add the relevant CommAPI path to HUD Lab, watch it during real driving
+  2. Confirm the value range and scaling
+  3. Build an HTML preview (see Section 4A)
+  4. Get approval
+  5. Build for real in dashboard.js / dashboard.html + dashboard_tablet.html
+
+================================================================================
+SECTION 11: KNOWN TRAINS V2 DESIGN
+================================================================================
+
+TERMINOLOGY — READ THIS FIRST. The words changed; the API paths did not.
+  Family  ("Group" in the UI, groups.html, /api/known_trains/families)
+    e.g. "Class 8xx" — several Classes belong to one Family.
+  Class   ("Class" in the UI, classes.html, /api/known_trains/groups)
+    e.g. "Class 801" — this is the table still called loco_groups.
+  Subclass — within a Class, /api/known_trains/subclasses
+  Entry   — an individual train_classes row, edited on known_trains_edit.html
+So: Family → Class → Subclass → Entry. Where this spec's older text says
+"group" against an API path, it means CLASS. This mismatch is deliberate —
+renaming the endpoints was judged not worth the churn.
+
+KNOWN TRAINS LIST (known_trains.html):
+  - Fetches /api/known_trains/list (which applies times_seen > 0 filter)
+  - Groups entries by family_name when the class has a family, else by the
+    class name (ungrouped → "(Ungrouped)" bucket)
+  - Pills: 156px tall, 420px thumbnail, full width, image on the RIGHT
+  - Pill colour comes from the LIVERY, not the operator. The server resolves
+    it per train (operator_colour in /api/known_trains/list) — livery colour
+    first, operator colour as fallback. Pill background is that colour at 20%.
+  - The curved coloured edge is a SOLID layer (.pill-wrap background) with the
+    inner pill's border-radius carving the concave curve, and a mask-image
+    (opacity only) fading it out to the left. Do NOT rebuild this as a
+    gradient with a colour stop — a stop makes a square edge no radius fixes.
+  - Operator logo is looked up by the operator's short_code:
+    /company_logos/<short_code>.png. There is no logo_path field.
+  - Needs Attention section: entries below 100% completion, same driven-only
+    filter as the list. Auto-hides if empty.
+  - "Set up" button links to the edit page, class settings link per group
+
+KNOWN TRAINS EDIT (known_trains_edit.html):
+  - Two-column grid: left = photo slot + field completion checklist; right = form
+  - Source name shown read-only (API raw string)
+  - Identity: display_name, livery_name, livery_id (label: "Company / operator")
+  - Grouping: Class dropdown (fetches /api/known_trains/groups), then
+    Subclass dropdown (refetches class detail when the class changes)
+  - Variants panel: attach another train as a variant of this one. Wholly
+    non-destructive and reversible — the row is tagged variant_of_class_id,
+    disappears from Known Trains, and comes back intact when detached. The
+    variant dropdown offers only UNGROUPED trains. Display name and
+    speedometer values resolve to the PARENT.
+  - Speeds: two inputs (max train speed, dial max). Caption shows whether
+    value is "custom for this train" vs "using group/subclass default".
+    Reset link restores the inherited default. The inherited default is
+    computed client-side from the selected group/subclass data.
+  - Power: Steam/Diesel/Electric checkboxes as styled "power chip" pills.
+    Electric checkbox reveals electrification sub-options (25kV AC overhead,
+    750V DC third rail, 630V DC fourth rail). Live Bi-Mode/Tri-Mode badge.
+  - HUD panels: read-only note linking to class settings
+  - Field completion sidebar updates live as form fields change
+  - Status dot (red/amber/yellow/green) updates live
+  - Save → PATCH /api/known_trains/classes/<id> → redirect to list
+
+COMPLETION FIELDS: display name, operator, livery, class, power.
+  NOT subclass, and NOT photo. This was corrected explicitly — do not add
+  either back into the completion calculation.
+
+OPERATORS (operators.html):
+  - Operators each have a name, short_code (used for the logo filename) and a
+    default colour, plus a list of liveries each with their own code, name and
+    colour. On a train row, livery_id holds the OPERATOR id and livery_name
+    holds the LIVERY code — legacy column names, do not "fix" by renaming.
+
+GROUPS / FAMILIES (groups.html):
+  - Backed by the class_families table and family_id on loco_groups.
+  - A Family is purely a display grouping for the Known Trains list; it
+    carries no speed defaults of its own.
+
+CLASS SETTINGS (known_trains_group.html — the page is titled "Class"):
+  - Class name (editable, saves on blur)
+  - Default max speed + dial max (save on change)
+  - Subclasses list with inline speed override inputs (save on change)
+  - Add subclass form (slide-in, name required, speed optional)
+  - HUD panel toggles per-gauge (persisted as hud_panels JSON array)
+    Speed gauge: always on, shown as disabled/greyed
+    Other gauges: toggleable, stored even if the gauge isn't built yet
+  - Members of this class (linked to their edit pages). This list is NOT
+    driven-only — it shows every catalog row assigned to the class.
+
+SPEED CAPTIONS (client-side, on the edit page):
+  "Using <source> default (<value>) — change to override just this train"
+  "Custom for this train — <source> default is <value> [Reset to <value>]"
+  <source> is "group <Name>" or "subclass <Name>" or "catalog data"
+
+================================================================================
+SECTION 12: APPROVED DESIGNS NOT YET BUILT
+================================================================================
+
+These were previewed and approved but not yet built into the real app.
+Keep these in mind for future sessions.
+
+1. AMMETER PANEL (design_previews/preview_ammeter_panel.html)
+   Green accent. Needle gauge, 0-8 kA scale, colour bands match real cab photo.
+   Endpoint: CurrentDrivableActor.Function.HUD_GetAmmeter, divide Amps by 1000.
+   Position: PROVISIONAL bottom-left — conflicts with upcoming-limits panel.
+   Needle sweep angle (-50° to +50°): hand-picked, needs verification vs real
+   gauge via HUD Lab. Will add to gauges_registry.json when built.
+
+2. BRAKE PIPE / MAIN RESERVOIR GAUGES
+   Two endpoints confirmed: HUD_GetBrakeGauge_1 and HUD_GetBrakeGauge_2.
+   Which is which, and psi scaling: NOT YET DETERMINED.
+   Use HUD Lab to watch both side-by-side during driving to find out.
+   NOT YET BUILT. Do not build without confirming the above first.
+
+3. DASHBOARD REWIRING TO KNOWN TRAINS V2  [PARTIALLY DONE]
+   The analogue speedometer already reads per-train dial_max_mph and
+   max_speed_mph from the Known Trains v2 API. What remains is the older
+   ring-gauge path below.
+   The live Dashboard (speed gauge ring, max-speed tick) still reads from the
+   OLD loco_profiles.py system, not the new Known Trains v2 hierarchy.
+   The DIAL_HEADROOM_MULTIPLIER = 1.2 placeholder in dashboard.js is waiting
+   to be replaced by real resolve_speeds() data from train_classes_db.
+   Deliberately deferred. When this is picked up, it also resolves the
+   placeholder — the real two-value (max_speed + dial_max) resolution from
+   Known Trains v2 is exactly what that placeholder is standing in for.
+
+4. GSM-R RADIO PANEL
+   On hold. Real telemetry confirmed on BP_Class375-6_GSMR_Radio.
+   Visual mockup (Siemens cab replica, fixed colours) already approved.
+   Blocked on: get() each property during real registration/call to confirm
+   value shapes and PageData mapping.
+
+5. PER-INSTRUMENT CONFIGURABLE VALUES IN KNOWN TRAINS V2
+   Every future instrument (ammeter, brake gauges) will need its own definition
+   of what's configurable and what its range means — just as speed already has
+   two independent values (max speed + dial max). Not yet specced per-gauge.
+   Design this as part of building the actual instrument, not in advance.
+
+================================================================================
+SECTION 13: THINGS CONFIRMED FROM REAL HARDWARE TESTING
+================================================================================
+
+- Other HUD app DB: auto-detected correctly in Downloads folder
+- Live loco detection: feeds both loco_profiles AND train_classes_db
+- Sync pagination bug: confirmed and fixed — naive OR-based cursor fails
+  when many rows share the same timestamp (a bulk import gives all rows the
+  same second-precision updated_at). The correct pattern: collect id set
+  first, sort, slice with id > after_id cursor.
+- Timestamp timezone bug: client was generating UTC timestamps via
+  toISOString(), server uses naive local time. Fix: generate client-side
+  timestamps in local wall-clock time to match the server's convention.
+  (Only relevant if offline sync is being built — excluded from this spec.)
+- images/train_classes/ path: STILL NOT CONFIRMED against real hardware.
+  The guess is it lives as a sibling of the other app's db/ folder.
+- WAL concurrent-read assumption: STILL NOT CONFIRMED against real concurrent
+  write scenario.
+
+================================================================================
+SECTION 14: THINGS THE USER SPECIFICALLY ASKED FOR / DECISIONS MADE
+================================================================================
+
+- Preview before build: always. Deliver the .html file, not just a screenshot.
+- Nav: never hand-built, always the topbar/nav pattern above.
+- Known Trains: DRIVEN TRAINS ONLY. Catalog import enriches but doesn't surface.
+- Dashboard rewiring: deliberately deferred to a later session.
+- Versioning: MAJOR.MINOR.PATCH as defined in Section 4C.
+- Offline sync and HTTPS: EXCLUDED. Removed from the tree for real in v7.37.0.
+- PWA/home screen icons: EXCLUDED from this recreation.
+- HUD Lab as a sandbox: multi-pill grid, one pill per path, auto-reflows.
+- No explanation while working: deliver files, brief summary at end.
+- Speed gauge max-speed tick: approved and shipped. DIAL_HEADROOM_MULTIPLIER
+  placeholder still in place pending Dashboard rewiring.
+- "Needs attention" on Known Trains: shows entries missing name/group/subclass.
+  Disappears automatically when everything is set up.
+- Status dot: 4-tier (red/amber/yellow/green), percentage-based so adding
+  more fields in future doesn't break existing thresholds.
+- Power chips: styled checkbox labels, show Bi-Mode/Tri-Mode live.
+- Electrification types: 25kV AC overhead, 750V DC third rail, 630V DC fourth
+  rail. 6.25kV AC excluded (obsolete since the 1980s — confirmed via research).
+
+================================================================================
+SECTION 15: OPEN QUESTIONS / NEXT STEPS AT THE USER'S COMPUTER
+================================================================================
+
+When the user is next at their computer with the game running:
+
+1. Confirm images/train_classes/ path (see Section 13)
+2. Use HUD Lab → add HUD_GetBrakeGauge_1 and HUD_GetBrakeGauge_2 side by side
+   to determine which is brake pipe, which is main reservoir, and the psi scale
+3. Check ammeter needle sweep angle vs the real physical gauge via HUD Lab
+4. Test Known Trains with a freshly driven loco to confirm the driven-only
+   filter works correctly end-to-end on real hardware
+5. Confirm WAL concurrent-read assumption when other app is actively writing

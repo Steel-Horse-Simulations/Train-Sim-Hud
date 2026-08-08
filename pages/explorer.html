@@ -78,6 +78,7 @@
         <button class="btn primary" onclick="diffRecords()">Map fields</button>
         <button class="btn primary" onclick="decodeStride()">Decode all times</button>
         <button class="btn primary" onclick="extractServices()">Extract services</button>
+        <button class="btn primary" onclick="findStops()">Find stop points</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -353,6 +354,39 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function findStops() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Resolving station and type names against the name table…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/stops',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`
+      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');return;}
+    const good=d.confirmed;
+    status.innerHTML=`<span style="color:var(--status-${good?'green':'amber'});">`
+      +`${d.typed_stop_point} typed StopPoint, ${d.with_station} with a station name</span>`
+      +` <span class="small dim">of ${d.total_times} times · shift ${d.shift} · ${esc(d.encoding)}`
+      +(d.corroboration!=null?` · corroboration ${(d.corroboration*100).toFixed(0)}%`:'')+`</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);`
+      +`border-left:3px solid var(--status-${good?'green':'amber'});">${esc(d.verdict)}</p>`
+      +(d.services||[]).slice(0,20).map(sv=>`
+        <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+          <div><strong>${sv.stop_count} stops</strong> <span class="small dim">of ${sv.track_points} track points ·
+            ${sv.distinct_stations} stations · ${sv.paired_times} arr/dep pairs</span>
+            <span class="mono" style="color:var(--accent-bright);">${esc(sv.first)} → ${esc(sv.last)}</span></div>
+          ${(sv.stops||[]).slice(0,14).map(st=>`<div class="mono" style="font-size:11px;">
+            <span style="color:var(--accent-bright);">${esc(st.time)}</span>
+            ${esc(st.station||'(no station name)')}
+            <span class="small dim">${esc(st.type||'')}</span></div>`).join('')}
+        </div>`).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }
 
 async function extractServices() {

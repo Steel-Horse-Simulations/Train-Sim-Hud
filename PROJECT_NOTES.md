@@ -1,6 +1,6 @@
 # TSW Hud — Project Notes
 
-Living reference document for continuity between chats. Last updated after v3.0.0.
+Living reference document for continuity between chats. Last updated after v7.37.0.
 If you're a new Claude chat reading this for the first time: welcome, and please read
 this whole file before doing anything else.
 
@@ -129,47 +129,25 @@ TSW Hud/
     customisation.html          - theme picker + "Known Trains" panel (the
                                ORIGINAL simple loco_profiles.py list, NOT the new
                                train_classes admin page)
-    train_classes.html          - NEW v3.0.0: admin page, browse/edit imported real
-                               train classes as a thumbnail card grid, "show hidden
-                               / non-UK" toggle. IMPORTANT: this is a flat editor
-                               for individual train_classes_db rows - does NOT
-                               implement the Group/Subclass hierarchy - see
-                               known_trains.html below for that (shipped v6.0.0).
-                               Both pages coexist; train_classes.html not removed.
-    known_trains.html            - NEW v6.0.0: Known Trains v2 main list, grouped by
-                               group name, status dots, needs-attention section
-    known_trains_edit.html       - NEW v6.0.0: Known Trains v2 individual edit page
-    known_trains_group.html      - NEW v6.0.0: Known Trains v2 group settings page
-    install.html                 - NEW v3.2.0: hub page listing all installable HUD
-                               icons, links to each real page for its own install prompt
-    install-prompt.js            - NEW v3.2.0: shared "Add to Home Screen" helper,
-                               shows a real Install button if the browser offers one,
-                               falls back to instructions if it doesn't fire (no Service
-                               Worker yet - see offline sync in IN PROGRESS below)
-    manifest-dashboard.json,
-    manifest-timetables.json,
-    manifest-train-classes.json  - NEW v3.2.0: PWA manifests, one per installable app
-    icons/                        - NEW v3.2.0: PWA icon PNGs (192/512px) for the three
-                               installable apps, fixed purple regardless of active theme
-  certs/                        - NEW v4.0.0: cert.pem + key.pem go here (not bundled,
-                               user-generated via mkcert per HTTPS_SETUP.md) - empty
-                               folder = app runs on plain HTTP as before
-  sw.js                         - NEW v4.0.0: Service Worker, caches the app shell for
-                               offline cold-launch. Only takes effect over HTTPS
-  offline-db.js                 - NEW v4.0.0: IndexedDB wrapper (journeys/train_classes/
-                               pending_changes), works over plain HTTP
-  sync-client.js                - NEW v4.0.0: TSWSync - orchestrates pull/push, exposes
-                               getStatus()/onStatusChange()/queueEdit()/sync()
-HTTPS_SETUP.md                  - NEW v4.0.0: step-by-step mkcert walkthrough (project root)
-requirements.txt                - added cryptography>=42 in v4.0.0 (reads cert.pem expiry
-                               for the Setup page's certificate status panel)
+    classes.html                - Classes (individual train classes + subclasses).
+                               Was called "Groups" before v7.x; API paths still
+                               say groups, deliberately unchanged.
+    groups.html                 - Groups = families. Several Classes belong to one
+                               Group (e.g. Class 801/802/805 under "Class 8xx").
+    operators.html              - Operators + their liveries (colour per livery,
+                               logo by operator short_code)
+    known_trains.html            - Known Trains v2 main list, grouped by family name
+                               (falling back to class name), status dots,
+                               needs-attention section. DRIVEN TRAINS ONLY.
+    known_trains_edit.html       - Known Trains v2 individual edit page (incl. variants)
+    known_trains_group.html      - Known Trains v2 class settings page
   design_previews/            - APPROVED but NOT YET BUILT design mockups for the
                                Known Trains v2 hierarchy (see below) - static HTML,
                                safe to open directly in a browser. Not wired into
                                the real app.
 ```
 
-## Current version: 6.0.2
+## Current version: 7.38.0
 
 ## Shipped features (working, tested against real data)
 
@@ -893,3 +871,64 @@ API detects, immediately. User wanted that same immediacy for the new catalog to
   every PATCH API call report failure even when the underlying SQL succeeded -
   caught via Flask test-client testing before shipping, fixed. Reminder to always
   test the actual return path of DB helper functions, not just that the SQL runs.
+
+
+## SHIPPED in v7.37.0 - Spec-drift cleanup
+
+Housekeeping pass, no new features. Brings the tree back in line with the spec.
+
+**Known Trains v2 is now genuinely driven-only (spec section 3C).** This was
+specified but had never actually been implemented - the filter was on
+`variant_of_class_id IS NULL` and `is_visible`, never on `times_seen`, so a
+catalog import could surface trains that had never been driven.
+`list_train_classes()` gained a `driven_only` argument and `needs_attention()`
+the same; `/api/known_trains/list` passes True for both. The two filters must
+agree - a needs-attention entry with no corresponding visible row would be an
+item the person cannot go and fix. Everything else that calls
+`list_train_classes()` (the group-members list on the Classes page) leaves it
+False and still sees the whole catalog.
+
+**Removed everything spec section 3 excludes.** These were all shipped in the
+v3.2.0-v4.1.0 era, before the decision to drop PWA/offline/HTTPS, and had
+simply never been taken back out:
+  - `pages/sw.js` (+ its dynamic Flask route), `offline-db.js`,
+    `sync-client.js`, `pages/icons/` (16 PNGs)
+  - `/api/sync/changes` and `/api/sync/push`
+  - `certs/`, `HTTPS_SETUP.md`, `/api/https_cert_status`, `get_ssl_context()`,
+    `get_https_cert_status()`; `run_flask()` is now plain HTTP unconditionally
+  - `cryptography` dropped from `requirements.txt` (only the cert reader used it)
+
+`timetables_browser.html` was the one page still wired to the sync layer - it
+now saves via direct `PATCH` to `/api/timetables/<id>` and
+`/api/timetables/stops/<id>`, as the spec says it should. Its offline banner,
+IndexedDB fallbacks and Service Worker registration are gone. `timetable.html`
+lost its stale `install-prompt.js` tag (that file itself was already absent, so
+the tag was a guaranteed 404 on every page load).
+
+Note: `get_changes_since()` in `timetable_db.py` and `train_classes_db.py` is
+kept. Nothing calls it now, but it carries the hard-won keyset-pagination fix
+(collect ids, sort, slice - never a `since OR id >` clause) and costs nothing
+to leave in place.
+
+**Packaging.** `data/*.db` and `diagnostics/*.log` are no longer in the zip.
+The databases shipped empty, so extracting over a real install would have
+replaced live Known Trains data with nothing.
+
+**Docs.** `TSW_HUD_NEW_CHAT_SPEC.txt` had drifted a long way - it still
+described v6.1.3, still listed `train_classes.html` and `/api/train_classes`
+(both removed at some point since), and knew nothing about families, operators
+and liveries, variants or the analogue speedometer. Updated, and the regression
+checklist's page/route list along with it.
+
+
+## SHIPPED in v7.38.0 - StopPoint identification
+
+`find_stop_points()` in `pak_tools.py`, `/api/paks/stops`, and a **Find stop
+points** button on Discovery. Separates real station calls from the simulated
+running times around them by resolving FName references against the name table
+in the sibling `.uasset`.
+
+Validated against synthetic records of known layout (`tests/`), NOT yet against
+a real pak. Full write-up, including eight failed approaches and three fixture
+bugs that each produced a misleading failure, is in
+`docs/TIMETABLE_EXTRACTION_FINDINGS.md`. Read that before touching the scoring.
