@@ -4,7 +4,7 @@ TSW HUD — NEW CHAT HANDOFF SPECIFICATION
 This document is a complete specification for recreating the TSW Hud project in
 a new chat session. Read every section before writing a single line of code.
 
-VERSION THIS SPEC DESCRIBES: 7.38.1
+VERSION THIS SPEC DESCRIBES: 7.39.0
 
 ================================================================================
 SECTION 1: WHAT THIS PROJECT IS
@@ -559,7 +559,11 @@ LIVE JOURNEY (no pak extraction needed):
 PAK / GAME FILES (Discovery page, offline timetable extraction):
   GET  /api/paks/repak           → is repak available
   POST /api/paks/{list,timetables,scan_all,inspect,timespans,analyse,diff,
-                  decode,services,stops,unpack,clear_extracted}
+                  decode,services,stops,records,unpack,clear_extracted}
+  /api/paks/records  → reads a DataTrack as Unreal TAGGED PROPERTIES, field
+                       by field by name. This is the correct reader for these
+                       assets; /api/paks/stops is the statistical fallback
+                       for assets that really are opaque binary.
   /api/paks/services → ascending runs of times, one per candidate service
   /api/paks/stops    → separates real station stops from the simulated
                        running times, by resolving FName references against

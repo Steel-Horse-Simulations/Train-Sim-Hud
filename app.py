@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.38.1"
+APP_VERSION = "7.39.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1478,6 +1478,34 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/records", methods=["POST"])
+def paks_records():
+    """Reads a DataTrack as Unreal TAGGED PROPERTIES and returns the records
+    field by field, by name. Body: {"asset_name": "...DataTrack.uasset"}
+
+    This supersedes /api/paks/stops for these assets. The Leven Branch name
+    table contains ArrayProperty/EnumProperty/FloatProperty/IntProperty and
+    field names like DataType and Distance, which means the asset is
+    self-describing - so nothing needs to be inferred statistically.
+    /api/paks/stops is kept for assets that really are opaque binary."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    return jsonify(pak_tools.parse_track_records(path))
 
 
 @app.route("/api/paks/stops", methods=["POST"])

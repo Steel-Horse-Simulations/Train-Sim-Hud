@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.38.1
+## Current version: 7.39.0
 
 ## Shipped features (working, tested against real data)
 

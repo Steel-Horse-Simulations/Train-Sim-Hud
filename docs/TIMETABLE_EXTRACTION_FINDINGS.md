@@ -384,3 +384,72 @@ possibly point at. Then inspect `FCE_Timetable_TT.uasset` and
 Note `name_count` is 88 here and section 5 counts 88 station names in the
 index asset. Probably a coincidence - none of these 88 match the station
 shape - but worth confirming rather than assuming.
+
+## THE FORMAT IS TAGGED PROPERTIES - section 8 was wrong (v7.39.0)
+
+`names_sample` from the second real run settles it. The Leven Branch layer's
+88-entry name table contains:
+
+```
+ArrayProperty  EnumProperty  FloatProperty  IntProperty  MapProperty  NameProperty
+DataType  Distance  Direction  DirectionOfTravel  InstructionIndex
+GoViaIndex  ActionIndices  Location  NetworkRibbonLocation  Guid
+ETimetableTrackDataType::{StopPoint, ActionPoint, GoVia, MultiOccupancy,
+                          ReversePoint, TrackSectionEntry, TrackSectionExit}
+EDirectionOfTravel::{Forwards, Backwards}
+P2K51 ... P2K74           <- NetworkRibbonLocation values
+```
+
+Those are Unreal's **tagged property** type names. Section 8 reasoned that
+"Stream" in `RouteTimetableDataTrackStream` implied a custom `Serialize()`
+writing raw binary, and that the record layout would have to be
+reverse-engineered from byte patterns. **That was wrong.** The asset is
+self-describing: every record can be read field by field, by name, with no
+inference at all.
+
+Also settled: `names[0]` is `None` and `names[1]` is the package path, which
+is Unreal's standard name-map layout. So the recovered table IS the real one -
+position equals index, and the whole shift-recovery problem was never a real
+problem.
+
+### Why the statistical run picked shift -6, and why it was never going to work
+
+Shift -6 maps `StopPoint` onto `EnumProperty` and `ActionPoint` onto
+`Distance` - the property MACHINERY names. Those genuinely appear once per
+record with a perfectly consistent delta, so the scoring was not
+malfunctioning. It found a real per-record field; just not the one it was
+looking for. No further statistics would have fixed it. This is the lesson:
+**when the data is self-describing, read it - do not measure it.**
+
+### `parse_track_records()` - the parser
+
+`pak_tools.parse_track_records()`, endpoint `/api/paks/records`, button
+**Read records (tagged properties)** on Discovery.
+
+Walks `FPropertyTag` chains: FName Name (None terminates the record), FName
+Type, int32 Size, int32 ArrayIndex, a type-specific header, an optional
+HasPropertyGuid byte, then Size bytes of value. Records are found by scanning
+for a readable chain rather than trusting any header offset, so no engine
+version needs to be known. UE4 gained the HasPropertyGuid byte partway through
+its life, so both layouts are tried and whichever parses more records wins.
+
+Validated against `tests/synth_tagged.py`, written from the FPropertyTag spec
+independently of the parser: **220/220 records and 48/48 StopPoints recovered
+exactly, with and without the guid byte**, field names and values intact, and
+the first stop correctly carrying a departure and no arrival. Opaque random
+bytes are refused rather than turned into records.
+
+### What this does NOT solve
+
+Still no station names. `NetworkRibbonLocation` holds values like `P2K51`,
+which are track ribbon identifiers, not station names. The stop records give
+times, distances, instruction indices and ribbons - so a stop is precisely
+located on the network, but not yet labelled. Mapping ribbon IDs to station
+names is the remaining piece, and the index asset
+(`FCE_Timetable_TT.uasset`) or `MasterDataTrack` is where to look.
+
+### Next step
+
+Run **Read records** on the real Leven Branch layer. `field_usage` and
+`data_types` will show the actual field set - the 60-name cap has been raised,
+so the full table comes back too.

@@ -79,6 +79,7 @@
         <button class="btn primary" onclick="decodeStride()">Decode all times</button>
         <button class="btn primary" onclick="extractServices()">Extract services</button>
         <button class="btn primary" onclick="findStops()">Find stop points</button>
+        <button class="btn primary" onclick="readRecords()">Read records (tagged properties)</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -356,6 +357,39 @@ async function scanAllPaks() {
   }
 }
 
+async function readRecords() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Reading records as tagged properties…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/records',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`
+      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');return;}
+    status.innerHTML=`<span style="color:var(--status-green);">${d.records_parsed} records, `
+      +`${d.stop_points} StopPoint</span> <span class="small dim">·`
+      +` name table ${d.name_count} · guid byte ${d.guid_byte}</span>`;
+    status.style.color='';
+    const fields=(d.field_usage||[]).map(f=>`${esc(f[0])} <span class="dim">${f[1]}</span>`).join(' · ');
+    const types=(d.data_types||[]).map(t=>`${esc(t[0])} <span class="dim">${t[1]}</span>`).join(' · ');
+    const rec=r=>`<div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+        ${Object.entries(r.fields||{}).map(([k,v])=>`<div class="mono" style="font-size:11px;">
+          <span style="color:var(--text-dim);">${esc(k)}</span>
+          <span style="color:var(--accent-bright);">${esc(v&&v.time?v.time:JSON.stringify(v))}</span></div>`).join('')}
+      </div>`;
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);">${esc(d.verdict)}</p>`
+      +`<p class="small" style="margin:6px 0;">Types: ${types}</p>`
+      +`<p class="small" style="margin:6px 0;">Fields: ${fields}</p>`
+      +`<p class="small dim" style="margin-top:10px;">Sample StopPoints</p>`
+      +(d.sample_stops||[]).map(rec).join('')
+      +`<p class="small dim" style="margin-top:10px;">First records of any type</p>`
+      +(d.sample_records||[]).slice(0,4).map(rec).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
 async function findStops() {
   const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
   const asset=document.getElementById('pak-asset').value.trim();
@@ -376,6 +410,11 @@ async function findStops() {
     status.style.color='';
     out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);`
       +`border-left:3px solid var(--status-${good?'green':'amber'});">${esc(d.verdict)}</p>`
+      +(d.names_sample&&d.station_names===0
+         ? `<p class="small dim" style="margin:8px 0 4px;">Name table (${d.name_count}) - no station-shaped entries:</p>`
+           +`<div class="mono" style="font-size:10.5px;color:var(--text-dim);max-height:220px;overflow:auto;`
+           +`padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">`
+           +d.names_sample.map((n,i)=>`${i}. ${esc(n)}`).join('<br>')+`</div>` : '')
       +(d.services||[]).slice(0,20).map(sv=>`
         <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
           <div><strong>${sv.stop_count} stops</strong> <span class="small dim">of ${sv.track_points} track points ·

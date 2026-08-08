@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.38.1**
+**App version at end of session: 7.39.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,34 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.39.0 - the format is TAGGED PROPERTIES
+
+The name table from the second real run settles the format question, and
+section 8 of the findings doc was wrong. The Leven layer's 88 names include
+ArrayProperty / EnumProperty / FloatProperty / IntProperty / MapProperty /
+NameProperty and field names DataType, Distance, DirectionOfTravel,
+InstructionIndex, GoViaIndex, ActionIndices, NetworkRibbonLocation. That is
+Unreal's tagged-property serialisation - the asset is self-describing, so
+nothing needs to be inferred.
+
+`parse_track_records()` / `/api/paks/records` / **Read records (tagged
+properties)** walks FPropertyTag chains and reads each record field by field
+by name. Validated against a fixture written from the format spec: 220/220
+records, 48/48 StopPoints, with and without the HasPropertyGuid byte, first
+stop correctly departure-only. Random bytes are refused.
+
+This explains the earlier statistical result rather than contradicting it:
+shift -6 maps StopPoint onto "EnumProperty" and ActionPoint onto "Distance",
+i.e. the property machinery names, which really do appear once per record with
+a consistent delta. The scoring found a real field, just the wrong one. No
+further statistics would have helped. `find_stop_points()` is kept for assets
+that genuinely are opaque.
+
+**Still unsolved: station names.** NetworkRibbonLocation holds P2K51-style
+track ribbon IDs, not station names. Stops are precisely located but unlabelled.
+
+**Next: run Read records on the real Leven Branch layer.**
 
 ## What changed in v7.38.1 - first real run, and a false confirmation
 

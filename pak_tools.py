@@ -1739,7 +1739,7 @@ def find_stop_points(path, radius=192, max_times=8000, min_run=4):
         "shift": shift,
         "shift_scores": ranked[:5],
         "tied_shifts": tied,
-        "names_sample": names[:60],
+        "names_sample": names[:400],
         "score": best["score"],
         "corroboration": round(corroborated, 3) if corroborated is not None else None,
         "confirmed": trustworthy,
@@ -1754,4 +1754,260 @@ def find_stop_points(path, radius=192, max_times=8000, min_run=4):
         "service_count": len(runs),
         "services": services,
         "verdict": verdict,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tagged-property parsing - the RIGHT way to read these assets
+# ---------------------------------------------------------------------------
+# Section 8 of the findings doc guessed that RouteTimetableDataTrackStream,
+# being named "Stream", wrote raw binary through a custom Serialize() and
+# would have to be reverse-engineered byte by byte. THAT GUESS WAS WRONG, and
+# the name table of the real Leven Branch layer proves it: it contains
+# ArrayProperty, EnumProperty, FloatProperty, IntProperty, MapProperty and
+# NameProperty alongside field names like DataType, Distance, Direction,
+# InstructionIndex, GoViaIndex, ActionIndices and NetworkRibbonLocation.
+#
+# Those are Unreal's TAGGED PROPERTY type names. The asset is self-describing
+# after all, so there is nothing to infer statistically - each record can be
+# read field by field, by name.
+#
+# This also explains the last statistical run. It picked shift -6, which maps
+# StopPoint onto "EnumProperty" and ActionPoint onto "Distance" - the property
+# MACHINERY names. Those genuinely do appear once per record with a perfectly
+# consistent delta, so the scoring was not malfunctioning: it found a real
+# per-record field, just not the one being looked for. No amount of extra
+# statistics would have fixed that. find_stop_points() is kept for assets that
+# really are opaque, but for anything tagged this supersedes it.
+#
+# FPropertyTag layout (UE4):
+#     FName  Name             (int32 index, int32 number)
+#       -> "None" terminates the record
+#     FName  Type
+#     int32  Size             (bytes of value data that follow the header)
+#     int32  ArrayIndex
+#     type-specific header:
+#       StructProperty  FName StructName, FGuid(16)
+#       BoolProperty    uint8 value        (stored in the TAG, not the body)
+#       ByteProperty    FName EnumName
+#       EnumProperty    FName EnumName
+#       ArrayProperty   FName InnerType
+#       SetProperty     FName InnerType
+#       MapProperty     FName KeyType, FName ValueType
+#     uint8  HasPropertyGuid
+#       if set, FGuid(16)
+#     <Size bytes of value>
+
+_PROP_SUFFIX = "Property"
+_MAX_PROP_SIZE = 1 << 16
+
+
+def _fname_at(data, off, names):
+    """Reads an FName (int32 index + int32 Number). Returns (text, number) or
+    None if the index is not in the table."""
+    if off + 8 > len(data):
+        return None
+    idx, num = struct.unpack_from("<ii", data, off)
+    if 0 <= idx < len(names) and 0 <= num < 1_000_000:
+        return names[idx], num
+    return None
+
+
+def _read_tag(data, off, names, guid_byte=True):
+    """Reads one FPropertyTag. Returns a dict, the string "None" at a record
+    terminator, or None if this is not a tag."""
+    nm = _fname_at(data, off, names)
+    if nm is None:
+        return None
+    if nm[0] == "None":
+        return "None"
+    ty = _fname_at(data, off + 8, names)
+    if ty is None or not ty[0].endswith(_PROP_SUFFIX):
+        return None
+    cur = off + 16
+    size, array_index = struct.unpack_from("<ii", data, cur)
+    if not (0 <= size <= _MAX_PROP_SIZE and 0 <= array_index < 4096):
+        return None
+    cur += 8
+    extra = {}
+    t = ty[0]
+    if t == "StructProperty":
+        sn = _fname_at(data, cur, names)
+        if sn is None:
+            return None
+        extra["struct"] = sn[0]
+        cur += 8 + 16
+    elif t == "BoolProperty":
+        extra["bool"] = data[cur] if cur < len(data) else None
+        cur += 1
+    elif t in ("ByteProperty", "EnumProperty", "ArrayProperty", "SetProperty"):
+        en = _fname_at(data, cur, names)
+        if en is None:
+            return None
+        extra["inner"] = en[0]
+        cur += 8
+    elif t == "MapProperty":
+        k = _fname_at(data, cur, names)
+        v = _fname_at(data, cur + 8, names)
+        if k is None or v is None:
+            return None
+        extra["key"], extra["value_type"] = k[0], v[0]
+        cur += 16
+    if guid_byte:
+        if cur >= len(data):
+            return None
+        has_guid = data[cur]
+        if has_guid not in (0, 1):
+            return None
+        cur += 1
+        if has_guid:
+            cur += 16
+    return {"name": nm[0], "type": t, "size": size, "array_index": array_index,
+            "value_offset": cur, "end": cur + size, "tag_offset": off, **extra}
+
+
+def _decode_value(data, tag, names):
+    """Decodes the value types that carry timetable meaning. Anything else is
+    left as raw bytes - the point is to read the schedule, not to reimplement
+    Unreal."""
+    t, off, size = tag["type"], tag["value_offset"], tag["size"]
+    try:
+        if t == "EnumProperty" or t == "NameProperty":
+            v = _fname_at(data, off, names)
+            return v[0] if v else None
+        if t == "IntProperty" and size >= 4:
+            return struct.unpack_from("<i", data, off)[0]
+        if t == "FloatProperty" and size >= 4:
+            return round(struct.unpack_from("<f", data, off)[0], 4)
+        if t == "BoolProperty":
+            return bool(tag.get("bool"))
+        if t == "StructProperty" and size == 8:
+            # FTimespan and FDateTime are both a bare int64 of 100ns ticks.
+            (raw,) = struct.unpack_from("<q", data, off)
+            if 0 <= raw < TICKS_PER_DAY:
+                return {"ticks": raw, "time": _fmt_hms(raw / TICKS_PER_SECOND)}
+            return raw
+        if t == "StructProperty" and size == 12:
+            return [round(x, 3) for x in struct.unpack_from("<fff", data, off)]
+    except struct.error:
+        return None
+    return None
+
+
+def _walk_record(data, off, names, guid_byte=True, max_props=64):
+    """Reads a chain of tags up to the terminating None. Returns (props, end)
+    or None if this is not a record."""
+    props, cur = [], off
+    for _ in range(max_props):
+        tag = _read_tag(data, cur, names, guid_byte=guid_byte)
+        if tag == "None":
+            return props, cur + 8
+        if tag is None:
+            return None
+        props.append(tag)
+        cur = tag["end"]
+    return None
+
+
+def parse_track_records(path, max_records=4000, min_props=2):
+    """Reads a RouteTimetableDataTrack as tagged properties and returns the
+    StopPoints with their times, by name.
+
+    No shift recovery, no statistics, no null model - the asset says what
+    each field is. This supersedes find_stop_points() for tagged assets;
+    that one remains for assets that really are opaque binary.
+
+    Records are found by scanning for a readable tag chain rather than by
+    trusting any header offset, so it works without knowing the engine
+    version or where the export begins. A chain must terminate in None and
+    hold at least min_props properties to be accepted, which is a strong
+    filter: arbitrary bytes almost never produce two consecutive valid tags
+    whose declared sizes chain into a terminator.
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    uasset = _sibling_uasset(path)
+    if not uasset:
+        return {"error": "no_sibling_uasset", "path": path,
+                "detail": "Point this at the .uexp - the name table lives in "
+                          "the matching .uasset next to it."}
+    with open(uasset, "rb") as f:
+        names = _read_fname_strings(f.read())
+    if not names:
+        return {"error": "no_name_table", "path": uasset}
+    with open(path, "rb") as f:
+        data = f.read()
+
+    # UE4 gained the HasPropertyGuid byte partway through its life. Rather
+    # than assume, both are tried and whichever parses more records wins.
+    best = None
+    for guid_byte in (True, False):
+        records, cur, n = [], 0, len(data)
+        while cur < n and len(records) < max_records:
+            got = _walk_record(data, cur, names, guid_byte=guid_byte)
+            if got and len(got[0]) >= min_props:
+                props, end = got
+                records.append((cur, props))
+                cur = end
+                continue
+            cur += 1
+        if best is None or len(records) > len(best[1]):
+            best = (guid_byte, records)
+    guid_byte, records = best
+
+    if not records:
+        return {"error": "no_records_parsed", "path": path,
+                "name_count": len(names),
+                "detail": "No readable tag chains. This asset may genuinely "
+                          "be opaque binary - fall back to /api/paks/stops."}
+
+    field_use = Counter()
+    types_seen = Counter()
+    out = []
+    for off, props in records:
+        rec = {"offset": off, "fields": {}}
+        for tag in props:
+            field_use[tag["name"]] += 1
+            val = _decode_value(data, tag, names)
+            rec["fields"][tag["name"]] = val
+        dt = rec["fields"].get("DataType")
+        if isinstance(dt, str):
+            types_seen[dt.split("::")[-1]] += 1
+        out.append(rec)
+
+    def times_of(rec):
+        vals = []
+        for k, v in rec["fields"].items():
+            if isinstance(v, dict) and "time" in v:
+                vals.append((k, v["time"]))
+        return vals
+
+    stops = [r for r in out
+             if isinstance(r["fields"].get("DataType"), str)
+             and r["fields"]["DataType"].endswith("StopPoint")]
+
+    return {
+        "path": path, "uasset": uasset,
+        "name_count": len(names),
+        "guid_byte": guid_byte,
+        "records_parsed": len(out),
+        "field_usage": field_use.most_common(30),
+        "data_types": types_seen.most_common(),
+        "stop_points": len(stops),
+        "sample_records": [
+            {"offset": r["offset"], "fields": r["fields"], "times": times_of(r)}
+            for r in out[:8]
+        ],
+        "sample_stops": [
+            {"offset": r["offset"], "fields": r["fields"], "times": times_of(r)}
+            for r in stops[:20]
+        ],
+        "verdict": (
+            f"{len(out)} records read as tagged properties, "
+            f"{len(stops)} of them StopPoint. Field names come from the asset "
+            "itself - nothing here is inferred."
+            if stops else
+            f"{len(out)} records read, but none carry a DataType of StopPoint. "
+            "Check field_usage for what these records actually are."
+        ),
     }
