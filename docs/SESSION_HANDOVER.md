@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.41.0**
+**App version at end of session: 7.42.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,21 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.42.0 - map zoom + livery-coloured rail overlay
+
+Zoom 15 -> 17. Rail overlay and player dot now take the driven train's livery
+colour via a new `livery_colour` field on `/api/loco` and a shared
+`train_classes_db.resolve_livery_colour()`.
+
+Tinting uses an SVG `feFlood` + `SourceAlpha` filter for an exact colour. CSS
+`hue-rotate` was tried and rejected - it is a matrix approximation and turned
+blue into cyan on test tiles. Lightness is floored at 50% (hue preserved) so
+dark liveries stay visible on a dark basemap.
+
+Caveat: Leaflet comes from unpkg, unreachable from the dev sandbox, so the map
+never initialises there. Colour resolution, the tint filter and the lightness
+floor were tested directly; the live map at zoom 17 was not.
 
 ## What changed in v7.41.0 - FIXED-LENGTH records, 12,207 x 707 bytes
 

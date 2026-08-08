@@ -4,7 +4,7 @@ TSW HUD — NEW CHAT HANDOFF SPECIFICATION
 This document is a complete specification for recreating the TSW Hud project in
 a new chat session. Read every section before writing a single line of code.
 
-VERSION THIS SPEC DESCRIBES: 7.41.0
+VERSION THIS SPEC DESCRIBES: 7.42.0
 
 ================================================================================
 SECTION 1: WHAT THIS PROJECT IS

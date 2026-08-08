@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.41.0"
+APP_VERSION = "7.42.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -2273,6 +2273,7 @@ def loco_identity():
     dial_max = max_speed * 1.2 if max_speed else None
 
     resolved = None
+    colour = None
 
     # 1) Direct match: this raw/clean identity has its own train_classes row
     # (covers ordinary trains AND the non-destructive Variants feature,
@@ -2306,6 +2307,9 @@ def loco_identity():
             display_name = display_row["display_name"]
         if display_row.get("speedometer") in ("analogue", "digital"):
             speedometer = display_row["speedometer"]
+        # A variant presents AS its parent, so the colour comes from the
+        # display row, not the row that actually matched.
+        colour = train_classes_db.resolve_livery_colour(display_row)
 
     # 2) Old-style merge alias: the source row was deleted and future
     # sightings redirect to a target class, optionally with its own
@@ -2323,6 +2327,7 @@ def loco_identity():
                     display_name = target["display_name"]
                 if target.get("speedometer") in ("analogue", "digital"):
                     speedometer = target["speedometer"]
+                colour = train_classes_db.resolve_livery_colour(target)
 
     if resolved is not None:
         if resolved.get("max_speed_mph") is not None:
@@ -2336,6 +2341,7 @@ def loco_identity():
         "max_speed_mph": max_speed,
         "dial_max_mph": dial_max,
         "speedometer": speedometer,
+        "livery_colour": colour,
     })
 
 

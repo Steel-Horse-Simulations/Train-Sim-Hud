@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.41.0
+## Current version: 7.42.0
 
 ## Shipped features (working, tested against real data)
 
@@ -932,3 +932,40 @@ Validated against synthetic records of known layout (`tests/`), NOT yet against
 a real pak. Full write-up, including eight failed approaches and three fixture
 bugs that each produced a misleading failure, is in
 `docs/TIMETABLE_EXTRACTION_FINDINGS.md`. Read that before touching the scoring.
+
+
+## SHIPPED in v7.42.0 - map zoom and livery-coloured rail overlay
+
+Default map zoom 15 -> 17 (two notches closer).
+
+The rail overlay now takes the colour of the train being driven, as does the
+player dot. `/api/loco` gained `livery_colour`, resolved by a new shared
+`train_classes_db.resolve_livery_colour()` - specific livery colour first,
+operator colour as fallback. That logic previously lived only inside the
+known_trains list endpoint; sharing it stops the map and the pills drifting
+apart. A variant takes its PARENT's colour, matching how it takes the
+parent's name.
+
+**Tinting method, and why not the obvious one.** OpenRailwayMap serves
+pre-rendered raster tiles, so the line colour cannot be set the way a vector
+layer's could. A CSS `hue-rotate` was tried first and is wrong: it is a
+linear matrix approximation, not a true hue rotation, and it drifts badly on
+bright colours - tested against synthetic tiles, it turned blue into cyan and
+red into yellow. The shipped version uses an SVG filter, `feFlood` painted
+through `SourceAlpha`, which replaces every non-transparent pixel with an
+EXACT colour while preserving anti-aliasing.
+
+`tintColour()` floors lightness at 50% while keeping hue, because these are
+dark thin lines on a dark basemap - ScotRail navy #1e3f8f tinted straight is
+nearly invisible, and comes out #2c5dd3. Bright liveries pass through
+untouched. A small drop-shadow glow lifts the lines off the terrain.
+
+`applyLiveryColour()` is called on livery change AND after `initMap()`.
+Neither the tile layer nor the marker exists before the map is built, so an
+earlier version left a stale flood colour whenever the overlay was off and
+never coloured the dot at all if the first livery poll landed before the map.
+
+NOT verified in a browser here: Leaflet is loaded from unpkg, which the dev
+sandbox cannot reach, so the map itself never initialises there. The tint
+filter, the lightness floor and the colour resolution were all tested
+directly; the map's own rendering at zoom 17 was not.

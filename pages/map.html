@@ -53,6 +53,20 @@
     </div>
   </div>
 
+  <!-- Recolours the rail overlay to the current train's livery. The overlay
+       arrives as pre-rendered raster tiles, so the line colour can't be set
+       the way a vector layer's could. feFlood painted through SourceAlpha
+       replaces every non-transparent pixel with an EXACT colour while
+       keeping the anti-aliasing, which a CSS hue-rotate cannot: hue-rotate
+       is a linear matrix approximation and drifts badly on bright colours -
+       tested, and it turned blue into cyan and red into yellow. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="rail-tint" x="0" y="0" width="100%" height="100%">
+      <feFlood flood-color="#a06bf0" result="tint" id="rail-tint-flood"/>
+      <feComposite in="tint" in2="SourceAlpha" operator="in"/>
+    </filter>
+  </svg>
+
   <main>
     <div id="map"></div>
     <div class="waiting" id="waiting">Waiting for player location…</div>
@@ -60,13 +74,14 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const DEFAULT_ZOOM = 15;
+const DEFAULT_ZOOM = 17;   // two notches closer than the previous 15
 const MOVE_DURATION_MS = 1800; // just under the 2s poll interval, so motion finishes before the next update
 let map = null;
 let marker = null;
 let moveAnimFrame = null;
 let railLayer = null;
 let railOverlayOn = false; // defaults to off every launch
+let liveryColour = null;   // colour of the train currently being driven
 
 function animateMarkerAndMap(newLat, newLon) {
   const start = marker.getLatLng();
@@ -116,6 +131,7 @@ function initMap(lat, lon) {
   railLayer = L.tileLayer('https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', {
     maxZoom: 19,
     opacity: 0.85,
+    className: 'rail-tinted',
     attribution: 'Rendering: OpenRailwayMap, Map data: OpenStreetMap contributors',
   });
 
@@ -123,6 +139,70 @@ function initMap(lat, lon) {
   marker = L.marker([lat, lon], { icon }).addTo(map);
 
   document.getElementById('waiting').style.display = 'none';
+  applyLiveryColour();   // the marker exists now
+}
+
+// OpenRailwayMap tiles are dark thin lines on transparent, so on a dark
+// basemap a straight tint reads as almost black. The hue is kept exactly -
+// it is the train's livery - but lightness is floored so a navy or maroon
+// livery is still visible. Without this, ScotRail blue on the dark map is
+// very nearly invisible.
+function tintColour(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  let r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (l >= 0.5) return '#' + m[1];
+  const k = 0.5 / Math.max(l, 0.001);
+  const up = (v) => Math.min(255, Math.round(v * 255 * k));
+  return '#' + [up(r), up(g), up(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+// Applies the livery colour to both the rail lines and the player dot.
+// Called on every livery change AND after the map initialises, because
+// neither the tile layer nor the marker exists before that - an earlier
+// version returned early when the overlay was off, so the filter kept a
+// stale colour and the dot was never coloured at all if the first livery
+// poll landed before the map was built.
+function applyLiveryColour() {
+  const c = tintColour(liveryColour);
+
+  // Set the flood colour whether or not the overlay is currently shown, so
+  // it is already right the moment it is toggled on.
+  const flood = document.getElementById('rail-tint-flood');
+  if (flood && c) flood.setAttribute('flood-color', c);
+
+  const el = document.querySelector('.rail-tinted');
+  if (el) {
+    // The glow lifts the thin lines off the basemap; without it a tinted
+    // line at this zoom is easy to lose against dark terrain.
+    el.style.filter = c ? `url(#rail-tint) drop-shadow(0 0 2px ${c})` : '';
+  }
+
+  const dot = document.querySelector('.player-dot');
+  if (dot) {
+    dot.style.background = c || '';
+    dot.style.boxShadow = c
+      ? `0 0 10px ${c}, 0 0 0 6px color-mix(in srgb, ${c} 25%, transparent)`
+      : '';
+  }
+}
+
+async function pollLivery() {
+  try {
+    const d = await (await fetch('/api/loco')).json();
+    const next = d.livery_colour || null;
+    if (next !== liveryColour) {
+      liveryColour = next;
+      // The player dot takes the same colour, so the train and the line it
+      // is running on read as one thing.
+      applyLiveryColour();
+    }
+  } catch (e) {
+    // leave the last known colour in place
+  }
 }
 
 function toggleRailOverlay() {
@@ -131,6 +211,7 @@ function toggleRailOverlay() {
   railOverlayOn = !railOverlayOn;
   if (railOverlayOn) {
     railLayer.addTo(map);
+    applyLiveryColour();
     btn.textContent = 'Rail Overlay: On';
     btn.classList.add('active');
   } else {
@@ -172,6 +253,8 @@ function exitApp() {
 initHudControls('hud-controls');
 pollLocation();
 setInterval(pollLocation, 2000);
+pollLivery();
+setInterval(pollLivery, 5000);   // livery changes only when the train does
 </script>
 </body>
 </html>

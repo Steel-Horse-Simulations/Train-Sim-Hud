@@ -1314,3 +1314,33 @@ def get_alias_for_raw(raw_object_class, clean_name=None):
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+def resolve_livery_colour(train_class):
+    """The colour to represent this train with: its specific LIVERY's colour,
+    falling back to the operator's default. Returns None if neither is set.
+
+    Note the legacy column names, which are not what they sound like:
+    livery_id holds the OPERATOR id, livery_name holds the LIVERY code. Do
+    not "fix" them by renaming - a lot of rows depend on them.
+
+    Shared so the map, the Known Trains pills and anything else colour the
+    same train the same way. This logic previously existed only inside the
+    known_trains list endpoint, so anywhere else wanting a train's colour
+    would have had to duplicate it and could drift.
+    """
+    if not train_class:
+        return None
+    try:
+        op_id = int(train_class.get("livery_id") or 0)
+    except (ValueError, TypeError):
+        return None
+    if not op_id:
+        return None
+    code = (train_class.get("livery_name") or "").strip().lower()
+    if code:
+        for liv in list_liveries(op_id):
+            if (liv.get("code") or "").strip().lower() == code and liv.get("colour"):
+                return liv["colour"]
+    op = get_operator(op_id)
+    return op.get("colour") if op else None
