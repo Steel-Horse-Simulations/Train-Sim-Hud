@@ -11,10 +11,9 @@ the simulated running times around them. What remains is writing them into
 `timetables.db` as journeys and stops.
 
 IMPORTANT CAVEAT ON THIS DOCUMENT: everything in sections 1-8 is confirmed
-against a **real TSW6 install**. The StopPoint work at the end is validated
-only against **synthetic records of known layout** - the logic is proven, but
-it has not yet been run against a real pak. Run it on the real Leven Branch
-layer before treating its output as fact.
+against a **real TSW6 install**. The StopPoint work at the end has now had ONE
+real run (Leven Branch layer) - see "First real run" below. The times and
+segmentation look right; the name resolution is not yet trustworthy.
 
 ## 1. The live API does NOT carry timetables
 
@@ -312,3 +311,76 @@ is part of the test:
 - Endpoints: `/api/paks/{repak,list,timetables,scan_all,inspect,timespans,clear_extracted}`
 - Extraction output goes to `<app>/extracted/` — **clear it between runs**,
   stale files caused one misdiagnosis already.
+
+## First real run - Leven Branch layer (v7.38.0 output)
+
+`FCE_Timetable_TT_Leven_Branch_Layer_DataTrack.uexp`, 5141 times, 104 services.
+
+### What looks right
+
+The SHAPE is a real Fife Circle timetable and does not depend on the name
+resolution at all:
+
+  - stops per service: median 8, range 2-19. The longest, 15 stops over 74.8
+    minutes (12:17 -> 13:32), is exactly a Leven -> Edinburgh run.
+  - 137 of 297 consecutive-stop intervals are <= 90 seconds - arrival and
+    departure at the same station, the pairing the domain rules predict.
+  - the remaining intervals have a median of 5.6 minutes, which is
+    station-to-station running time on this route.
+  - 461 StopPoints selected out of 5141 times, so ~9% of track points are
+    station calls. That is the right order of magnitude.
+
+### What was WRONG - and it reported `confirmed: true`
+
+The winning shift was **8743**, which puts `StopPoint` at FName index 8765.
+**The name table has 88 entries.** There is no index 8765. The result was
+impossible on its face and the tool called it confirmed.
+
+Worse, it was a four-way tie:
+
+| shift | score | StopPoint index | |
+|---|---|---|---|
+| 8743 | 0.9167 | 8765 | impossible |
+| 1844 | 0.9167 | 1866 | impossible |
+| 1843 | 0.9167 | 1865 | impossible |
+| 1842 | 0.9167 | 1864 | impossible |
+| **-6** | 0.9165 | **16** | the only plausible one - came FIFTH, by 0.0002 |
+
+Every statistical measure was maxed out and identical (`enum_concentration`
+1.0, `enum_unique_coverage` 1.0, `enum_rate` 0.1429 = exactly 1/7 across seven
+enum members, which is the correct signature of a real one-per-record field).
+The statistics were not wrong; they simply cannot tell these apart, and
+nothing was checking whether the answer was even *possible*.
+
+**Fixed in v7.38.1:**
+  - a shift is only considered if it resolves EVERY anchor to an index that
+    exists in the name table. This is a hard constraint of the format, not a
+    heuristic.
+  - ties are reported (`tied_shifts`) and suppress `confirmed` rather than
+    being silently broken by sort order.
+  - `names_sample` is returned so the table can actually be looked at.
+
+### The real blocker now: no station names in this asset
+
+`name_count: 88`, `station_names: 0`, `with_station: 0`. This layer's name
+table has no station-shaped entries, so:
+  - there is nothing to corroborate the enum classification against, which is
+    exactly why the tie could not be broken;
+  - the stops have times but no labels.
+
+Section 5 records that the 88 station names and 208 headcodes came from the
+**index asset** (`FCE_Timetable_TT.uasset`), not from a layer. FName indices
+in a `.uexp` address that package's own name map, so a layer cannot reference
+a name that is not in its own table - meaning station identity must arrive
+some other way (an import/export reference, or the MasterDataTrack).
+
+### Next step
+
+Run `/api/paks/stops` again on the same asset and read `names_sample` - the 88
+names in this layer's table are the evidence for what a StopPoint record can
+possibly point at. Then inspect `FCE_Timetable_TT.uasset` and
+`FCE_Timetable_TT_MasterDataTrack.uexp` the same way.
+
+Note `name_count` is 88 here and section 5 counts 88 station names in the
+index asset. Probably a coincidence - none of these 88 match the station
+shape - but worth confirming rather than assuming.

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.38.0**
+**App version at end of session: 7.38.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,26 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.38.1 - first real run, and a false confirmation
+
+Ran against the real Leven Branch layer. The times and segmentation look
+genuinely right (median 8 stops per service, a 15-stop 74.8-minute
+Leven -> Edinburgh run, 137 of 297 intervals under 90 seconds = arrival/
+departure pairs). But it reported `confirmed: true` on an IMPOSSIBLE answer:
+the winning shift put `StopPoint` at FName index 8765 in an 88-entry name
+table, and three other impossible shifts tied with it, with the only plausible
+candidate coming fifth by 0.0002.
+
+Fixed: shifts must now resolve every anchor to an index that exists in the
+name table, ties are reported and suppress `confirmed`, and `names_sample` is
+returned. Full write-up in the findings doc.
+
+**The real blocker is now clear: this layer's name table has no station names
+at all** (88 names, 0 station-shaped). So there is nothing to corroborate the
+enum against - which is why the tie was unbreakable - and the stops have times
+but no labels. Station identity has to come from somewhere else; the index
+asset is the place to look next.
 
 ## What changed in v7.38.0 - StopPoint identification
 

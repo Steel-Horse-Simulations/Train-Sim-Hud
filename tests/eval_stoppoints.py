@@ -148,7 +148,33 @@ def run_raw_enum_control():
     return ok
 
 
+def run_impossible_shift_control():
+    """A shift that puts an FName index outside the name table is IMPOSSIBLE,
+    not merely unlikely. On the real Leven Branch layer - 88 names - three
+    impossible shifts (8743, 1844, 1843) tied for first place on every
+    statistical measure, and the only plausible candidate came fifth by
+    0.0002. This checks that such shifts are now excluded outright."""
+    base = "/tmp/synth/FCE_Timetable_TT_Leven_Layer_DataTrack"
+    names, stations, types = pak_tools._name_table(base + ".uasset")
+    r = pak_tools.find_stop_points(base + ".uexp")
+    print("\n--- control: impossible shifts must be excluded ---")
+    hi = max(list(types.values()) + list(stations.keys()))
+    ok = True
+    for cand in r["shift_scores"]:
+        idx = hi + cand["shift"]
+        if not (0 <= idx < len(names)):
+            print(f"  FAIL: shift {cand['shift']} resolves index {idx} in a "
+                  f"{len(names)}-entry table"); ok = False
+    print(f"  all {len(r['shift_scores'])} shortlisted shifts resolve in range "
+          f"(table has {len(names)} names)")
+    print(f"  tied_shifts      {r['tied_shifts']}")
+    if len(r["tied_shifts"]) > 1 and r["confirmed"]:
+        print("  FAIL: confirmed despite an unresolved tie"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
-    results = [run_positive(), run_random_control(), run_raw_enum_control()]
+    results = [run_positive(), run_random_control(), run_raw_enum_control(),
+               run_impossible_shift_control()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

@@ -1428,12 +1428,25 @@ def _recover_shift(value_maps, centres, names, stations, type_positions,
     eps = 1.0 / max(1, len(value_maps))
     noise_floor = 32.0 / max(1, 2 * radius)
 
+    # A shift is only POSSIBLE if it resolves every anchor to an index that
+    # exists in the name table. This is a hard constraint of the format, not
+    # a heuristic, and it was missing: on the real Leven Branch layer - an 88
+    # entry table - the winning shift was 8743, which puts StopPoint at index
+    # 8765. There is no index 8765. Three impossible shifts tied for first on
+    # every statistical measure and the only plausible candidate came fifth,
+    # losing by 0.0002.
+    lo_anchor = min(enum_pos + station_pos)
+    hi_anchor = max(enum_pos + station_pos)
+
+    def possible(sh):
+        return 0 <= lo_anchor + sh and hi_anchor + sh < len(names)
+
     candidates = defaultdict(set)
     for vm in value_maps:
         for v, o in vm.items():
             for p in enum_pos + station_pos:
                 sh = v - p
-                if -100000 < sh < 100000:
+                if possible(sh):
                     candidates[sh].add(o)
     if not candidates:
         return None
@@ -1623,6 +1636,12 @@ def find_stop_points(path, radius=192, max_times=8000, min_run=4):
         j = corroboration(rows)
         tie_break.append((cand["score"] + (j or 0), cand, rows, j))
     tie_break.sort(key=lambda x: x[0], reverse=True)
+    # Report ties rather than silently taking whichever sorted first. Four
+    # shifts tied to four decimal places on the real Leven layer, and the one
+    # picked was impossible. If two shifts are indistinguishable, that is a
+    # fact about the evidence and the caller needs to see it.
+    top = tie_break[0][0]
+    tied = [c["shift"] for total, c, _r, _j in tie_break if abs(total - top) < 0.005]
     _total, best, classified, corroborated = tie_break[0]
     shift = best["shift"]
     classified, station_band = band_filter(classified, "station", "station_delta")
@@ -1633,7 +1652,7 @@ def find_stop_points(path, radius=192, max_times=8000, min_run=4):
     # the control at the same shift. Deliberately keyed off concentration
     # rather than raw counts: every wrong answer this produced during
     # development was a CONFIDENT wrong answer with plenty of hits.
-    trustworthy = best["score"] >= 0.15
+    trustworthy = best["score"] >= 0.15 and len(tied) == 1
 
     with_station = [c for c in classified if c["station"]]
     with_enum = [c for c in classified if c["enum"]]
@@ -1680,7 +1699,13 @@ def find_stop_points(path, radius=192, max_times=8000, min_run=4):
     spread = ({"distinct_deltas": len(deltas), "most_common": deltas.most_common(5),
                "fixed_layout": len(deltas) <= 3} if deltas else None)
 
-    if not trustworthy:
+    if len(tied) > 1:
+        verdict = (f"AMBIGUOUS. {len(tied)} shifts {tied} are indistinguishable "
+                   "on every measure, so which name each record refers to "
+                   "cannot be decided from this asset alone. The stop TIMES "
+                   "below are still real - the segmentation does not depend "
+                   "on the shift - but the labels may be off by a position.")
+    elif not trustworthy:
         verdict = (f"NOT CONFIRMED. At the best shift ({shift}) the anchors "
                    f"are no more consistently placed than the control "
                    f"(best {best['score']}, needs 0.15) - so the hits below "
@@ -1713,6 +1738,8 @@ def find_stop_points(path, radius=192, max_times=8000, min_run=4):
         "ubiquitous_values_dropped": banned_values,
         "shift": shift,
         "shift_scores": ranked[:5],
+        "tied_shifts": tied,
+        "names_sample": names[:60],
         "score": best["score"],
         "corroboration": round(corroborated, 3) if corroborated is not None else None,
         "confirmed": trustworthy,
