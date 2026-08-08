@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.39.1**
+**App version at end of session: 7.39.2**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -25,7 +25,35 @@ work and should be read before touching any of it.
 
 ---
 
-## What changed in v7.39.1 - the tagged-property conclusion was ALSO wrong
+## What changed in v7.39.2 - it IS tagged; the parser had the wrong field width
+
+The probe on the real Leven layer settles it: property TYPE names ARE
+referenced (EnumProperty 61,036, IntProperty/NameProperty/StructProperty/
+FloatProperty 12,207 each), so it is tagged serialisation and v7.39.1
+over-corrected.
+
+`longest_tag_chain: 1` was the real tell - the signature of a FIELD WIDTH
+mismatch, which fails quietly: read a 64-bit FName as 32-bit and the first tag
+still looks perfect (right index in the low half, zero in the high half) while
+every later read lands mid-field. `_read_tag()` now takes a width and the
+parser tries 4 and 8 against both guid_byte settings. Proven on a
+16-byte-FName fixture (112/112 records, 31/31 stops, width discovered).
+`_MAX_PROP_SIZE` raised to 64 MB - the outer ServiceDataTracks MapProperty is
+megabytes and was rejected on size.
+
+The probe now dumps annotated hex windows around real references to a field
+name (default DataType) and reports where the tag chain broke. That reads the
+layout off directly instead of inferring it - `+8 EnumProperty` means 8-byte
+FNames, `+16` means 16-byte.
+
+**Ground truth to check any parser against**, from the probe: 12,207 records,
+5,198 StopPoint and 5,198 TrackSectionEntry (identical counts - every stop
+appears paired with a section entry). If a parse does not reproduce those, it
+is wrong however tidy it looks.
+
+**Next: Probe format, then Read records, on the real Leven layer.**
+
+## What changed in v7.39.1 - the over-correction
 
 `parse_track_records()` on the real Leven Branch layer found zero tag chains -
 not one pair of consecutive valid tags in 8.6 MB. So v7.39.0's conclusion was

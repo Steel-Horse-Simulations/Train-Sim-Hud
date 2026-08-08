@@ -222,3 +222,66 @@ def main_unversioned(out="/tmp/synth_unversioned"):
     print(f"ground truth: {len(truth)} records, "
           f"{sum(1 for r in truth if r['type'] == 'StopPoint')} StopPoints")
     return base, truth
+
+
+def build_uexp_wide(path, rng):
+    """Tagged properties with 16-byte FNames (int64 index + int64 Number).
+
+    Exists because the real Leven layer reports longest_tag_chain = 1, which
+    is the exact signature of a width mismatch: the first tag reads fine
+    (a 64-bit index's low half is the right value and its high half is
+    zeros), then the second lands mid-field and fails. Whether that is what
+    the real file does is not yet known - this fixture proves the parser can
+    HANDLE it, which is a different claim and the only one being made here.
+    """
+    def fname(n):
+        return struct.pack("<qq", IDX[n], 0)
+
+    def tag(name, type_name, value, extra=b""):
+        out = bytearray()
+        out += fname(name)
+        out += fname(type_name)
+        out += struct.pack("<ii", len(value), 0)
+        out += extra
+        out += b"\x00"
+        out += value
+        return bytes(out)
+
+    buf = bytearray()
+    truth = []
+    for service in range(6):
+        t = (6 + service) * 3600
+        for i in range(rng.randint(3, 7)):
+            for _ in range(rng.randint(2, 4)):
+                t += rng.randint(20, 90)
+                kind = rng.choice(["GoVia", "ActionPoint"])
+                buf += tag("DataType", "EnumProperty",
+                           fname(f"ETimetableTrackDataType::{kind}"),
+                           fname("ETimetableTrackDataType"))
+                buf += tag("Distance", "FloatProperty", struct.pack("<f", rng.uniform(0, 4e4)))
+                buf += fname("None")
+                truth.append({"type": kind})
+            buf += tag("DataType", "EnumProperty",
+                       fname("ETimetableTrackDataType::StopPoint"),
+                       fname("ETimetableTrackDataType"))
+            buf += tag("InstructionIndex", "IntProperty", struct.pack("<i", rng.randint(0, 200)))
+            t += rng.randint(60, 200)
+            buf += tag("ArrivalTime", "StructProperty", struct.pack("<q", int(t * TICKS)),
+                       fname("Timespan") + b"\x00" * 16)
+            buf += fname("None")
+            truth.append({"type": "StopPoint"})
+    with open(path, "wb") as f:
+        f.write(bytes(buf))
+    return truth
+
+
+def main_wide(out="/tmp/synth_wide"):
+    os.makedirs(out, exist_ok=True)
+    base = os.path.join(out, "FCE_Test_Layer_DataTrack")
+    rng = random.Random(4242)
+    build_uasset(base + ".uasset")
+    truth = build_uexp_wide(base + ".uexp", rng)
+    print(f"built {base}.uexp ({os.path.getsize(base + '.uexp')} bytes) - 16-byte FNames")
+    print(f"ground truth: {len(truth)} records, "
+          f"{sum(1 for r in truth if r['type'] == 'StopPoint')} StopPoints")
+    return base, truth

@@ -81,6 +81,51 @@ def run_opaque_control():
     return True
 
 
+def run_wide_fnames():
+    """16-byte FNames (int64 index + Number). The parser must discover the
+    width rather than assume it - a wrong width does not fail loudly, it
+    reads exactly one tag and then stops, which is what the real Leven layer
+    reports."""
+    base, truth = T.main_wide("/tmp/eval_wide")
+    r = pak_tools.parse_track_records(base + ".uexp")
+    print("\n--- tagged properties, 16-byte FName fields ---")
+    if "error" in r:
+        print("  FAIL:", r["error"]); return False
+    true_stops = sum(1 for x in truth if x["type"] == "StopPoint")
+    print(f"  fname width      {r['fname_width']} bytes per component")
+    print(f"  records parsed   {r['records_parsed']}  (true {len(truth)})")
+    print(f"  StopPoints       {r['stop_points']}  (true {true_stops})")
+    ok = True
+    if r["records_parsed"] != len(truth) or r["stop_points"] != true_stops:
+        print("  FAIL: counts"); ok = False
+    if r["fname_width"] != 8:
+        print("  FAIL: did not detect the wide layout"); ok = False
+    return ok
+
+
+def run_window_diagnostic():
+    """The hex window must show, around a known field name, what follows it -
+    that is how the layout gets read off instead of guessed at. Both earlier
+    format conclusions were reached without ever looking at these bytes."""
+    base, _ = T.main("/tmp/eval_win")
+    r = pak_tools.probe_name_references(base + ".uexp", window_around="DataType")
+    print("\n--- diagnostic: hex window around a known field ---")
+    ok = True
+    if not r.get("windows"):
+        print("  FAIL: no windows produced"); return False
+    w = r["windows"][0]
+    names = [(x["rel"], x["name"]) for x in w["resolved_names"]]
+    print(f"  around DataType @ {w['centre']}: {names[:4]}")
+    if not any(n == "EnumProperty" for _rel, n in names):
+        print("  FAIL: did not surface the type name next to the field name"); ok = False
+    cb = r.get("chain_break")
+    if not cb or not cb["tags_read"]:
+        print("  FAIL: no chain-break detail"); ok = False
+    else:
+        print(f"  chain read {len(cb['tags_read'])} tags then broke at {cb['broke_at']}")
+    return ok
+
+
 def run_probe():
     """The probe must tell the two serialisation modes apart, not merely
     recognise the one it was written for."""
@@ -112,7 +157,7 @@ def run_probe():
 
 
 if __name__ == "__main__":
-    results = [run_with_guid(), run_without_guid(), run_opaque_control(),
-               run_probe()]
+    results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
+               run_opaque_control(), run_probe(), run_window_diagnostic()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

@@ -1799,60 +1799,72 @@ def find_stop_points(path, radius=192, max_times=8000, min_run=4):
 #     <Size bytes of value>
 
 _PROP_SUFFIX = "Property"
-_MAX_PROP_SIZE = 1 << 16
+_MAX_PROP_SIZE = 1 << 26   # the outer ServiceDataTracks map is megabytes
 
 
-def _fname_at(data, off, names):
-    """Reads an FName (int32 index + int32 Number). Returns (text, number) or
-    None if the index is not in the table."""
-    if off + 8 > len(data):
+def _fname_at(data, off, names, width=4):
+    """Reads an FName: an index and a Number, each `width` bytes.
+
+    width is a parameter rather than a constant because the engine version is
+    not known and the field size is exactly the kind of thing that differs
+    between them. Guessing it wrong does not produce an obvious error - it
+    produces a first tag that reads fine (the low half of a 64-bit index is
+    the right value, and the high half is zeros) and then a second tag that
+    lands mid-field and fails. That is precisely the `longest_tag_chain: 1`
+    seen on the real Leven layer.
+    """
+    if off + 2 * width > len(data):
         return None
-    idx, num = struct.unpack_from("<ii", data, off)
+    fmt = "<ii" if width == 4 else "<qq"
+    idx, num = struct.unpack_from(fmt, data, off)
     if 0 <= idx < len(names) and 0 <= num < 1_000_000:
         return names[idx], num
     return None
 
 
-def _read_tag(data, off, names, guid_byte=True):
+def _read_tag(data, off, names, guid_byte=True, width=4, max_size=_MAX_PROP_SIZE):
     """Reads one FPropertyTag. Returns a dict, the string "None" at a record
     terminator, or None if this is not a tag."""
-    nm = _fname_at(data, off, names)
+    fw = 2 * width          # bytes per FName
+    nm = _fname_at(data, off, names, width)
     if nm is None:
         return None
     if nm[0] == "None":
         return "None"
-    ty = _fname_at(data, off + 8, names)
+    ty = _fname_at(data, off + fw, names, width)
     if ty is None or not ty[0].endswith(_PROP_SUFFIX):
         return None
-    cur = off + 16
+    cur = off + 2 * fw
+    if cur + 8 > len(data):
+        return None
     size, array_index = struct.unpack_from("<ii", data, cur)
-    if not (0 <= size <= _MAX_PROP_SIZE and 0 <= array_index < 4096):
+    if not (0 <= size <= max_size and 0 <= array_index < 4096):
         return None
     cur += 8
     extra = {}
     t = ty[0]
     if t == "StructProperty":
-        sn = _fname_at(data, cur, names)
+        sn = _fname_at(data, cur, names, width)
         if sn is None:
             return None
         extra["struct"] = sn[0]
-        cur += 8 + 16
+        cur += fw + 16
     elif t == "BoolProperty":
         extra["bool"] = data[cur] if cur < len(data) else None
         cur += 1
     elif t in ("ByteProperty", "EnumProperty", "ArrayProperty", "SetProperty"):
-        en = _fname_at(data, cur, names)
+        en = _fname_at(data, cur, names, width)
         if en is None:
             return None
         extra["inner"] = en[0]
-        cur += 8
+        cur += fw
     elif t == "MapProperty":
-        k = _fname_at(data, cur, names)
-        v = _fname_at(data, cur + 8, names)
+        k = _fname_at(data, cur, names, width)
+        v = _fname_at(data, cur + fw, names, width)
         if k is None or v is None:
             return None
         extra["key"], extra["value_type"] = k[0], v[0]
-        cur += 16
+        cur += 2 * fw
     if guid_byte:
         if cur >= len(data):
             return None
@@ -1863,7 +1875,8 @@ def _read_tag(data, off, names, guid_byte=True):
         if has_guid:
             cur += 16
     return {"name": nm[0], "type": t, "size": size, "array_index": array_index,
-            "value_offset": cur, "end": cur + size, "tag_offset": off, **extra}
+            "value_offset": cur, "end": cur + size, "tag_offset": off,
+            "width": width, **extra}
 
 
 def _decode_value(data, tag, names):
@@ -1873,7 +1886,7 @@ def _decode_value(data, tag, names):
     t, off, size = tag["type"], tag["value_offset"], tag["size"]
     try:
         if t == "EnumProperty" or t == "NameProperty":
-            v = _fname_at(data, off, names)
+            v = _fname_at(data, off, names, tag.get("width", 4))
             return v[0] if v else None
         if t == "IntProperty" and size >= 4:
             return struct.unpack_from("<i", data, off)[0]
@@ -1894,14 +1907,16 @@ def _decode_value(data, tag, names):
     return None
 
 
-def _walk_record(data, off, names, guid_byte=True, max_props=64):
+def _walk_record(data, off, names, guid_byte=True, max_props=64, width=4,
+                 max_size=_MAX_PROP_SIZE):
     """Reads a chain of tags up to the terminating None. Returns (props, end)
     or None if this is not a record."""
     props, cur = [], off
     for _ in range(max_props):
-        tag = _read_tag(data, cur, names, guid_byte=guid_byte)
+        tag = _read_tag(data, cur, names, guid_byte=guid_byte, width=width,
+                        max_size=max_size)
         if tag == "None":
-            return props, cur + 8
+            return props, cur + 2 * width
         if tag is None:
             return None
         props.append(tag)
@@ -1941,19 +1956,21 @@ def parse_track_records(path, max_records=4000, min_props=2):
     # UE4 gained the HasPropertyGuid byte partway through its life. Rather
     # than assume, both are tried and whichever parses more records wins.
     best = None
-    for guid_byte in (True, False):
-        records, cur, n = [], 0, len(data)
-        while cur < n and len(records) < max_records:
-            got = _walk_record(data, cur, names, guid_byte=guid_byte)
-            if got and len(got[0]) >= min_props:
-                props, end = got
-                records.append((cur, props))
-                cur = end
-                continue
-            cur += 1
-        if best is None or len(records) > len(best[1]):
-            best = (guid_byte, records)
-    guid_byte, records = best
+    for width in (4, 8):
+        for guid_byte in (True, False):
+            records, cur, n = [], 0, len(data)
+            while cur < n and len(records) < max_records:
+                got = _walk_record(data, cur, names, guid_byte=guid_byte,
+                                   width=width)
+                if got and len(got[0]) >= min_props:
+                    props, end = got
+                    records.append((cur, props))
+                    cur = end
+                    continue
+                cur += 1
+            if best is None or len(records) > len(best[2]):
+                best = (width, guid_byte, records)
+    width, guid_byte, records = best
 
     if not records:
         # Run the probe automatically rather than making someone go and ask
@@ -1994,6 +2011,7 @@ def parse_track_records(path, max_records=4000, min_props=2):
         "path": path, "uasset": uasset,
         "name_count": len(names),
         "guid_byte": guid_byte,
+        "fname_width": width,
         "records_parsed": len(out),
         "field_usage": field_use.most_common(30),
         "data_types": types_seen.most_common(),
@@ -2017,7 +2035,52 @@ def parse_track_records(path, max_records=4000, min_props=2):
     }
 
 
-def probe_name_references(path, top=40, single_tag_sample=8):
+def _annotate_window(data, centre, names, radius=64, width=4):
+    """Hex around an offset, with every int32 that resolves to a name called
+    out by text.
+
+    This is the diagnostic that should have been written two format
+    conclusions ago. Both wrong answers came from reasoning about the file -
+    "Stream implies custom binary", "type names in the table imply tags" -
+    when what was needed was to look at the bytes AROUND A KNOWN FIELD NAME
+    and read off the layout. The head of the file was no use for that: 8.6 MB
+    in, the first 256 bytes need not be record data at all.
+    """
+    lo = max(0, centre - radius)
+    hi = min(len(data), centre + radius)
+    resolved = []
+    for off in range(lo, min(hi, len(data) - 4)):
+        (v,) = struct.unpack_from("<i", data, off)
+        if 0 <= v < len(names):
+            nxt4 = struct.unpack_from("<i", data, off + 4)[0] if off + 8 <= len(data) else None
+            nxt8 = struct.unpack_from("<q", data, off + 4)[0] if off + 12 <= len(data) else None
+            # Only report positions that could actually BE an FName, and
+            # never index 0. Any run of zero bytes reads as name 0 ("None")
+            # followed by zero, so it passes every structural test and the
+            # window fills with dozens of them - the real names either side
+            # of the field become unreadable. A genuine None terminator is
+            # lost this way, but the layout is what is being read here and
+            # the terminator is visible from the tag chain instead.
+            if v == 0:
+                continue
+            if nxt4 != 0 and nxt8 != 0:
+                continue
+            resolved.append({
+                "rel": off - centre, "value": v, "name": names[v],
+                "next_int32": nxt4,
+                "fname8_ok": nxt4 == 0,          # int32 index + int32 Number
+                "fname16_ok": nxt8 == 0,         # int64 index + int64 Number
+            })
+    return {
+        "centre": centre,
+        "hex": data[lo:hi].hex(),
+        "hex_start_rel": lo - centre,
+        "resolved_names": resolved,
+    }
+
+
+def probe_name_references(path, top=40, single_tag_sample=8,
+                          window_around="DataType", windows=4, radius=64):
     """Counts how often each name in the table is actually REFERENCED as an
     FName inside the .uexp, and how far a property-tag chain gets.
 
@@ -2082,18 +2145,20 @@ def probe_name_references(path, top=40, single_tag_sample=8):
     # begin with one, so this skips the ~99.9% of offsets that cannot start a
     # chain - the difference between seconds and many minutes on an 8.6 MB
     # .uexp, and this is a diagnostic someone is sitting waiting on.
-    best_chain, best_off = 0, None
-    for guid_byte in (True, False):
-        for off in fname_offsets:
-            cur, count = off, 0
-            while count < 64:
-                tag = _read_tag(data, cur, names, guid_byte=guid_byte)
-                if tag == "None" or tag is None:
-                    break
-                count += 1
-                cur = tag["end"]
-            if count > best_chain:
-                best_chain, best_off = count, (off, guid_byte)
+    best_chain, best_off, best_width = 0, None, 4
+    for width in (4, 8):
+        for guid_byte in (True, False):
+            for off in fname_offsets:
+                cur, count = off, 0
+                while count < 64:
+                    tag = _read_tag(data, cur, names, guid_byte=guid_byte,
+                                    width=width)
+                    if tag == "None" or tag is None:
+                        break
+                    count += 1
+                    cur = tag["end"]
+                if count > best_chain:
+                    best_chain, best_off, best_width = count, (off, guid_byte), width
 
     referenced = sum(counts.values())
     typed = sum(c for _n, c in prop_types)
@@ -2119,9 +2184,45 @@ def probe_name_references(path, top=40, single_tag_sample=8):
                    "referenced. Either the name table did not read, or this "
                    "is not the asset holding the records.")
 
+    # Where does the best chain actually break, and what is sitting there?
+    chain_break = None
+    if best_off is not None:
+        off, gb = best_off
+        w = best_width
+        cur, read = off, []
+        for _ in range(64):
+            tag = _read_tag(data, cur, names, guid_byte=gb, width=w)
+            if tag == "None" or tag is None:
+                break
+            read.append({"name": tag["name"], "type": tag["type"],
+                         "size": tag["size"], "at": cur, "ends": tag["end"]})
+            cur = tag["end"]
+        chain_break = {
+            "started_at": off, "guid_byte": gb, "fname_width": w,
+            "tags_read": read,
+            "broke_at": cur,
+            "next_bytes_hex": data[cur:cur + 64].hex(),
+        }
+
+    # Hex windows around real references to a known field name. This is the
+    # evidence the layout should be read from.
+    target_idx = next((i for i, nm in enumerate(names) if nm == window_around), None)
+    sample_windows = []
+    if target_idx is not None:
+        found = 0
+        for off in range(0, len(data) - 8):
+            if struct.unpack_from("<i", data, off)[0] == target_idx:
+                sample_windows.append(_annotate_window(data, off, names, radius))
+                found += 1
+                if found >= windows:
+                    break
+
     return {
         "path": path, "uasset": uasset,
         "uexp_size": len(data),
+        "chain_break": chain_break,
+        "window_around": window_around,
+        "windows": sample_windows,
         "name_count": len(names),
         "total_fname_references": referenced,
         "fname_reference_offsets": len(fname_offsets),
@@ -2131,6 +2232,7 @@ def probe_name_references(path, top=40, single_tag_sample=8):
         "most_referenced": [(names[i], c) for i, c in counts.most_common(top)],
         "longest_tag_chain": best_chain,
         "longest_chain_at": best_off,
+        "longest_chain_width": best_width,
         "head_hex": data[:256].hex(),
         "verdict": verdict,
     }

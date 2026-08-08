@@ -41,7 +41,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.39.1"
+APP_VERSION = "7.39.2"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1503,7 +1503,8 @@ def paks_probe():
                 break
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
-    return jsonify(pak_tools.probe_name_references(path))
+    target = (body.get("window_around") or "DataType").strip()
+    return jsonify(pak_tools.probe_name_references(path, window_around=target))
 
 
 @app.route("/api/paks/records", methods=["POST"])

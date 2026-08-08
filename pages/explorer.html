@@ -367,6 +367,21 @@ function renderProbe(d) {
     <p class="small" style="margin:6px 0;">Enum VALUES referenced: ${list(d.enum_values_referenced)}</p>
     <p class="small dim" style="margin:6px 0;">${d.uexp_size} bytes · ${d.name_count} names ·
       ${d.total_fname_references} FName references · longest tag chain ${d.longest_tag_chain}</p>
+    ${d.chain_break?`<p class="small dim" style="margin:8px 0 4px;">Longest tag chain
+      (${esc(String(d.longest_chain_width))}-byte FName fields) — read
+      ${d.chain_break.tags_read.length}, then broke at ${d.chain_break.broke_at}:</p>
+      <div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">
+      ${d.chain_break.tags_read.map(t=>`<div><span style="color:var(--accent-bright);">${esc(t.name)}</span>
+        <span class="dim">${esc(t.type)} size ${t.size}</span></div>`).join('')||'<span class="dim">none</span>'}
+      <div class="dim" style="margin-top:4px;word-break:break-all;">next: ${esc(d.chain_break.next_bytes_hex||'')}</div>
+      </div>`:''}
+    ${(d.windows||[]).map((w,i)=>`<p class="small dim" style="margin:8px 0 4px;">
+      Window ${i+1} around <strong>${esc(d.window_around)}</strong> at ${w.centre}:</p>
+      <div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">
+      ${(w.resolved_names||[]).map(x=>`<div><span class="dim">${x.rel>0?'+':''}${x.rel}</span>
+        <span style="color:var(--accent-bright);">${esc(x.name)}</span>
+        <span class="dim">${x.fname8_ok?'8-byte':''}${x.fname16_ok?' 16-byte':''}</span></div>`).join('')}
+      </div>`).join('')}
     <p class="small dim" style="margin:8px 0 4px;">First 256 bytes:</p>
     <div class="mono" style="font-size:10px;color:var(--text-dim);word-break:break-all;
       padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">${esc(d.head_hex||'')}</div>`;

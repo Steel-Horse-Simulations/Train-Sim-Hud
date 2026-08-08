@@ -513,3 +513,78 @@ the "no".
 
 Three format conclusions now, two of them wrong, and both wrong ones came from
 an indirect signal. Measure the file, do not reason about the file.
+
+## It IS tagged - the probe on the real file (v7.39.2)
+
+`/api/paks/probe` on the real Leven Branch layer, 8.6 MB, 12,207 records:
+
+| Name | References | |
+|---|---|---|
+| `DataType` | 48,830 | on every record |
+| `GoViaIndex` | 48,828 | on every record |
+| `InstructionIndex`, `NetworkRibbonLocation` | 36,658 each | |
+| `Distance`, `RibbonLocation` | 24,414 each | = 2 x 12,207 |
+| `Time`, `DirectionOfTravel`, `Guid`, `Direction`, `IntProperty`, `NameProperty`, `StructProperty`, `FloatProperty`, `ServiceDataTracks`, `Class`, `Package` | 12,207 each | **the record count** |
+| `EnumProperty` | 61,036 | 5 per record |
+| `MapProperty` | 1 | the outer `ServiceDataTracks` map |
+| `SignalRef` | 85,522 | new - not in the first 60 names |
+
+Property TYPE names ARE referenced, so this is **tagged property
+serialisation** after all, and the v7.39.1 correction over-corrected. It is
+not unversioned.
+
+Names seen here that were not in the first 60: `SignalRef`,
+`SignalPropertyReference`, `RibbonReference`, `RibbonLocation`,
+`PropertyReference`, `S5K84`. The 60-name cap has been raised.
+
+Also worth recording: `StopPoint` and `TrackSectionEntry` are referenced
+**5,198 times each** - identical counts. Every StopPoint appears to be paired
+with a TrackSectionEntry.
+
+### Why nothing parsed: `longest_tag_chain: 1`
+
+One tag reads, the next does not. That is the signature of a FIELD WIDTH
+mismatch, and it fails quietly rather than loudly: if the engine writes an
+FName as int64 index + int64 Number, reading it as int32 + int32 still
+returns the correct index (the low half) with a Number of 0 (the high half),
+so the first tag looks perfect - and every subsequent read lands mid-field.
+
+`_read_tag()` now takes a `width`, and `parse_track_records()` tries 4 and 8
+across both `guid_byte` settings, keeping whichever chains furthest. Proven
+on a 16-byte-FName fixture: 112/112 records, 31/31 StopPoints, width
+correctly discovered. `_MAX_PROP_SIZE` was also raised to 64 MB - the outer
+`ServiceDataTracks` MapProperty is megabytes and was being rejected on size.
+
+### A correction, and the diagnostic that should have existed first
+
+The previous message read the first 256 bytes and claimed the file uses
+64-bit fields throughout. **That was wrong** - decoded properly, bytes 0-23
+look like three 8-byte values and then the pattern breaks immediately. The
+head of an 8.6 MB .uexp need not be record data at all, and nothing about the
+record layout can be concluded from it.
+
+So the probe now dumps hex windows around real references to a chosen field
+name (`window_around`, default `DataType`), annotating every offset in the
+window that resolves to a name, and flagging whether it is consistent with an
+8-byte or 16-byte FName. That reads the layout off directly:
+
+```
+8-byte layout      +0 DataType   +8  EnumProperty
+16-byte layout     +0 DataType   +16 EnumProperty
+```
+
+It also reports `chain_break`: which tags the longest chain read, where it
+stopped, and the next 64 bytes.
+
+This is the diagnostic that should have been built before any of the three
+format conclusions. All three were reached by reasoning from an indirect
+signal - a type name, a name table's contents, a file header - rather than by
+looking at the bytes around a known field.
+
+### Next step
+
+**Probe format** on the real Leven layer again. The window output says the
+width outright; then **Read records**, which now tries both. The counts above
+are a ground truth worth checking the parser against: it should find 12,207
+records, with 5,198 StopPoint and 5,198 TrackSectionEntry among them. If it
+does not reproduce those, it is wrong however clean the output looks.
