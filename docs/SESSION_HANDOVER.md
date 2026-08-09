@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.45.0**
+**App version at end of session: 7.45.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,23 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.45.1 - overlay washed out / tunnels missing
+
+v7.43.0's claim that "tunnel translucency lives in the alpha channel" was
+WRONG. ORM draws tunnels as a PALER SHADE, not lower opacity, so the flat
+`source-in` recolour erased the distinction. Now uses the `'color'` blend
+mode (hue+sat from the fill, luminosity from the artwork), re-clipped to the
+artwork's alpha afterwards, with a `'lighten'` pass to LUMINANCE_FLOOR first
+so near-black casings stay visible on our dark basemap.
+
+Washed-out look was three things: the raw anti-aliased stencil softening every
+edge via destination-in alpha multiplication, layer opacity 0.85, and a
+drop-shadow glow. buildStencil() now hardens the stencil (redraw on itself 6x,
+alpha 1-(1-a)^n), opacity is 1, glow gone, dilation 2px -> 1px.
+
+Measured: partial-alpha edge pixels ORM 34.1% vs ours 29.5%, widths identical
+at 14px, tunnel luminance 204 vs open track 147.
 
 ## What changed in v7.45.0 - subscription API
 

@@ -85,7 +85,10 @@ const RAIL_MASK_URL = 'https://{s}.tiles.openrailwaymap.org/gauge/{z}/{x}/{y}.pn
 const RAIL_SUBDOMAINS = ['a', 'b', 'c'];
 // Gauge draws thinner than infrastructure, so masking straight would shave
 // the casings off every line. The stencil is dilated first.
-const MASK_DILATE_PX = 2;
+const MASK_DILATE_PX = 1;
+// Darkest shade any line is allowed to reach once recoloured. See the
+// 'lighten' pass in compositeRailTile.
+const LUMINANCE_FLOOR = '#4d4d4d';
 
 function animateMarkerAndMap(newLat, newLon) {
   const start = marker.getLatLng();
@@ -130,31 +133,75 @@ function compositeRailTile(canvas, base, mask, colour) {
   if (!base) return;
   ctx.drawImage(base, 0, 0, S, S);
 
-  if (mask) {
-    // Dilate by drawing the stencil at every offset within a small radius
-    // and unioning them. Done on a scratch canvas: applying the offsets
-    // straight onto the tile with destination-in would multiply alpha
-    // repeatedly and ERODE the lines instead of growing them.
-    const m = document.createElement('canvas');
-    m.width = m.height = S;
-    const mc = m.getContext('2d');
-    for (let dx = -MASK_DILATE_PX; dx <= MASK_DILATE_PX; dx++) {
-      for (let dy = -MASK_DILATE_PX; dy <= MASK_DILATE_PX; dy++) {
-        if (Math.abs(dx) + Math.abs(dy) <= MASK_DILATE_PX) {
-          mc.drawImage(mask, dx, dy, S, S);
-        }
-      }
-    }
-    ctx.globalCompositeOperation = 'destination-in';
-    ctx.drawImage(m, 0, 0);
-  }
-
   if (colour) {
-    ctx.globalCompositeOperation = 'source-in';
+    // Lift the darkest shades before recolouring. OpenRailwayMap draws some
+    // casings almost black, which reads fine on its own white basemap and
+    // disappears entirely on ours. 'lighten' takes the per-channel maximum,
+    // so this raises the floor without touching anything already brighter -
+    // the tunnel/open-track distinction, which is what actually matters
+    // here, survives intact.
+    ctx.globalCompositeOperation = 'lighten';
+    ctx.fillStyle = LUMINANCE_FLOOR;
+    ctx.fillRect(0, 0, S, S);
+
+    // 'color' blend takes hue and saturation from the fill and keeps the
+    // LUMINOSITY of the artwork underneath.
+    //
+    // The previous version used a flat 'source-in' fill, on the assumption
+    // that everything worth keeping lived in the alpha channel. That was
+    // wrong, and it is why tunnels vanished: OpenRailwayMap does not draw a
+    // tunnel with lower opacity, it draws it in a PALER SHADE of the same
+    // colour. Replacing every RGB value with one flat colour threw that
+    // distinction away, so a tunnel came out identical to open track.
+    // Keeping luminosity keeps the tunnel casing pale, the black
+    // no-electrification casings dark, and every other shade ORM uses to
+    // mean something.
+    ctx.globalCompositeOperation = 'color';
     ctx.fillStyle = colour;
     ctx.fillRect(0, 0, S, S);
+
+    // A blend mode still composites source-over, so the fill just covered
+    // the transparent parts of the tile too. Re-clip to the artwork's own
+    // alpha.
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(base, 0, 0, S, S);
   }
+
+  if (mask) {
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(buildStencil(mask, S), 0, 0);
+  }
+
   ctx.globalCompositeOperation = 'source-over';
+}
+
+// Turns the gauge tile into a hard-edged stencil.
+//
+// Used raw it produced exactly the "fades out at the edges" look: an
+// anti-aliased gauge line has edge pixels at partial alpha, and
+// destination-in MULTIPLIES alpha, so every line got a soft translucent
+// border and the whole overlay looked washed out. Redrawing the stencil on
+// itself drives partial alpha towards opaque - a = 1-(1-a)^n - which turns
+// soft edges hard without needing pixel access, so it still works on
+// cross-origin tiles that would otherwise taint the canvas.
+function buildStencil(mask, S) {
+  const m = document.createElement('canvas');
+  m.width = m.height = S;
+  const mc = m.getContext('2d');
+  // Dilate: gauge draws thinner than infrastructure, so without this the
+  // stencil would shave the casings off every line.
+  for (let dx = -MASK_DILATE_PX; dx <= MASK_DILATE_PX; dx++) {
+    for (let dy = -MASK_DILATE_PX; dy <= MASK_DILATE_PX; dy++) {
+      if (Math.abs(dx) + Math.abs(dy) <= MASK_DILATE_PX) {
+        mc.drawImage(mask, dx, dy, S, S);
+      }
+    }
+  }
+  // Harden: 6 further passes take alpha 0.5 to 0.998 and alpha 0.1 to 0.53.
+  for (let i = 0; i < 6; i++) {
+    mc.drawImage(m, 0, 0);
+  }
+  return m;
 }
 
 // Built inside a function rather than at top level, because
@@ -199,7 +246,9 @@ function makeRailLayer() {
   });
   return new TintedRailLayer({
     maxZoom: 19,
-    opacity: 0.85,
+    // Full opacity. 0.85 was compounding with the soft stencil edges and the
+    // glow to make every line look washed out.
+    opacity: 1,
     attribution: 'Rendering: OpenRailwayMap, Map data: OpenStreetMap contributors',
   });
 }

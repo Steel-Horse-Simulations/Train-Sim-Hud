@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.45.0
+## Current version: 7.45.1
 
 ## Shipped features (working, tested against real data)
 
@@ -1168,3 +1168,59 @@ working and the polling load has dropped. If it is `unknown_shape`, send back
 `unrecognised_payload_sample` - that is the real response shape and
 `_index()` can then be taught it. If `unsupported`, this build of TSW does
 not have the endpoint and polling remains the answer.
+
+
+## FIXED in v7.45.1 - rail overlay was washed out and lost tunnels
+
+Two separate faults, reported against a real screenshot next to
+openrailwaymap.org's own rendering.
+
+### Tunnels disappeared - a wrong assumption in v7.43.0
+
+v7.43.0 claimed "line thickness and tunnel translucency live entirely in the
+alpha channel" and recoloured with a flat `source-in` fill. **The
+translucency half of that was wrong.** OpenRailwayMap does not draw a tunnel
+at lower opacity - it draws it in a PALER SHADE of the same colour. Replacing
+every RGB value with one flat colour threw that away, which is why a tunnel
+came out identical to open track.
+
+Now recoloured with the `'color'` blend mode, which takes hue and saturation
+from the fill and keeps the LUMINOSITY of the artwork. Tunnel casings stay
+pale, dark casings stay dark, and every other shade ORM uses to mean
+something survives. A blend still composites source-over, so the fill also
+covers the transparent parts of the tile; the tile is re-clipped to the
+artwork's own alpha immediately afterwards.
+
+Near-black casings then vanished against our dark basemap - fine on ORM's
+white one, useless on ours - so a `'lighten'` pass to `LUMINANCE_FLOOR`
+(#4d4d4d) runs first. `lighten` takes the per-channel maximum, so it raises
+the floor without touching anything brighter and leaves the tunnel/open-track
+distinction intact.
+
+### Washed out, soft edges
+
+Three things compounding:
+  - the gauge stencil was used raw, and an anti-aliased stencil line has
+    partial-alpha edge pixels. `destination-in` MULTIPLIES alpha, so every
+    line got a soft translucent border.
+  - layer `opacity: 0.85`
+  - a `drop-shadow` glow around every line
+
+Fixed: `buildStencil()` hardens the stencil by redrawing it on itself six
+times - alpha follows 1-(1-a)^n, so 0.5 becomes 0.998 - which sharpens the
+edges without pixel access, so it still works on cross-origin tiles that
+would taint the canvas. Opacity back to 1, glow removed (ORM's own rendering
+has clean edges, and that is the target). Dilation reduced 2px -> 1px now
+that hardening handles coverage.
+
+### Measured against a tile that encodes tunnels the way ORM really does
+
+```
+partial-alpha edge pixels:  ORM 34.1%   ours 29.5%
+line width at x=200:        ORM 14px    ours 14px
+tunnel luminance 204 vs open track 147  -> distinguished
+historic alignment                       -> still removed
+```
+
+Our overlay now has FEWER soft edge pixels than ORM's own rendering, and
+identical line widths.
