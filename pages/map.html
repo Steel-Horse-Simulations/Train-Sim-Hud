@@ -49,6 +49,7 @@
     <div class="btns">
       <button class="rail-toggle-btn" id="rail-toggle-btn" onclick="toggleRailOverlay()">Rail Overlay: Off</button>
       <button class="rail-toggle-btn" id="historic-toggle-btn" onclick="toggleHistoric()">Historic Lines: Hidden</button>
+      <button class="rail-toggle-btn" id="overlay-mode-btn" onclick="cycleOverlayMode()">Overlay: full</button>
       <button class="fullscreen-btn" onclick="toggleFullScreen()">Full Screen</button>
       <button class="exit-btn" onclick="exitApp()">Exit</button>
     </div>
@@ -70,6 +71,19 @@ let railLayer = null;
 let railOverlayOn = false; // defaults to off every launch
 let liveryColour = null;   // colour of the train currently being driven
 let hideHistoric = true;   // mask out disused/abandoned lines
+
+// Diagnostic. The overlay has now been "fixed" twice on reasoning about what
+// the tiles probably contain, and it is still wrong, so this exists to find
+// out WHICH stage is responsible instead of guessing a third time. Cycles:
+//   full       - recoloured and stencilled (normal)
+//   no-stencil - recoloured, gauge stencil skipped
+//   raw        - OpenRailwayMap's tiles untouched, no recolour, no stencil
+// If 'raw' already looks soft and washed out, nothing in compositeRailTile
+// is to blame and the cause is upstream - tile scaling, zoom, or the style
+// itself. If 'raw' is crisp, the stage that breaks it is whichever one
+// changes the picture.
+const OVERLAY_MODES = ['full', 'no-stencil', 'raw'];
+let overlayMode = 'full';
 const railTiles = new Set();
 
 // OpenRailwayMap's INFRASTRUCTURE style ("standard") is the one with the
@@ -132,6 +146,9 @@ function compositeRailTile(canvas, base, mask, colour) {
   ctx.clearRect(0, 0, S, S);
   if (!base) return;
   ctx.drawImage(base, 0, 0, S, S);
+
+  if (overlayMode === 'raw') return;   // untouched, for comparison
+  if (overlayMode === 'no-stencil') mask = null;
 
   if (colour) {
     // Lift the darkest shades before recolouring. OpenRailwayMap draws some
@@ -220,14 +237,20 @@ function makeRailLayer() {
     const url = (tpl) => tpl.replace('{s}', sub).replace('{z}', coords.z)
                             .replace('{x}', coords.x).replace('{y}', coords.y);
 
-    let pending = hideHistoric ? 2 : 1;
+    // The stencil is always fetched, even when not currently applied, so
+    // switching modes re-composites the same bytes rather than pulling new
+    // tiles - otherwise a mode comparison would be comparing two different
+    // downloads and prove nothing.
+    let pending = 2;
     const settle = () => {
       if (--pending > 0) return;
       // If the stencil failed to load, draw the infrastructure tile
       // UNMASKED rather than masking with nothing - masking against a
       // missing stencil would erase the tile completely and look like a
       // broken overlay rather than a missing filter.
-      compositeRailTile(canvas, canvas._base, canvas._mask, tintColour(liveryColour));
+      compositeRailTile(canvas, canvas._base,
+                        hideHistoric ? canvas._mask : null,
+                        tintColour(liveryColour));
       railTiles.add(canvas);
       done(null, canvas);
     };
@@ -240,7 +263,7 @@ function makeRailLayer() {
     };
 
     load(url(RAIL_STYLE_URL), '_base');
-    if (hideHistoric) load(url(RAIL_MASK_URL), '_mask');
+    load(url(RAIL_MASK_URL), '_mask');
     return canvas;
   },
   });
@@ -260,7 +283,7 @@ function retintRailTiles() {
   const colour = tintColour(liveryColour);
   for (const canvas of railTiles) {
     if (!canvas.isConnected) { railTiles.delete(canvas); continue; }
-    compositeRailTile(canvas, canvas._base, canvas._mask, colour);
+    compositeRailTile(canvas, canvas._base, hideHistoric ? canvas._mask : null, colour);
   }
 }
 
@@ -340,13 +363,23 @@ function applyLiveryColour() {
   }
 }
 
+function cycleOverlayMode() {
+  overlayMode = OVERLAY_MODES[(OVERLAY_MODES.indexOf(overlayMode) + 1) % OVERLAY_MODES.length];
+  const btn = document.getElementById('overlay-mode-btn');
+  btn.textContent = 'Overlay: ' + overlayMode;
+  btn.classList.toggle('active', overlayMode !== 'full');
+  // Re-composites from the images already held on each tile - no refetch,
+  // so the three modes are the SAME pixels processed differently. That is
+  // the point: any difference between them is caused by this code.
+  retintRailTiles();
+}
+
 function toggleHistoric() {
   hideHistoric = !hideHistoric;
   const btn = document.getElementById('historic-toggle-btn');
   btn.textContent = hideHistoric ? 'Historic Lines: Hidden' : 'Historic Lines: Shown';
   btn.classList.toggle('active', !hideHistoric);
-  railTiles.clear();
-  if (railLayer && railOverlayOn) railLayer.redraw();   // stencil changed, tiles must refetch
+  retintRailTiles();   // stencil is already on each tile; no refetch needed
 }
 
 async function pollLivery() {

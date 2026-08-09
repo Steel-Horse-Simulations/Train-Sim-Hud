@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.45.1**
+**App version at end of session: 7.45.2**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,18 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.45.2 - overlay diagnostic
+
+Overlay still washed out after two fixes, both reasoned rather than measured
+(ORM is unreachable from the sandbox; all testing has been against synthetic
+tiles). Added **Overlay: full / no-stencil / raw** on the map, which
+re-composites the same already-downloaded tile bytes three ways so the
+responsible stage can be identified instead of guessed at.
+
+raw faded -> not our compositing (zoom/DPR/style upstream).
+raw crisp + no-stencil faded -> the recolour.
+no-stencil crisp + full faded -> the gauge stencil misaligning.
 
 ## What changed in v7.45.1 - overlay washed out / tunnels missing
 

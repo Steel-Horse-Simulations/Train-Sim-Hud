@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.45.1
+## Current version: 7.45.2
 
 ## Shipped features (working, tested against real data)
 
@@ -1224,3 +1224,32 @@ historic alignment                       -> still removed
 
 Our overlay now has FEWER soft edge pixels than ORM's own rendering, and
 identical line widths.
+
+
+## v7.45.2 - overlay diagnostic, because two fixes in a row missed
+
+The overlay is still washed out on a real screenshot after two rounds of
+changes, both of which were reasoned from what the ORM tiles PROBABLY
+contain rather than measured against them. openrailwaymap.org is not
+reachable from the dev sandbox, so every test so far has been against
+synthetic tiles built to match a screenshot - which validates the maths and
+proves nothing about the real input.
+
+Rather than guess a third time, **Overlay: full / no-stencil / raw** cycles
+the pipeline on the map page. It re-composites the images ALREADY HELD on
+each tile canvas, so all three modes are the same downloaded bytes processed
+differently - any difference between them is caused by our code, and
+anything common to all three is not.
+
+Reading it:
+  - **raw already soft/faded** -> nothing in `compositeRailTile` is at fault.
+    The cause is upstream: tile scaling at this zoom, device pixel ratio, or
+    the standard style genuinely looking like that at z17.
+  - **raw crisp, no-stencil faded** -> the recolour (`lighten` + `color`
+    blend + re-clip) is responsible.
+  - **no-stencil crisp, full faded** -> the gauge stencil is responsible,
+    most likely because gauge geometry does not align with standard geometry.
+
+The stencil tile is now always fetched even when not applied, so switching
+modes never triggers a refetch - otherwise a comparison would be comparing
+two different downloads.
