@@ -48,24 +48,11 @@
     <a href="/" class="brand" style="text-decoration:none;"><strong>TSW Hud</strong> · map</a>
     <div class="btns">
       <button class="rail-toggle-btn" id="rail-toggle-btn" onclick="toggleRailOverlay()">Rail Overlay: Off</button>
+      <button class="rail-toggle-btn" id="historic-toggle-btn" onclick="toggleHistoric()">Historic Lines: Hidden</button>
       <button class="fullscreen-btn" onclick="toggleFullScreen()">Full Screen</button>
       <button class="exit-btn" onclick="exitApp()">Exit</button>
     </div>
   </div>
-
-  <!-- Recolours the rail overlay to the current train's livery. The overlay
-       arrives as pre-rendered raster tiles, so the line colour can't be set
-       the way a vector layer's could. feFlood painted through SourceAlpha
-       replaces every non-transparent pixel with an EXACT colour while
-       keeping the anti-aliasing, which a CSS hue-rotate cannot: hue-rotate
-       is a linear matrix approximation and drifts badly on bright colours -
-       tested, and it turned blue into cyan and red into yellow. -->
-  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <filter id="rail-tint" x="0" y="0" width="100%" height="100%">
-      <feFlood flood-color="#a06bf0" result="tint" id="rail-tint-flood"/>
-      <feComposite in="tint" in2="SourceAlpha" operator="in"/>
-    </filter>
-  </svg>
 
   <main>
     <div id="map"></div>
@@ -82,6 +69,23 @@ let moveAnimFrame = null;
 let railLayer = null;
 let railOverlayOn = false; // defaults to off every launch
 let liveryColour = null;   // colour of the train currently being driven
+let hideHistoric = true;   // mask out disused/abandoned lines
+const railTiles = new Set();
+
+// OpenRailwayMap's INFRASTRUCTURE style ("standard") is the one with the
+// line-thickness and tunnel treatment worth keeping - tunnels drawn hollow,
+// sidings thinner than running lines. It also draws disused, abandoned and
+// razed alignments, which are not wanted here.
+const RAIL_STYLE_URL = 'https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png';
+// The GAUGE style renders only track that carries gauge tagging, which in
+// practice excludes historic alignments. It is used purely as a STENCIL -
+// none of its colours are shown. Infrastructure supplies every visible
+// pixel; gauge only decides which pixels survive.
+const RAIL_MASK_URL = 'https://{s}.tiles.openrailwaymap.org/gauge/{z}/{x}/{y}.png';
+const RAIL_SUBDOMAINS = ['a', 'b', 'c'];
+// Gauge draws thinner than infrastructure, so masking straight would shave
+// the casings off every line. The stencil is dilated first.
+const MASK_DILATE_PX = 2;
 
 function animateMarkerAndMap(newLat, newLon) {
   const start = marker.getLatLng();
@@ -106,6 +110,111 @@ function animateMarkerAndMap(newLat, newLon) {
   map.panTo([newLat, newLon], { animate: true, duration: MOVE_DURATION_MS / 1000, easeLinearity: 1 });
 }
 
+// Composites one tile: infrastructure artwork, stencilled by gauge, painted
+// in the livery colour.
+//
+// Every step is alpha-preserving on purpose. The whole point of using the
+// infrastructure style is its line weights and its hollow tunnel casings,
+// and those live entirely in the alpha channel - flatten alpha and the
+// overlay becomes uniform spaghetti. So:
+//   destination-in  keeps base pixels only where the stencil covers them,
+//                   multiplying alpha rather than replacing it;
+//   source-in       paints a flat colour through whatever alpha survives,
+//                   giving the EXACT livery colour while thickness,
+//                   anti-aliasing and tunnel translucency all carry through.
+function compositeRailTile(canvas, base, mask, colour) {
+  const ctx = canvas.getContext('2d');
+  const S = canvas.width;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0, 0, S, S);
+  if (!base) return;
+  ctx.drawImage(base, 0, 0, S, S);
+
+  if (mask) {
+    // Dilate by drawing the stencil at every offset within a small radius
+    // and unioning them. Done on a scratch canvas: applying the offsets
+    // straight onto the tile with destination-in would multiply alpha
+    // repeatedly and ERODE the lines instead of growing them.
+    const m = document.createElement('canvas');
+    m.width = m.height = S;
+    const mc = m.getContext('2d');
+    for (let dx = -MASK_DILATE_PX; dx <= MASK_DILATE_PX; dx++) {
+      for (let dy = -MASK_DILATE_PX; dy <= MASK_DILATE_PX; dy++) {
+        if (Math.abs(dx) + Math.abs(dy) <= MASK_DILATE_PX) {
+          mc.drawImage(mask, dx, dy, S, S);
+        }
+      }
+    }
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(m, 0, 0);
+  }
+
+  if (colour) {
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.fillStyle = colour;
+    ctx.fillRect(0, 0, S, S);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// Built inside a function rather than at top level, because
+// `L.GridLayer.extend` needs Leaflet to have loaded. At top level, one failed
+// CDN fetch throws before the rest of the script runs - the page then loses
+// its livery polling entirely and shows an uncoloured map with no obvious
+// cause. Deferring it keeps the failure contained to the map itself.
+function makeRailLayer() {
+  const TintedRailLayer = L.GridLayer.extend({
+  createTile: function (coords, done) {
+    const canvas = L.DomUtil.create('canvas');
+    const S = this.getTileSize().x;
+    canvas.width = canvas.height = S;
+
+    const sub = RAIL_SUBDOMAINS[Math.abs(coords.x + coords.y) % RAIL_SUBDOMAINS.length];
+    const url = (tpl) => tpl.replace('{s}', sub).replace('{z}', coords.z)
+                            .replace('{x}', coords.x).replace('{y}', coords.y);
+
+    let pending = hideHistoric ? 2 : 1;
+    const settle = () => {
+      if (--pending > 0) return;
+      // If the stencil failed to load, draw the infrastructure tile
+      // UNMASKED rather than masking with nothing - masking against a
+      // missing stencil would erase the tile completely and look like a
+      // broken overlay rather than a missing filter.
+      compositeRailTile(canvas, canvas._base, canvas._mask, tintColour(liveryColour));
+      railTiles.add(canvas);
+      done(null, canvas);
+    };
+    const load = (u, key) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { canvas[key] = img; settle(); };
+      img.onerror = () => settle();
+      img.src = u;
+    };
+
+    load(url(RAIL_STYLE_URL), '_base');
+    if (hideHistoric) load(url(RAIL_MASK_URL), '_mask');
+    return canvas;
+  },
+  });
+  return new TintedRailLayer({
+    maxZoom: 19,
+    opacity: 0.85,
+    attribution: 'Rendering: OpenRailwayMap, Map data: OpenStreetMap contributors',
+  });
+}
+
+// Re-tinting reuses the images already held on each tile canvas, so a livery
+// change costs no network at all - redraw() would refetch every tile from
+// OpenRailwayMap, which is both slow and rude to a free tile service.
+function retintRailTiles() {
+  const colour = tintColour(liveryColour);
+  for (const canvas of railTiles) {
+    if (!canvas.isConnected) { railTiles.delete(canvas); continue; }
+    compositeRailTile(canvas, canvas._base, canvas._mask, colour);
+  }
+}
+
 function initMap(lat, lon) {
   map = L.map('map', {
     center: [lat, lon],
@@ -128,12 +237,8 @@ function initMap(lat, lon) {
   // Real-world rail infrastructure overlay (tracks, platforms, signals,
   // switches) from OpenRailwayMap - built on OSM data, free for
   // non-commercial use. Off by default; toggled on via the button.
-  railLayer = L.tileLayer('https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    opacity: 0.85,
-    className: 'rail-tinted',
-    attribution: 'Rendering: OpenRailwayMap, Map data: OpenStreetMap contributors',
-  });
+  railLayer = makeRailLayer();
+  railLayer.on('tileunload', (e) => railTiles.delete(e.tile));
 
   const icon = L.divIcon({ className: 'player-dot', iconSize: [16, 16] });
   marker = L.marker([lat, lon], { icon }).addTo(map);
@@ -169,16 +274,12 @@ function tintColour(hex) {
 function applyLiveryColour() {
   const c = tintColour(liveryColour);
 
-  // Set the flood colour whether or not the overlay is currently shown, so
-  // it is already right the moment it is toggled on.
-  const flood = document.getElementById('rail-tint-flood');
-  if (flood && c) flood.setAttribute('flood-color', c);
-
-  const el = document.querySelector('.rail-tinted');
-  if (el) {
-    // The glow lifts the thin lines off the basemap; without it a tinted
-    // line at this zoom is easy to lose against dark terrain.
-    el.style.filter = c ? `url(#rail-tint) drop-shadow(0 0 2px ${c})` : '';
+  retintRailTiles();
+  // The glow lifts the thin lines off the basemap; without it a tinted line
+  // at this zoom is easy to lose against dark terrain. Applied to the whole
+  // layer container rather than per tile, so it does not clip at tile seams.
+  if (railLayer && railLayer.getContainer()) {
+    railLayer.getContainer().style.filter = c ? `drop-shadow(0 0 2px ${c})` : '';
   }
 
   const dot = document.querySelector('.player-dot');
@@ -188,6 +289,15 @@ function applyLiveryColour() {
       ? `0 0 10px ${c}, 0 0 0 6px color-mix(in srgb, ${c} 25%, transparent)`
       : '';
   }
+}
+
+function toggleHistoric() {
+  hideHistoric = !hideHistoric;
+  const btn = document.getElementById('historic-toggle-btn');
+  btn.textContent = hideHistoric ? 'Historic Lines: Hidden' : 'Historic Lines: Shown';
+  btn.classList.toggle('active', !hideHistoric);
+  railTiles.clear();
+  if (railLayer && railOverlayOn) railLayer.redraw();   // stencil changed, tiles must refetch
 }
 
 async function pollLivery() {

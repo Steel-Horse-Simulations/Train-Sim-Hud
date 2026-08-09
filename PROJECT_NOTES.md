@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.42.0
+## Current version: 7.45.0
 
 ## Shipped features (working, tested against real data)
 
@@ -969,3 +969,202 @@ NOT verified in a browser here: Leaflet is loaded from unpkg, which the dev
 sandbox cannot reach, so the map itself never initialises there. The tint
 filter, the lightness floor and the colour resolution were all tested
 directly; the map's own rendering at zoom 17 was not.
+
+
+## SHIPPED in v7.43.0 - rail overlay follows the infrastructure style, minus historic lines
+
+The overlay is no longer a plain tinted raster layer. `TintedRailLayer`
+(L.GridLayer subclass, pages/map.html) composites each tile on a canvas:
+
+  1. **OpenRailwayMap "standard" (infrastructure)** supplies every visible
+     pixel - its line weights, its hollow tunnel casings, its thinner
+     sidings. That artwork is the reason for using this style.
+  2. **OpenRailwayMap "gauge" is used as a STENCIL only.** None of its
+     colours are ever shown. It renders only track carrying gauge tagging,
+     which in practice omits disused/abandoned/razed alignments, so
+     `destination-in` against it drops the historic lines while leaving
+     everything else untouched.
+  3. **`source-in` fill** paints the livery colour through whatever alpha
+     survives.
+
+Every step is alpha-preserving, deliberately: line thickness and tunnel
+translucency live entirely in the alpha channel, and flattening it would
+reduce the overlay to uniform spaghetti - which is exactly what the previous
+feFlood-on-the-whole-layer approach did.
+
+**Measured on synthetic tiles** (real OpenRailwayMap is unreachable from the
+dev sandbox):
+  - historic alignment removed: **100%** (770 px -> 0)
+  - live lines retained: **99.2%** (3015 px -> 2992)
+  - line widths unchanged: 6 px running line, 3 px siding, before and after
+  - tunnel/running-line alpha ratio: **0.35 before, 0.35 after** the stencil
+    and the tint
+
+**Gotchas encoded in the code:**
+  - The stencil is DILATED (radius 2, diamond) before use. Gauge draws
+    thinner than infrastructure, so masking straight would shave the casings
+    off every line.
+  - Dilation happens on a scratch canvas with `source-over`. Applying the
+    offsets directly to the tile with `destination-in` multiplies alpha
+    repeatedly and ERODES the lines instead of growing them.
+  - If the stencil tile fails to load, the tile is drawn UNMASKED. Masking
+    against a missing stencil would erase the tile completely and read as a
+    broken overlay rather than a missing filter.
+  - Re-tinting reuses the images already held on each tile canvas
+    (`canvas._base` / `canvas._mask`). `redraw()` would refetch every tile
+    from a free tile service on every livery change.
+
+`makeRailLayer()` builds the class inside a function rather than at top
+level. `L.GridLayer.extend` needs Leaflet loaded, and at top level one failed
+CDN fetch threw before the rest of the script ran - the page then lost its
+livery polling entirely and showed an uncoloured map with no obvious cause.
+Caught by testing in a sandbox where the CDN is blocked, which turned out to
+be a useful accident.
+
+A **Historic Lines: Hidden/Shown** button sits next to the rail toggle, so
+the stencil can be turned off in the field if gauge coverage turns out to be
+patchy on a given route.
+
+UNVERIFIED: openrailwaymap.org is not reachable from the dev sandbox, so the
+`gauge` tile path and the assumption that gauge omits historic lines are both
+from documentation, not from a real tile. If gauge tiles 404 the overlay
+silently falls back to unmasked (still correct, just unfiltered).
+
+
+## SHIPPED in v7.44.0 - connection stability
+
+Symptoms: train class dropping out mid-journey, map stalling then jumping,
+weather readouts flickering to em dashes. None of these were the game losing
+data. They were self-inflicted, and two of the causes were diagnostics rather
+than anything to do with TSW.
+
+### Root causes found
+
+**1. The call log was rewriting a file on every single API call.** `log_call`
+read the last 300 lines off disk and rewrote the whole file, holding a global
+lock. At this app's poll rates - two 300ms loops plus identity, map and
+weather, roughly ten calls a second - that is ten full read-modify-writes per
+second, serialised, and on Windows with a virus scanner each can stall for
+tens of milliseconds. Now buffered in memory (`deque(maxlen=300)`) and
+flushed by a background thread every 3s.
+
+**2. The API key was re-read from disk on every call.** `read_api_key()` ran
+`find_key_file()` - which stats several candidate folders - then opened and
+read the file, for a value that changes approximately never. Now cached, with
+an mtime recheck every 10s so editing the key still works without a restart.
+
+**3. Overlapping requests to a server that cannot take them.** TSW's HTTP
+server does not handle concurrency; `DriverAid.PlayerInfo` returning 502
+under rapid polling is a DROPPED CONNECTION, not a missing path, and that was
+already written down in the timetable findings. With dashboard, map and
+weather polling independently there were routinely three or four requests in
+flight. All upstream calls now go through `_upstream_lock`.
+
+**4. No retry.** A transient 502/connection error propagated straight to the
+UI. Now retried once with a short backoff.
+
+**5. `/api/loco` fetched the identity TWICE** - `find_loco_class()` and
+`get_current_raw_object_class()` each did their own three upstream reads. Six
+calls every 2 seconds for one answer; now three.
+
+**6. Sightings were written to SQLite twice every 2 seconds** for a train
+that had not changed. Now on change, or every 30s.
+
+### Holding last-known-good instead of blanking
+
+A dropped poll is not new information. Blanking on one made a connection
+hiccup look like a data problem:
+
+  - identity is held for 20s (`IDENTITY_HOLD_SECONDS`) - this was the
+    "loses the train class" symptom
+  - player location is held for 30s - a train cannot teleport, so a position
+    a second old beats no position, and the map now has something to
+    interpolate towards instead of stalling and jumping
+  - client-side `setReadout()` keeps the previous value and marks it `.stale`
+    (dimmed) after 15s rather than replacing it with an em dash
+  - "Missing Train Class" now only appears if a class has never been seen,
+    not after a single failed poll
+
+Identical reads within 200ms are also coalesced (`READ_CACHE_SECONDS`), so
+opening a second page no longer multiplies the load on the game.
+
+### Measured, not asserted
+
+`tests/mock_tsw_api.py` runs a mock TSW API that reproduces the real failure
+modes - 502 on concurrent requests, random drops, realistic service time -
+and drives the same poll pattern the app really uses. `--compare` runs the
+old and new behaviour against the SAME mock in one process:
+
+```
+concurrent rejects: 36 -> 0
+location dropouts:   1 -> 0      (at a 35% random drop rate)
+```
+
+Compared in-process on purpose: a value flickering out for one poll is
+exactly the kind of symptom it is easy to convince yourself has improved.
+
+
+## SHIPPED in v7.45.0 - subscription API, with a verified fallback
+
+`tsw_subscriptions.py`. Registers the hot paths once
+(`POST /subscription/<path>?Subscription=1`) then reads them all back in a
+single `GET /subscription/`, replacing N polls per tick with one.
+
+Measured against the mock, 10 seconds of the app's real poll pattern:
+
+```
+subscriptions active : 37 upstream requests
+polling (fallback)   : 86 upstream requests
+40 proxy reads while active cost 0 upstream requests
+```
+
+### The protocol is NOT confirmed, and the code is built accordingly
+
+TIMETABLE_EXTRACTION_FINDINGS.md records the endpoint shape and marks it
+"not yet implemented". Nobody has run it against a real game, and the shape
+of the aggregate response in particular is a guess. So the client earns its
+place rather than assuming it:
+
+  - it subscribes, then VERIFIES that a path it registered actually comes
+    back through the aggregate read before any value is trusted;
+  - `_index()` accepts several plausible response shapes, but a wrong guess
+    cannot leak wrong data to the HUD - it shows up as a failed verification,
+    because the indexed result must contain a path that was actually
+    subscribed;
+  - three outcomes, all tested: **active**, **unsupported** (endpoint 404s),
+    **unknown_shape** (endpoint works, payload unrecognisable);
+  - in the latter two it stands down and the polling path - which is known to
+    work - carries on untouched, re-probing every 5 minutes;
+  - on `unknown_shape` it CAPTURES a sample of the raw payload, exposed at
+    `/api/subscriptions`, so the real format can be read off a real run
+    instead of guessed at a second time.
+
+`SubscriptionClient.get()` returns None rather than an error on a miss, so a
+subscription miss is indistinguishable from the layer not existing.
+Subscription traffic goes through the same session, upstream lock and logging
+as everything else - it does not open its own connections.
+
+`/api/subscriptions` reports state, detail, subscribed paths, cache hit
+counts and the payload sample.
+
+### Test
+
+`tests/mock_tsw_api.py --subscriptions` runs the matrix:
+
+```
+supported  state=active         40 reads cost   0 upstream   loco=158
+absent     state=unsupported    40 reads cost   2 upstream   loco=158
+odd_shape  state=unknown_shape  40 reads cost   2 upstream   loco=158
+```
+
+The fallback rows matter more than the happy one. An unverified protocol must
+never be able to break a working app, and the test asserts the train still
+resolves in all three worlds.
+
+### FIRST THING TO CHECK ON A REAL RUN
+
+Open `/api/subscriptions` while driving. If `state` is `active`, this is
+working and the polling load has dropped. If it is `unknown_shape`, send back
+`unrecognised_payload_sample` - that is the real response shape and
+`_index()` can then be taught it. If `unsupported`, this build of TSW does
+not have the endpoint and polling remains the answer.

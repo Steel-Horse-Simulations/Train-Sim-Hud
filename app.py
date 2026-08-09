@@ -23,6 +23,7 @@ import re
 import socket
 import sys
 import threading
+from collections import deque
 import time
 from datetime import datetime
 
@@ -41,7 +42,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.42.0"
+APP_VERSION = "7.45.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -194,17 +195,39 @@ def find_key_file(folder):
     return None
 
 
-def read_api_key():
+_key_cache = {"key": None, "path": None, "checked": 0.0, "mtime": None}
+_KEY_RECHECK_SECONDS = 10.0
+
+
+def read_api_key(force=False):
+    """The API key, cached in memory.
+
+    Every proxied call used to re-run find_key_file() - which stats several
+    candidate folders - and then re-read the key file from disk. At ten
+    calls a second that is a constant stream of filesystem work for a value
+    that changes approximately never. The file's mtime is rechecked every
+    {} seconds so editing the key still takes effect without a restart.
+    """.format(int(_KEY_RECHECK_SECONDS))
+    now = time.time()
+    if not force and _key_cache["key"] and (now - _key_cache["checked"]) < _KEY_RECHECK_SECONDS:
+        return _key_cache["key"], _key_cache["path"]
+
     folder = CONFIG.get("config_folder", "")
     path = find_key_file(folder)
+    _key_cache["checked"] = now
     if not path:
+        _key_cache.update({"key": None, "path": None, "mtime": None})
         return None, None
     try:
+        mtime = os.path.getmtime(path)
+        if _key_cache["key"] and _key_cache["path"] == path and _key_cache["mtime"] == mtime:
+            return _key_cache["key"], path
         with open(path, "r", encoding="utf-8-sig") as f:
             key = f.read().strip()
+        _key_cache.update({"key": key, "path": path, "mtime": mtime})
         return key, path
     except Exception:
-        return None, path
+        return _key_cache["key"], path
 
 
 def auto_detect_folder():
@@ -226,19 +249,51 @@ CRASH_LOG_FILE = os.path.join(DIAG_DIR, "crash.log")
 _debug_log_lock = threading.Lock()
 
 
+_call_log_buffer = deque(maxlen=300)
+_call_log_dirty = False
+
+
 def log_call(label, duration, outcome):
+    """Records a call in memory. The file is written by a background flusher,
+    NOT here.
+
+    This used to read the last 300 lines off disk and rewrite the whole file
+    on every single API call, holding a global lock while it did. At the
+    poll rates this app runs - two 300ms loops plus identity, map and
+    weather, so roughly ten calls a second - that was ten full file
+    read-modify-writes per second, all serialised on one lock, and on
+    Windows with a virus scanner in the path each one can stall for tens of
+    milliseconds. It was a significant part of the jumpiness, and it was
+    diagnostics causing it rather than the game.
+    """
+    global _call_log_dirty
     line = f"{datetime.now().strftime('%H:%M:%S')}  {duration*1000:6.0f}ms  {outcome:20s}  {label}\n"
+    with _debug_log_lock:
+        _call_log_buffer.append(line)
+        _call_log_dirty = True
+
+
+def _flush_call_log():
+    global _call_log_dirty
+    with _debug_log_lock:
+        if not _call_log_dirty:
+            return
+        lines = list(_call_log_buffer)
+        _call_log_dirty = False
     try:
-        with _debug_log_lock:
-            lines = []
-            if os.path.exists(DEBUG_LOG_FILE):
-                with open(DEBUG_LOG_FILE, "r", encoding="utf-8") as f:
-                    lines = f.readlines()[-300:]
-            lines.append(line)
-            with open(DEBUG_LOG_FILE, "w", encoding="utf-8") as f:
-                f.writelines(lines)
+        with open(DEBUG_LOG_FILE, "w", encoding="utf-8") as f:
+            f.writelines(lines)
     except Exception:
         pass
+
+
+def _call_log_flusher():
+    while True:
+        time.sleep(3)
+        _flush_call_log()
+
+
+threading.Thread(target=_call_log_flusher, daemon=True).start()
 
 
 def api_headers():
@@ -259,31 +314,129 @@ def resolved_api_base():
     return base.replace("localhost", "127.0.0.1")
 
 
-def api_get(path, timeout=(2, 3)):
+# One request to the game at a time. TSW's built-in HTTP server does not
+# cope with concurrent requests - DriverAid.PlayerInfo returning 502 under
+# rapid polling is a DROPPED CONNECTION, not a missing path, and that is
+# already recorded in the timetable findings. With the dashboard, the map and
+# the weather panel all polling at once there were regularly three or four
+# requests in flight, so the drops were self-inflicted.
+_upstream_lock = threading.Lock()
+
+# Identical reads issued close together share one upstream call. Two 300ms
+# loops plus the map and the identity poll ask for overlapping paths
+# constantly; without this each page open multiplies the load on the game.
+_read_cache = {}
+_read_cache_lock = threading.Lock()
+READ_CACHE_SECONDS = 0.20
+
+
+def _cache_get(url):
+    with _read_cache_lock:
+        hit = _read_cache.get(url)
+        if hit and (time.time() - hit[0]) < READ_CACHE_SECONDS:
+            return hit[1]
+    return None
+
+
+def _cache_put(url, value):
+    with _read_cache_lock:
+        _read_cache[url] = (time.time(), value)
+        if len(_read_cache) > 256:
+            cutoff = time.time() - READ_CACHE_SECONDS
+            for k in [k for k, v in _read_cache.items() if v[0] < cutoff]:
+                _read_cache.pop(k, None)
+
+
+def api_get(path, timeout=(2, 3), retries=1, use_cache=True):
+    """Reads a path from the game.
+
+    Serialised, coalesced and retried, because the failure mode being
+    defended against is a transient dropped connection rather than a real
+    absence. A single failed poll used to propagate straight to the UI,
+    which is why the train class would vanish and reappear.
+    """
     headers = api_headers()
     if headers is None:
         return {"error": "no_key"}, 400
     base = resolved_api_base()
     url = f"{base}/{path.lstrip('/')}"
+
+    # A subscribed value, if the subscription layer is up and the value is
+    # fresh. Returns None when it is not, so this is a pure optimisation -
+    # a miss is indistinguishable from the layer not existing.
+    if use_cache and path.startswith("get/"):
+        sub = SUBSCRIPTIONS.get(path[4:]) if SUBSCRIPTIONS else None
+        if sub is not None:
+            return sub, 200
+
+    if use_cache:
+        cached = _cache_get(url)
+        if cached is not None:
+            return cached
+
+    attempt = 0
+    while True:
+        start = time.time()
+        try:
+            with _upstream_lock:
+                r = SESSION.get(url, headers=headers, timeout=timeout)
+            log_call(f"GET {url}", time.time() - start, f"status {r.status_code}")
+            try:
+                body = r.json()
+            except ValueError:
+                body = {"raw": r.text}
+            # 502/503 from the game is a dropped connection under load, not a
+            # verdict about the path. Retry before believing it.
+            if r.status_code in (502, 503) and attempt < retries:
+                attempt += 1
+                time.sleep(0.05 * attempt)
+                continue
+            result = (body, r.status_code)
+            if use_cache and r.status_code == 200:
+                _cache_put(url, result)
+            return result
+        except requests.exceptions.ConnectionError:
+            log_call(f"GET {url}", time.time() - start, "connection_failed")
+            if attempt < retries:
+                attempt += 1
+                time.sleep(0.05 * attempt)
+                continue
+            return {"error": "connection_failed",
+                    "detail": "Could not reach the game. Is TSW running with the "
+                              "-HTTPAPI launch option, and are you in a session?"}, 502
+        except requests.exceptions.Timeout:
+            log_call(f"GET {url}", time.time() - start, "timeout")
+            if attempt < retries:
+                attempt += 1
+                continue
+            return {"error": "timeout"}, 504
+        except Exception as e:
+            log_call(f"GET {url}", time.time() - start, f"error: {e}")
+            return {"error": "unexpected", "detail": str(e)}, 500
+
+
+def api_post(path, params=None, timeout=(2, 3)):
+    """POST, used by the subscription client. Shares the session, the
+    upstream lock and the logging with every other call."""
+    headers = api_headers()
+    if headers is None:
+        return {"error": "no_key"}, 400
+    url = f"{resolved_api_base()}/{path.lstrip('/')}"
     start = time.time()
     try:
-        r = SESSION.get(url, headers=headers, timeout=timeout)
-        log_call(f"GET {url}", time.time() - start, f"status {r.status_code}")
+        with _upstream_lock:
+            r = SESSION.post(url, headers=headers, params=params or {}, timeout=timeout)
+        log_call(f"POST {url}", time.time() - start, f"status {r.status_code}")
         try:
             body = r.json()
         except ValueError:
             body = {"raw": r.text}
         return body, r.status_code
     except requests.exceptions.ConnectionError:
-        log_call(f"GET {url}", time.time() - start, "connection_failed")
-        return {"error": "connection_failed",
-                "detail": "Could not reach the game. Is TSW running with the "
-                           "-HTTPAPI launch option, and are you in a session?"}, 502
-    except requests.exceptions.Timeout:
-        log_call(f"GET {url}", time.time() - start, "timeout")
-        return {"error": "timeout"}, 504
+        log_call(f"POST {url}", time.time() - start, "connection_failed")
+        return {"error": "connection_failed"}, 502
     except Exception as e:
-        log_call(f"GET {url}", time.time() - start, f"error: {e}")
+        log_call(f"POST {url}", time.time() - start, f"error: {e}")
         return {"error": "unexpected", "detail": str(e)}, 500
 
 
@@ -295,7 +448,8 @@ def api_patch(path, params):
     url = f"{base}/{path.lstrip('/')}"
     start = time.time()
     try:
-        r = SESSION.patch(url, headers=headers, params=params, timeout=(2, 3))
+        with _upstream_lock:
+            r = SESSION.patch(url, headers=headers, params=params, timeout=(2, 3))
         log_call(f"PATCH {url}", time.time() - start, f"status {r.status_code}")
         try:
             body = r.json()
@@ -305,6 +459,29 @@ def api_patch(path, params):
     except Exception as e:
         log_call(f"PATCH {url}", time.time() - start, f"error: {e}")
         return {"error": "unexpected", "detail": str(e)}, 500
+
+
+SUBSCRIPTIONS = None
+
+
+def _start_subscriptions():
+    """Brings up the subscription client, if the game supports it.
+
+    Deliberately optional. The protocol is recorded in the timetable
+    findings but has never actually been run, so this is an opportunistic
+    upgrade over polling that verifies itself and stands down if anything is
+    not as expected. The polling path stays exactly as it was.
+    """
+    global SUBSCRIPTIONS
+    if SUBSCRIPTIONS is not None:
+        return SUBSCRIPTIONS
+    SUBSCRIPTIONS = tsw_subscriptions.SubscriptionClient(
+        get_fn=lambda p: api_get(p, use_cache=False, retries=0),
+        post_fn=api_post,
+        log=lambda msg: log_call(msg, 0.0, "subscription"),
+    )
+    SUBSCRIPTIONS.start()
+    return SUBSCRIPTIONS
 
 
 # --------------------------------------------------------------------------
@@ -593,12 +770,26 @@ def _extract_latlon(d):
     return None
 
 
+_last_location = {"loc": None, "at": 0.0}
+LOCATION_HOLD_SECONDS = 30.0
+
+
 def get_player_location():
+    """PlayerInfo is the path most prone to dropping under load - the
+    timetable findings record it returning 502 to rapid polling while being
+    perfectly present. Returning None on a dropped poll made the map stall
+    and then jump when the next one landed, because the client had nothing
+    to interpolate towards. The last known fix is held instead; a train
+    cannot teleport, so a position a second old is a far better answer than
+    no position at all."""
     body, status = api_get("get/DriverAid.PlayerInfo")
     if status == 200 and isinstance(body, dict):
         loc = _extract_latlon(body.get("Values", {})) or _extract_latlon(body)
         if loc:
+            _last_location.update({"loc": loc, "at": time.time()})
             return loc
+    if _last_location["loc"] and (time.time() - _last_location["at"]) < LOCATION_HOLD_SECONDS:
+        return _last_location["loc"]
     return None
 
 
@@ -628,6 +819,17 @@ def _find_by_key_prefix(d, prefix):
         if k.lower().startswith(prefix.lower()):
             return v
     return None
+
+
+# Last identity that actually resolved, and when. The API reports identity
+# inconsistently poll to poll - already documented - so on a poll where it
+# comes back empty the honest answer is "unchanged", not "no train".
+_last_identity = {"raw": None, "clean": None, "fms": None, "at": 0.0}
+IDENTITY_HOLD_SECONDS = 20.0
+
+# Sighting writes are throttled; see find_loco_class().
+_last_sighting = {"key": None, "at": 0.0}
+SIGHTING_MIN_INTERVAL = 30.0
 
 
 def get_loco_identity():
@@ -671,15 +873,39 @@ def get_loco_identity():
             if isinstance(v, (int, float)):
                 formation_max_speed_ms = v
 
+    # Hold the last good identity through a dropped poll. Without this a
+    # single 502 - which happens routinely at the poll rates this app runs -
+    # blanked the train name and the speedometer's per-train limits, then
+    # restored them a moment later. That flicker was the "loses the train
+    # class" symptom; the game had not changed anything.
+    now = time.time()
+    if raw or clean:
+        _last_identity.update({"raw": raw, "clean": clean,
+                               "fms": formation_max_speed_ms, "at": now})
+    elif (now - _last_identity["at"]) < IDENTITY_HOLD_SECONDS:
+        return _last_identity["raw"], _last_identity["clean"], _last_identity["fms"]
+
     return raw, clean, formation_max_speed_ms
 
 
-def find_loco_class():
-    raw, clean, formation_max_speed_ms = get_loco_identity()
+def find_loco_class(identity=None):
+    # identity can be passed in by a caller that has already fetched it.
+    # /api/loco used to call find_loco_class() AND
+    # get_current_raw_object_class(), each doing its own three upstream
+    # reads - six calls every 2 seconds for one answer.
+    raw, clean, formation_max_speed_ms = identity or get_loco_identity()
 
+    # Sightings record WHICH trains have been driven, not a per-poll event
+    # log, so writing two SQLite rows every 2 seconds for a train that has
+    # not changed is pure overhead competing with the polls that matter.
+    # Record on change, or once every SIGHTING_MIN_INTERVAL seconds.
     if raw or clean:
-        loco_profiles.record_sighting(raw, clean_name=clean, formation_max_speed_ms=formation_max_speed_ms)
-        train_classes_db.record_live_sighting(raw, clean_name=clean, formation_max_speed_ms=formation_max_speed_ms)
+        key = (raw, clean)
+        now = time.time()
+        if key != _last_sighting["key"] or (now - _last_sighting["at"]) > SIGHTING_MIN_INTERVAL:
+            _last_sighting.update({"key": key, "at": now})
+            loco_profiles.record_sighting(raw, clean_name=clean, formation_max_speed_ms=formation_max_speed_ms)
+            train_classes_db.record_live_sighting(raw, clean_name=clean, formation_max_speed_ms=formation_max_speed_ms)
 
     if clean:
         return clean
@@ -951,12 +1177,18 @@ import timetable_db
 timetable_db.init_db()
 
 import train_classes_db
+import tsw_subscriptions
 train_classes_db.init_db()
 _dedup_count = train_classes_db.dedup_train_classes()
 if _dedup_count:
     print(f"[startup] deduped {_dedup_count} duplicate train class row(s)")
 
 import other_hud_sync
+
+# Bring up the subscription client once the API helpers and config exist.
+# Opportunistic: it verifies itself against the running game and stands
+# down to polling if the endpoint is absent or the shape is unrecognised.
+_start_subscriptions()
 
 
 from werkzeug.exceptions import HTTPException
@@ -1537,6 +1769,14 @@ def paks_template():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.record_template(path, anchor=body.get("anchor")))
+
+
+@app.route("/api/subscriptions", methods=["GET"])
+def subscriptions_status():
+    """Whether the subscription API is in use, and why not if it isn't."""
+    if SUBSCRIPTIONS is None:
+        return jsonify({"state": "not_started"})
+    return jsonify(SUBSCRIPTIONS.status())
 
 
 @app.route("/api/paks/probe", methods=["POST"])
@@ -2262,8 +2502,9 @@ def weather_status():
 
 @app.route("/api/loco", methods=["GET"])
 def loco_identity():
-    name = find_loco_class()
-    raw = get_current_raw_object_class()
+    identity = get_loco_identity()
+    name = find_loco_class(identity=identity)
+    raw = identity[0]
     display_name = name  # what gets shown/returned; may be overridden below
     speedometer = "digital"  # default for unconfigured trains
 

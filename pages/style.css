@@ -382,3 +382,7 @@ textarea.dump {
   text-transform: uppercase; color: var(--text-dim); text-decoration: none;
 }
 .hud-controls-overlay .btns { display: flex; gap: 8px; }
+
+/* A readout still showing its last known value after the feed went quiet.
+   Dimmed rather than blanked: the number is real, just not fresh. */
+.stale { opacity: 0.45; }

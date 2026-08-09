@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.42.0**
+**App version at end of session: 7.45.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,72 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.45.0 - subscription API
+
+`tsw_subscriptions.py` + `/api/subscriptions`. Subscribes the hot paths once,
+then reads them all in one GET. Mock measurement over 10s of the real poll
+pattern: 37 upstream requests with subscriptions active vs 86 polling, and 40
+proxy reads cost 0 upstream calls.
+
+The protocol has never been run against a real game - the findings doc records
+it as unimplemented and the aggregate response shape is a guess. So the client
+verifies that a path it subscribed to actually comes back before trusting any
+value, and stands down to polling otherwise. Three outcomes, all tested:
+active / unsupported (404) / unknown_shape. On unknown_shape it captures the
+raw payload sample at /api/subscriptions so the real shape can be supported
+rather than guessed at again.
+
+**FIRST THING TO CHECK ON A REAL RUN:** open /api/subscriptions while driving.
+`active` means it worked. `unknown_shape` - send back
+`unrecognised_payload_sample`. `unsupported` - this TSW build lacks the
+endpoint.
+
+## What changed in v7.44.0 - connection stability
+
+Train class dropping out, map stalling then jumping, weather flickering. None
+of it was the game losing data.
+
+Two of the causes were the app's own diagnostics: `log_call` rewrote a 300
+line file on EVERY api call under a global lock (~10/sec), and
+`read_api_key()` re-stat'd folders and re-read the key file on every call.
+Both now cached/buffered.
+
+The rest: overlapping requests to a server that cannot take them (TSW returns
+502 on concurrency - documented in the timetable findings and then not acted
+on), no retry, `/api/loco` fetching identity twice (6 upstream calls per poll,
+now 3), and sighting rows written to SQLite every 2s.
+
+Everything now holds last-known-good rather than blanking: identity 20s,
+location 30s, and client readouts keep their value and dim after 15s.
+`.stale` class added to style.css.
+
+Measured with `tests/mock_tsw_api.py --compare`, which reproduces the game's
+failure modes and runs old vs new in one process: concurrent rejects 36 -> 0,
+location dropouts 1 -> 0 at a 35% drop rate.
+
+## What changed in v7.43.0 - overlay follows infrastructure style, historic lines stencilled out
+
+`TintedRailLayer` composites each tile on a canvas: infrastructure style
+supplies the pixels (line weights, hollow tunnel casings), the GAUGE style is
+used purely as a stencil via `destination-in` to drop historic alignments, and
+`source-in` paints the livery colour through the surviving alpha. Alpha is
+preserved at every step because thickness and tunnel translucency live there.
+
+Measured on synthetic tiles: historic removed 100%, live lines retained 99.2%,
+widths unchanged (6px/3px), tunnel alpha ratio 0.35 before and after.
+
+The stencil is dilated (radius 2) because gauge draws thinner than
+infrastructure. Dilation must be a source-over union on a scratch canvas -
+repeated destination-in erodes instead. A missing stencil falls back to
+unmasked rather than erasing the tile. Re-tint reuses cached tile images
+rather than refetching.
+
+New **Historic Lines: Hidden/Shown** button next to the rail toggle.
+
+UNVERIFIED: openrailwaymap.org is unreachable from the dev sandbox, so the
+`gauge` tile path and the claim that gauge omits historic lines come from
+documentation, not a real tile.
 
 ## What changed in v7.42.0 - map zoom + livery-coloured rail overlay
 

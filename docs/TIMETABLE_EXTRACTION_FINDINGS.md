@@ -31,7 +31,11 @@ a missing path**. Probes must retry before concluding anything.
 
 There is also a **subscription API** (`POST /subscription/<path>?Subscription=1`,
 then one `GET /subscription/`) which would replace the current 4× 300ms
-polling and likely stop the connection drops. Not yet implemented.
+polling and likely stop the connection drops. IMPLEMENTED in v7.45.0
+(`tsw_subscriptions.py`), but the protocol here was never verified against a
+real game - the client probes, verifies and falls back to polling if the
+endpoint is missing or the payload shape is not what was guessed. Check
+`/api/subscriptions` on a real run.
 
 ## 2. Install layout
 

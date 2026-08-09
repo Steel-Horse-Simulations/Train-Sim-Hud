@@ -1,3 +1,34 @@
+// Writes a readout only when a real value arrived. A dropped poll leaves
+// the previous value in place and marks it stale rather than replacing it
+// with an em dash.
+//
+// This is what the "weather jumps around" and "loses the train class"
+// complaints actually were: the server returns nothing on a transient 502,
+// the field blanks for one cycle, and the next poll restores it. The value
+// was never wrong, only briefly absent, and blanking made a connection
+// hiccup look like a data problem.
+const STALE_AFTER_MS = 15000;
+const lastGood = {};
+
+function setReadout(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (value !== null && value !== undefined) {
+    el.textContent = value;
+    el.classList.remove('stale');
+    lastGood[id] = Date.now();
+    return;
+  }
+  // No fresh value. Keep what is there, but stop pretending it is current
+  // once it is properly old - holding a stale reading silently would be
+  // worse than showing it greyed.
+  if (!lastGood[id]) {
+    el.textContent = '—';
+  } else if (Date.now() - lastGood[id] > STALE_AFTER_MS) {
+    el.classList.add('stale');
+  }
+}
+
 // Shared logic for both Dashboard HUD variants (Desktop + Tablet). Both
 // pages include this file as-is, so any behavioural change here applies to
 // both automatically - only their CSS/sizing differs between the two files.
@@ -567,11 +598,12 @@ async function pollAux() {
   auxPollInFlight = true;
   try {
     const weather = await proxyGet('WeatherManager.Data');
-    const w = weather.Values || weather;
-    document.getElementById('w-temp').textContent = (w.Temperature !== undefined) ? w.Temperature.toFixed(1) + ' °C' : '—';
-    document.getElementById('w-precip').textContent = (w.Precipitation !== undefined) ? (w.Precipitation * 100).toFixed(0) + ' %' : '—';
-    document.getElementById('w-cloud').textContent = (w.Cloudiness !== undefined) ? (w.Cloudiness * 100).toFixed(0) + ' %' : '—';
-    document.getElementById('w-fog').textContent = (w.FogDensity !== undefined) ? (w.FogDensity * 100).toFixed(0) + ' %' : '—';
+    const w = (weather && (weather.Values || weather)) || {};
+    const pct = (v) => (typeof v === 'number') ? (v * 100).toFixed(0) + ' %' : null;
+    setReadout('w-temp', typeof w.Temperature === 'number' ? w.Temperature.toFixed(1) + ' °C' : null);
+    setReadout('w-precip', pct(w.Precipitation));
+    setReadout('w-cloud', pct(w.Cloudiness));
+    setReadout('w-fog', pct(w.FogDensity));
 
     try {
       const wsResponse = await fetch('/api/weather/status');
@@ -591,7 +623,7 @@ async function pollAux() {
         document.getElementById('w-hud-text').textContent = '—';
       }
     } catch (e) {
-      document.getElementById('w-hud-text').textContent = '—';
+      setReadout('w-hud-text', null);
     }
 
     const tod = await proxyGet('TimeOfDay.data');
@@ -628,10 +660,17 @@ async function pollLoco() {
     const data = await res.json();
     if (data && data.name) {
       el.textContent = data.name;
-      el.classList.remove('missing');
-    } else {
+      el.classList.remove('missing', 'stale');
+      lastGood['v-loco'] = Date.now();
+    } else if (!lastGood['v-loco']) {
+      // Only claim the class is missing if one has never been seen. A
+      // dropped poll is not the same thing as an unconfigured train, and
+      // treating it as one is why "Missing Train Class" kept flashing up
+      // mid-journey.
       el.textContent = 'Missing Train Class';
       el.classList.add('missing');
+    } else if (Date.now() - lastGood['v-loco'] > STALE_AFTER_MS) {
+      el.classList.add('stale');
     }
     if (data && typeof data.max_speed_mph === 'number' && data.max_speed_mph > 0) {
       currentMaxSpeedMph = data.max_speed_mph;
