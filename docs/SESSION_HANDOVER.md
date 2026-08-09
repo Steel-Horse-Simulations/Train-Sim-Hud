@@ -1,0 +1,550 @@
+# TSW Hud — session handover
+
+**App version at end of session: 7.48.0**
+
+Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
+`TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
+work and should be read before touching any of it.
+
+---
+
+## How to work with me on this project
+
+- **Results only, brief summary at the end.** No commentary or narration
+  while working.
+- Version bump on every change: MAJOR.MINOR.PATCH. Bug fix = patch.
+- Always repackage to `TSW Hud.zip` and present the file.
+- Exclusions when zipping: `config.json`, `__pycache__`, `*.pyc`,
+  `extracted/`.
+- I test everything on a real Windows machine with TSW6 and report back
+  precisely. Treat my corrections about train/timetable behaviour as
+  authoritative — I know the domain, you don't.
+- **Verify before shipping.** Several bugs this session came from
+  assumptions that a quick check would have caught. Render/screenshot UI
+  changes, run the code against synthetic data, don't eyeball geometry.
+
+---
+
+## What changed in v7.48.0 - Download button fixed, and it was never a backup
+
+Reported as "the download button does nothing". It built a Blob and called
+a.click(), which pywebview ignores entirely - worked in a browser, dead in
+the app.
+
+MUCH more serious: it was saving /api/known_trains/list, the DRIVEN-ONLY
+resolved view. On a seeded DB the old backup captured 1 of 3 trains, omitting
+never-driven catalog rows, hidden rows, variants, subclasses, families,
+operators, liveries and aliases. Restoring it after a wipe would have lost
+most of the data while appearing to succeed.
+
+Now: /api/known_trains/backup writes JSON + a copy of the .db server-side to
+<app>/backups/, verifies by reading back and comparing row counts, and reports
+the paths. /api/known_trains/export serves a normal download for browsers.
+/api/known_trains/import restores (merge by default, ?replace=1 to overwrite).
+
+Import must run PARENTS FIRST - the first test restored trains and operators
+but zero liveries, because alphabetical order put operator_liveries before
+operators and every FK failed silently. Skipped rows now record their reason.
+
+Verified: seed -> backup -> DELETE all tables -> restore -> identical counts,
+0 skipped.
+
+## What changed in v7.47.0 - overlay fixed with REAL tile measurements
+
+Five attempts failed because all were validated against synthetic tiles. Two
+real tiles from the user overturned three assumptions at once:
+
+1. **Tiles are 512px, not 256.** The canvas drew them into a 256 canvas and
+   Leaflet scaled back up - that resample was the soft, doubled edges all
+   along, not the colour maths. Now TILE_PIXELS=512 backing / TILE_CSS_PX=256
+   footprint.
+2. **ORM tiles contain labels** (#0000ff text, #ffffff halos) which the
+   whole-tile recolour turned into the dark smears seen in every screenshot.
+   recolourPixels() now classifies per pixel - orange family = track,
+   everything else dropped.
+3. **REFERENCE_LINE_LUM was nearly right** (real 146.5 vs guessed 137), so it
+   was NOT the cause of the near-black output. Don't blame it if darkness
+   returns.
+
+Measured on the real tile with livery #1e467d: running line -> #1e467d
+exactly, tunnel -> #2b64b3 (lighter), 0 label pixels surviving.
+
+crossOrigin retries without CORS on failure (tile still draws, blend path
+used). Stencil dilation 1px -> 4px at 512, measured from real line widths.
+
+## What changed in v7.46.0 - overlay fixed; the luminance floor was the cause
+
+Diagnostic screenshots: raw CRISP, full and no-stencil both washed out and
+near identical. So not the tiles, not the zoom, not the stencil - the
+recolour, and specifically v7.45.1's `lighten` pass to LUMINANCE_FLOOR, which
+floored every pixel at 30% grey before the `color` blend. That washed the
+mid-tone lines out and flattened line-vs-casing contrast, and the pale result
+was then faithfully preserved. It also explained the "colour has gone light"
+report - the livery was fine, the luminosity under it was destroyed.
+
+LUMINANCE_FLOOR -> null, LIFT_DARK_LIVERIES -> false (tintColour's 50%
+lightness floor was the other half of the same mistake). Both kept as
+constants for a dark basemap someday.
+
+Added lightness RE-ANCHORING: scale by (livery luminance /
+REFERENCE_LINE_LUM) so an ordinary running line lands ON the livery colour
+while tunnels stay lighter and casings darker.
+
+Measured: luminance error vs raw 17% -> 5%. Tunnel and casing ordering
+preserved. Caveat: dark saturated liveries come out slightly muted
+(#1e467d -> #344862); mid-tone ones land almost exactly.
+
+## What changed in v7.45.2 - overlay diagnostic
+
+Overlay still washed out after two fixes, both reasoned rather than measured
+(ORM is unreachable from the sandbox; all testing has been against synthetic
+tiles). Added **Overlay: full / no-stencil / raw** on the map, which
+re-composites the same already-downloaded tile bytes three ways so the
+responsible stage can be identified instead of guessed at.
+
+raw faded -> not our compositing (zoom/DPR/style upstream).
+raw crisp + no-stencil faded -> the recolour.
+no-stencil crisp + full faded -> the gauge stencil misaligning.
+
+## What changed in v7.45.1 - overlay washed out / tunnels missing
+
+v7.43.0's claim that "tunnel translucency lives in the alpha channel" was
+WRONG. ORM draws tunnels as a PALER SHADE, not lower opacity, so the flat
+`source-in` recolour erased the distinction. Now uses the `'color'` blend
+mode (hue+sat from the fill, luminosity from the artwork), re-clipped to the
+artwork's alpha afterwards, with a `'lighten'` pass to LUMINANCE_FLOOR first
+so near-black casings stay visible on our dark basemap.
+
+Washed-out look was three things: the raw anti-aliased stencil softening every
+edge via destination-in alpha multiplication, layer opacity 0.85, and a
+drop-shadow glow. buildStencil() now hardens the stencil (redraw on itself 6x,
+alpha 1-(1-a)^n), opacity is 1, glow gone, dilation 2px -> 1px.
+
+Measured: partial-alpha edge pixels ORM 34.1% vs ours 29.5%, widths identical
+at 14px, tunnel luminance 204 vs open track 147.
+
+## What changed in v7.45.0 - subscription API
+
+`tsw_subscriptions.py` + `/api/subscriptions`. Subscribes the hot paths once,
+then reads them all in one GET. Mock measurement over 10s of the real poll
+pattern: 37 upstream requests with subscriptions active vs 86 polling, and 40
+proxy reads cost 0 upstream calls.
+
+The protocol has never been run against a real game - the findings doc records
+it as unimplemented and the aggregate response shape is a guess. So the client
+verifies that a path it subscribed to actually comes back before trusting any
+value, and stands down to polling otherwise. Three outcomes, all tested:
+active / unsupported (404) / unknown_shape. On unknown_shape it captures the
+raw payload sample at /api/subscriptions so the real shape can be supported
+rather than guessed at again.
+
+**FIRST THING TO CHECK ON A REAL RUN:** open /api/subscriptions while driving.
+`active` means it worked. `unknown_shape` - send back
+`unrecognised_payload_sample`. `unsupported` - this TSW build lacks the
+endpoint.
+
+## What changed in v7.44.0 - connection stability
+
+Train class dropping out, map stalling then jumping, weather flickering. None
+of it was the game losing data.
+
+Two of the causes were the app's own diagnostics: `log_call` rewrote a 300
+line file on EVERY api call under a global lock (~10/sec), and
+`read_api_key()` re-stat'd folders and re-read the key file on every call.
+Both now cached/buffered.
+
+The rest: overlapping requests to a server that cannot take them (TSW returns
+502 on concurrency - documented in the timetable findings and then not acted
+on), no retry, `/api/loco` fetching identity twice (6 upstream calls per poll,
+now 3), and sighting rows written to SQLite every 2s.
+
+Everything now holds last-known-good rather than blanking: identity 20s,
+location 30s, and client readouts keep their value and dim after 15s.
+`.stale` class added to style.css.
+
+Measured with `tests/mock_tsw_api.py --compare`, which reproduces the game's
+failure modes and runs old vs new in one process: concurrent rejects 36 -> 0,
+location dropouts 1 -> 0 at a 35% drop rate.
+
+## What changed in v7.43.0 - overlay follows infrastructure style, historic lines stencilled out
+
+`TintedRailLayer` composites each tile on a canvas: infrastructure style
+supplies the pixels (line weights, hollow tunnel casings), the GAUGE style is
+used purely as a stencil via `destination-in` to drop historic alignments, and
+`source-in` paints the livery colour through the surviving alpha. Alpha is
+preserved at every step because thickness and tunnel translucency live there.
+
+Measured on synthetic tiles: historic removed 100%, live lines retained 99.2%,
+widths unchanged (6px/3px), tunnel alpha ratio 0.35 before and after.
+
+The stencil is dilated (radius 2) because gauge draws thinner than
+infrastructure. Dilation must be a source-over union on a scratch canvas -
+repeated destination-in erodes instead. A missing stencil falls back to
+unmasked rather than erasing the tile. Re-tint reuses cached tile images
+rather than refetching.
+
+New **Historic Lines: Hidden/Shown** button next to the rail toggle.
+
+UNVERIFIED: openrailwaymap.org is unreachable from the dev sandbox, so the
+`gauge` tile path and the claim that gauge omits historic lines come from
+documentation, not a real tile.
+
+## What changed in v7.42.0 - map zoom + livery-coloured rail overlay
+
+Zoom 15 -> 17. Rail overlay and player dot now take the driven train's livery
+colour via a new `livery_colour` field on `/api/loco` and a shared
+`train_classes_db.resolve_livery_colour()`.
+
+Tinting uses an SVG `feFlood` + `SourceAlpha` filter for an exact colour. CSS
+`hue-rotate` was tried and rejected - it is a matrix approximation and turned
+blue into cyan on test tiles. Lightness is floored at 50% (hue preserved) so
+dark liveries stay visible on a dark basemap.
+
+Caveat: Leaflet comes from unpkg, unreachable from the dev sandbox, so the map
+never initialises there. Colour resolution, the tint filter and the lightness
+floor were tested directly; the live map at zoom 17 was not.
+
+## What changed in v7.41.0 - FIXED-LENGTH records, 12,207 x 707 bytes
+
+`record_template()` on the real Leven layer: 12,207 records, min AND median
+gap 707 bytes, 57 fields at 100% share, anchored on `Class`. 12,207 x 707 =
+8,630,349 against a file of 8,638,791 - the whole .uexp is records plus ~8 KB.
+So the records are FIXED length despite the type being called a "Stream".
+
+But 57 fields at 100% is not proof: with fixed-length records, "same offset in
+every record" is equally true of a constant byte pattern, and only 24 of
+12,207 records were sampled. The old 2828-byte stride failure held alignment
+for twenty records before drifting.
+
+`decode_fixed_records()` / `/api/paks/decode_fixed` / **Decode fixed records**
+is the check that does discriminate: read the type at one fixed offset in
+every record and test the result against a whole-file scan that assumed no
+stride at all - coverage near-total, no count exceeding the whole-file bound,
+rank order agreeing. Validated on a fixed-stride fixture: recovers stride,
+type offset and time offset exactly, matches ground truth to the record, and
+refuses a stride one byte wrong.
+
+**Next: Decode fixed records on the real Leven layer.** Expect stride 707 and
+a type distribution at or below 5198/5198/908/36/27/4. If confirmed, the
+layout is settled and the rest is reading times and writing to timetables.db.
+If not, the 707 stride is coincidence - which is what this exists to find out
+before anything gets built on it.
+
+## What changed in v7.40.0 - the name table is too small to parse against
+
+Records still do not parse at either field width, and the probe says why:
+**29% of every byte offset in the 8.6 MB file passes the "valid FName" test**
+(2,539,329 hits). With 88 names, any int32 in 0..87 followed by a zero looks
+like a name reference. That invalidates the hex windows AND the previous
+turn's "it IS tagged" conclusion - chain_break's one tag was
+SignalRef/EnumProperty with size 27, and an EnumProperty value is 8 bytes, so
+it was noise.
+
+What survives is the count structure: sixteen names referenced EXACTLY 12,207
+times each. That is the record count (mean 708 bytes/record). StopPoint and
+TrackSectionEntry are 5,198 each - identical.
+
+`record_template()` / `/api/paks/template` / **Recover record template** uses
+that: anchor on a once-per-record name, and keep only what recurs at the same
+relative offset across records. Noise does not recur; real fields do.
+Validated on the fixture (recovers true field order) and refuses random bytes.
+
+**Next: Recover record template on the real Leven layer.** Expect record_count
+12,207; stable_fields is then the layout to build a parser from.
+
+## What changed in v7.39.2 - field width made a parameter
+
+The probe on the real Leven layer settles it: property TYPE names ARE
+referenced (EnumProperty 61,036, IntProperty/NameProperty/StructProperty/
+FloatProperty 12,207 each), so it is tagged serialisation and v7.39.1
+over-corrected.
+
+`longest_tag_chain: 1` was the real tell - the signature of a FIELD WIDTH
+mismatch, which fails quietly: read a 64-bit FName as 32-bit and the first tag
+still looks perfect (right index in the low half, zero in the high half) while
+every later read lands mid-field. `_read_tag()` now takes a width and the
+parser tries 4 and 8 against both guid_byte settings. Proven on a
+16-byte-FName fixture (112/112 records, 31/31 stops, width discovered).
+`_MAX_PROP_SIZE` raised to 64 MB - the outer ServiceDataTracks MapProperty is
+megabytes and was rejected on size.
+
+The probe now dumps annotated hex windows around real references to a field
+name (default DataType) and reports where the tag chain broke. That reads the
+layout off directly instead of inferring it - `+8 EnumProperty` means 8-byte
+FNames, `+16` means 16-byte.
+
+**Ground truth to check any parser against**, from the probe: 12,207 records,
+5,198 StopPoint and 5,198 TrackSectionEntry (identical counts - every stop
+appears paired with a section entry). If a parse does not reproduce those, it
+is wrong however tidy it looks.
+
+**Next: Probe format, then Read records, on the real Leven layer.**
+
+## What changed in v7.39.1 - the over-correction
+
+`parse_track_records()` on the real Leven Branch layer found zero tag chains -
+not one pair of consecutive valid tags in 8.6 MB. So v7.39.0's conclusion was
+wrong too, and for the same reason section 8 was: reasoning from an indirect
+signal rather than measuring. A name being present in the name table does not
+mean the record data references it.
+
+Added `probe_name_references()` / `/api/paks/probe` / **Probe format**, which
+counts how often each name is actually referenced as an FName in the .uexp.
+That separates tagged from unversioned (UE4.25+) serialisation directly:
+unversioned writes no tags, so property TYPE names are referenced ZERO times
+while enum VALUE names still appear. Validated against fixtures built both
+ways. A failed parse now attaches its own probe.
+
+**Next: Probe format on the real Leven Branch layer.** If property type names
+come back with counts, the tag layout just differs from the UE4 one assumed
+here. If they come back at zero with enum values present, it is unversioned
+and tags are never coming - at which point the statistical path
+(/api/paks/stops) is the fallback, and it already segments services usefully.
+
+## What changed in v7.39.0 - what the name table suggested
+
+The name table from the second real run settles the format question, and
+section 8 of the findings doc was wrong. The Leven layer's 88 names include
+ArrayProperty / EnumProperty / FloatProperty / IntProperty / MapProperty /
+NameProperty and field names DataType, Distance, DirectionOfTravel,
+InstructionIndex, GoViaIndex, ActionIndices, NetworkRibbonLocation. That is
+Unreal's tagged-property serialisation - the asset is self-describing, so
+nothing needs to be inferred.
+
+`parse_track_records()` / `/api/paks/records` / **Read records (tagged
+properties)** walks FPropertyTag chains and reads each record field by field
+by name. Validated against a fixture written from the format spec: 220/220
+records, 48/48 StopPoints, with and without the HasPropertyGuid byte, first
+stop correctly departure-only. Random bytes are refused.
+
+This explains the earlier statistical result rather than contradicting it:
+shift -6 maps StopPoint onto "EnumProperty" and ActionPoint onto "Distance",
+i.e. the property machinery names, which really do appear once per record with
+a consistent delta. The scoring found a real field, just the wrong one. No
+further statistics would have helped. `find_stop_points()` is kept for assets
+that genuinely are opaque.
+
+**Still unsolved: station names.** NetworkRibbonLocation holds P2K51-style
+track ribbon IDs, not station names. Stops are precisely located but unlabelled.
+
+**Next: run Read records on the real Leven Branch layer.**
+
+## What changed in v7.38.1 - first real run, and a false confirmation
+
+Ran against the real Leven Branch layer. The times and segmentation look
+genuinely right (median 8 stops per service, a 15-stop 74.8-minute
+Leven -> Edinburgh run, 137 of 297 intervals under 90 seconds = arrival/
+departure pairs). But it reported `confirmed: true` on an IMPOSSIBLE answer:
+the winning shift put `StopPoint` at FName index 8765 in an 88-entry name
+table, and three other impossible shifts tied with it, with the only plausible
+candidate coming fifth by 0.0002.
+
+Fixed: shifts must now resolve every anchor to an index that exists in the
+name table, ties are reported and suppress `confirmed`, and `names_sample` is
+returned. Full write-up in the findings doc.
+
+**The real blocker is now clear: this layer's name table has no station names
+at all** (88 names, 0 station-shaped). So there is nothing to corroborate the
+enum against - which is why the tie was unbreakable - and the stops have times
+but no labels. Station identity has to come from somewhere else; the index
+asset is the place to look next.
+
+## What changed in v7.38.0 - StopPoint identification
+
+The blocker named as "next step" in the findings doc is solved.
+`find_stop_points()` in `pak_tools.py`, `/api/paks/stops`, and a **Find stop
+points** button next to Extract services on Discovery.
+
+It separates real station calls from the 120-151 simulated track points per
+service by resolving each record's FName references against the name table in
+the sibling `.uasset`, classifying every time TWICE - once by station
+reference, once by type enum - and cross-checking the two.
+
+**Validated against synthetic records of known layout only** (`tests/`), NOT
+against a real pak. On the fixture it recovers the name-table shift exactly,
+finds 41-44 stops among 182 track points across 8 stations with
+arrival/departure pairs intact, and the two classifications agree 98%. It also
+correctly refuses two negative controls: random bytes with planted times, and
+a file where the type is a raw byte rather than an FName.
+
+**Next thing to do: run it on the real Leven Branch layer.** Extract & inspect,
+then Find stop points. The number worth checking is `corroboration` - if the
+two independent classifications agree on the real file the way they do on the
+fixture, this is done and the remaining work is writing to `timetables.db`.
+
+Eight failed approaches are documented in the findings doc. Every one of them
+produced a confident, entirely wrong answer, which is why the scoring is as
+defensive as it is - please read that table before changing any of it.
+
+## What changed in v7.37.0 (spec-drift cleanup)
+
+Housekeeping only, no new features.
+
+- **Known Trains is now actually driven-only** (`times_seen > 0`). Spec 3C had
+  required this since 6.x but it was never implemented — the filter was on
+  variants and visibility only. `list_train_classes(driven_only=)` and
+  `needs_attention(driven_only=)` both gained it; `/api/known_trains/list`
+  passes True to both, and they must stay in step.
+- **Removed everything spec section 3 excludes**, which had been sitting in the
+  tree for several versions: `sw.js` + its Flask route, `offline-db.js`,
+  `sync-client.js`, `pages/icons/`, `/api/sync/changes`, `/api/sync/push`,
+  `certs/`, `HTTPS_SETUP.md`, `/api/https_cert_status`, `get_ssl_context()`,
+  `get_https_cert_status()`, and `cryptography` from requirements.
+  `run_flask()` is plain HTTP unconditionally now.
+- `timetables_browser.html` was the last page still on the sync layer — it now
+  PATCHes directly. `timetable.html` lost a dead `install-prompt.js` tag that
+  404'd on every load.
+- `get_changes_since()` is kept in both DB modules even though nothing calls
+  it: it carries the keyset-pagination fix and costs nothing to leave.
+- **Zip no longer ships `data/*.db` or `diagnostics/*.log`.** The databases
+  were empty, so extracting over a real install would have wiped Known Trains.
+- Spec doc updated from 6.1.3 to reality: families/operators/liveries,
+  variants, the analogue speedometer angle conventions, the current route list
+  (`/api/train_classes` and `train_classes.html` no longer exist), and the
+  Family → Class → Subclass → Entry terminology vs the unchanged API paths.
+- Nav gaps (Classes/Groups/Operators/Customisation absent from
+  `registry.json`) left alone deliberately, and now documented as such.
+
+## What changed in v7.36.0
+
+### Known Trains / Operators pill redesign
+- Pills 156px tall, 420px thumbnails, full width, image on the **right**.
+- Coloured edge is a **solid layer** (`.pill-wrap` background), with the
+  inner pill's `border-radius` carving the concave curve. Do NOT rebuild
+  this as a hard-stopped gradient — a colour stop creates a square edge
+  that no radius can fix. Left fade uses `mask-image` (opacity only, so it
+  can't introduce a hard edge).
+- Grey hairline border sits behind the coloured layer, masked to fade out
+  in step with it.
+- Pill background = livery colour at 20% opacity.
+- **Pill colour comes from the LIVERY, not the operator.** Server resolves
+  it per train in `/api/known_trains/list`.
+- Operator logo lookup uses the operator's `short_code` (`/company_logos/
+  <code>.png`) so it works regardless of livery. An earlier bug had the
+  edit page reading a `logo_path` field nothing ever populated.
+
+### Classes / Groups / Variants
+- Old "Groups" page renamed **Classes** (`classes.html`); all user-facing
+  text says Class. API paths still say `groups` — deliberately unchanged.
+- New **Groups** page (`groups.html`) = families. Several Classes belong to
+  one Group, e.g. Class 801/802/805 under "Class 8xx". Backed by a new
+  `class_families` table and `family_id` on `loco_groups`.
+- Known Trains groups pills by **family name** when set, else class name.
+- **Variants**: attach a train as a variant of another. Non-destructive and
+  fully reversible — the row is tagged `variant_of_class_id`, hidden from
+  Known Trains, and reappears intact when removed. Variant dropdown lists
+  only ungrouped trains. Display name/speedometer resolve to the PARENT.
+- `needs_attention` / completion = display name, operator, livery, group,
+  power. **Not** subclass, **not** photo.
+
+### Analogue speedometer (dashboard)
+Read the angle conventions before touching this — two long-lived bugs
+lived here.
+
+- The gauge SVG is rotated **-90° by CSS**. Everything is authored in SVG
+  space and lets that rotation do the final turn.
+- Value → SVG angle: `A = 224.5 + (v/dialMax)*271`, clockwise from east.
+- An element drawn pointing UP (max-speed tick, needle) sits at SVG 270,
+  so placing it at value v needs `rotate(A - 270)`. Using `rotate(A)` put
+  the max-speed line 270° out — it looked "stuck in the same place" for
+  several iterations.
+- `polarPoint()` must NOT subtract an extra 90; doing so rotated the whole
+  number ring a quarter turn.
+- Geometry is a direct transcription of the approved mockup, scaled 50/460.
+  Do not round these to "tidier" numbers.
+- Numbers in 10s (5s when dial ≤50, with 1mph minor ticks).
+- Digital readout is a real 7-segment display (individual bars, ghost
+  segments always shown), 3 digits, no decimal point, bordered panel.
+- Ring is split: normal segment up to max speed coloured by **speed limit**;
+  a second segment covers only the portion **past** max speed, in red.
+- Digital speedometer is disabled dashboard-wide but all its code is
+  retained — `setSpeedometerMode('analogue')` is forced in `pollLoco`.
+
+### Serving / infrastructure
+- `/pages/<file>` now sends `Cache-Control: no-cache, no-store,
+  must-revalidate`. Without it WebView2 served stale CSS/JS and changes
+  appeared not to apply — this caused a "that didn't work" round trip.
+- `pollLoco` interval 10s → 2s so train changes update without a refresh.
+- `.gitattributes` added (CRLF for `.bat`/`.cmd`/`.ps1`, LF for source).
+
+### Live journey data (works today, no extraction)
+`/api/journey` returns:
+- `service_name` — the live headcode, from `DriverAid.PlayerInfo`
+  (`currentServiceName`, e.g. "1A10")
+- `stations[]` / `markers[]` — from `DriverAid.TrackData`, each with
+  `stationName`, `distanceToStationCM`, `platformLength`
+- `next_stop` — nearest upcoming
+
+**Not yet surfaced on the HUD.** Low-effort, high-value next task.
+
+---
+
+## Timetable extraction — state of play
+
+**See `TIMETABLE_EXTRACTION_FINDINGS.md` for full detail.** Summary:
+
+Goal: this app does everything itself. The other app ("TSW HUD & Timetable
+Extractor") is a **reference only** — never a runtime data source.
+
+Confirmed:
+- Paks are **not encrypted**. `repak` reads them.
+- Layout: `<install>/WindowsNoEditor/TS2Prototype/Content/DLC/*.pak`
+- Timetables live in small `*_Route_Gameplay` plugins, and **loco DLCs add
+  timetables to existing routes** (Fife Circle's Sprinter Express ships in
+  `BRClass158.pak`). Scanning one route pak is not enough.
+- Detect by **folder** (`Timetable/`, `Timetables/`, `ServiceMode/`), not
+  by the `_TT` suffix — it isn't universal and produces false positives.
+- Current inventory: **43 paks, 72 timetables.**
+- Type is `RouteTimetableDataTrackStream` → `ServiceDataTracks` →
+  `RouteTimetableTrackData`, with `ETimetableTrackDataType::StopPoint |
+  ActionPoint | GoVia | ReversePoint | TrackSectionEntry/Exit`.
+- Times are `FTimespan` = int64 of 100ns ticks. **Mostly sub-second**, so
+  do not filter for whole seconds.
+- The master `_TT` asset is an index with **no .uexp**. The DataTracks hold
+  the data (8.6 MB / 26.3 MB .uexp).
+
+**Achieved:** `extract_time_series` segments the Leven Branch layer into
+**104 services, roughly hourly, ~50 min each** — a genuine timetable.
+
+**Next step:** the per-service counts (120–151) are TRACK POINTS, not
+stops. Find the `ETimetableTrackDataType` field to filter to `StopPoint`,
+then join to the station names already recovered from the name table.
+
+**Six approaches already failed** — the findings doc lists them with
+reasons. Do not repeat them, particularly the fixed-stride assumption
+(the type is a *Stream*, i.e. variable length).
+
+### Domain rules (from me, authoritative)
+- First stop: departure only, no arrival.
+- Last stop: arrival only, no departure.
+- Freight: often no scheduled arrivals at all.
+So arrival/departure are **optional**. A single time is correct data, not
+a parse failure.
+
+---
+
+## Tooling built (Discovery page)
+
+| File | Does |
+|---|---|
+| `game_files.py` | finds the TSW install and pak folders, detects repak |
+| `pak_tools.py` | repak wrapper: list, inspect assets, scan/decode times, diff records, extract services |
+
+Endpoints: `/api/paks/{repak,list,timetables,scan_all,inspect,timespans,
+analyse,diff,decode,services,unpack,clear_extracted}`,
+`/api/timetable/{scan,find_exports}`, `/api/journey`, `/api/gamefiles/scan`
+
+Extraction output goes to `<app>/extracted/`. **Clear it between runs** —
+stale files caused a misdiagnosis once.
+
+---
+
+## Known outstanding
+
+- Live service code / next stop not shown on the HUD yet.
+- The TSW API has a **subscription** endpoint (`POST /subscription/<path>?
+  Subscription=1`, then one `GET`). Would replace 4× 300ms polling and
+  likely stop the dropped connections that show up as HTTP 502. **A 502 is
+  a dropped connection, not a missing path** — always retry before
+  concluding something doesn't exist.
+- Ammeter, brake gauges, GSM-R panel: approved, not built.

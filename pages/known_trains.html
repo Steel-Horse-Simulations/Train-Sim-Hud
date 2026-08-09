@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Known Trains</title>
+<link rel="stylesheet" href="/pages/style.css">
+<script src="/pages/theme.js"></script>
+
+<style>
+  main { max-width: none; padding: 8px; padding-top: 10px; }
+
+  .attention-panel { border-color: rgba(232,183,74,0.4); background: rgba(232,183,74,0.06); }
+  .attention-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--hairline); }
+  .attention-row:first-of-type { border-top: none; }
+  .attention-row .name { font-weight: 600; flex: 1; }
+  .attention-row .meta { font-size: 12px; color: var(--text-dim); }
+  .setup-btn { background: var(--accent); color: #1a1013; border: none; padding: 5px 12px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; }
+
+  .groups-container { display: flex; flex-direction: column; gap: 12px; }
+  .group-pill { background: var(--panel); border: 1px solid var(--hairline); border-radius: 8px; padding: 14px; }
+  .group-pill-header { font-family: var(--heading); font-weight: 700; font-size: 14px; color: var(--accent-bright); margin-bottom: 10px; }
+  .group-pill-header a { font-size: 11.5px; color: var(--text-dim); text-decoration: none; margin-left: 10px; }
+  .group-pill-header a:hover { color: var(--accent-bright); }
+
+  .trains-grid { display: flex; flex-direction: column; gap: 10px; }
+
+  .pill-wrap {
+    position: relative;
+    padding: 4px 16px 4px 4px;
+    overflow: hidden;
+  }
+
+  /* Grey border around the outer edge of the pill, fading out where the
+     coloured frame takes over near the picture */
+  .pill-wrap::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 4px solid rgba(255,255,255,0.13);
+    border-radius: 20px;
+    pointer-events: none;
+    z-index: 0;
+    -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 24px, #000 420px);
+            mask-image: linear-gradient(to left, transparent 0, transparent 24px, #000 420px);
+  }
+
+  /* Coloured frame on top of grey border */
+  .pill-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 20px;
+    background: var(--livery-color);
+    -webkit-mask-image: linear-gradient(to left, #000 0, #000 24px, transparent 420px);
+            mask-image: linear-gradient(to left, #000 0, #000 24px, transparent 420px);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Inner pill body: tinted with the livery colour at 20% opacity.
+     Its right-side radius is what produces the concave curve in the frame. */
+  .train-pill {
+    background: color-mix(in srgb, var(--livery-color) 20%, transparent);
+    border-radius: 16px 20px 20px 16px;
+    height: 156px;
+    display: flex; align-items: stretch;
+    position: relative; z-index: 1;
+    overflow: hidden;
+  }
+
+  /* Picture flush to the right edge and full pill height. Its corners are
+     clipped by .train-pill's radius, revealing the coloured frame behind. */
+  .train-pill-thumb {
+    width: 420px; height: 156px; flex-shrink: 0; overflow: hidden;
+    background: #1c1a20;
+    display: flex; align-items: center; justify-content: center;
+    margin-left: auto;
+  }
+  .train-pill-thumb img { width: 100%; height: 100%; object-fit: contain; }
+  .train-pill-thumb.none { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
+
+  .train-pill-content { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 16px; align-items: flex-start; }
+  .train-pill-name { font-weight: 600; font-size: 26px; color: var(--text); word-wrap: break-word; line-height: 1.2; }
+  .train-pill-meta { font-size: 13px; color: var(--text-dim); display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+  .train-pill-actions { display: flex; gap: 6px; align-self: flex-end; }
+  .train-pill-actions .edit-btn { padding: 5px 12px; font-size: 12px; flex-shrink: 0; }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.red { background: var(--status-red); box-shadow: 0 0 5px var(--status-red); }
+  .dot.amber { background: var(--status-amber); box-shadow: 0 0 5px var(--status-amber); }
+  .dot.yellow { background: var(--status-yellow); box-shadow: 0 0 5px var(--status-yellow); }
+  .dot.green { background: var(--status-green); box-shadow: 0 0 5px var(--status-green); }
+
+  .edit-btn { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 14px; border-radius: 6px; font-size: 12.5px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .edit-btn:hover { border-color: var(--accent); color: var(--accent-bright); }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+  .toolbar button { background: transparent; border: 1px solid var(--hairline); color: var(--text); padding: 5px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+  .toolbar button:hover { border-color: var(--accent); color: var(--accent-bright); }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><strong>TSW Hud</strong> · known trains</div>
+    <div class="nav" id="navContainer"></div>
+    <button class="exit-btn" onclick="exitApp()">Exit</button>
+  </div>
+
+  <main>
+    <div class="panel">
+      <h2>Known Trains</h2>
+      <p class="small dim">
+        The Group &rarr; Subclass &rarr; Individual hierarchy for organising every train class you've
+        encountered - default speeds per group, overridable at the subclass or individual level.
+      </p>
+      <div class="toolbar">
+        <label><input type="checkbox" id="showHidden"> Show hidden / non-UK</label>
+        <button onclick="downloadData()">⬇ Download</button>
+        <button onclick="document.getElementById('uploadInput').click()">⬆ Upload</button>
+        <input type="file" id="uploadInput" accept=".json" style="display:none;" onchange="uploadData(event)">
+        <button onclick="location.href='/pages/classes.html'">&#9881; Classes</button>
+        <button onclick="location.href='/pages/groups.html'">&#9881; Groups</button>
+        <button onclick="location.href='/pages/operators.html'">&#9881; Operators</button>
+        <button onclick="wipeAllData()" style="border-color:rgba(224,90,78,0.4); color:var(--status-red);">&#128465; Wipe all data</button>
+      </div>
+    </div>
+
+
+
+    <div class="panel attention-panel" id="attentionPanel" style="display:none;">
+      <h2 id="attentionHeading">&#9888; Needs attention</h2>
+      <p class="small dim" style="margin-bottom:6px;">
+        Trains missing a display name, group, operator/livery, or power type. This section disappears
+        once everything's set up.
+      </p>
+      <div id="attentionRows"></div>
+    </div>
+
+    <div class="panel">
+      <h2>All known trains</h2>
+      <div class="groups-container" id="groupsContainer"></div>
+      <p class="small dim" id="emptyState" style="display:none; text-align:center; margin-top:20px;">
+        No train classes yet - drive something to detect one live.
+      </p>
+    </div>
+
+    <p class="small dim" style="text-align:center; margin-top: 14px;">
+      Status dot scale: red = nothing filled in, amber = some fields, yellow = most fields, green = everything
+      filled in. Recalculates automatically as more fields get added later.
+    </p>
+  </main>
+
+<script>
+async function load() {
+  const showHidden = document.getElementById('showHidden').checked;
+  const params = new URLSearchParams();
+  if (showHidden) params.set('show_hidden', '1');
+  try {
+    const res = await fetch('/api/known_trains/list?' + params.toString());
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    renderAttention(data.needs_attention);
+    renderTable(data.classes);
+  } catch (e) {
+    document.getElementById('groupsContainer').innerHTML = '<p class="small dim" style="text-align:center;">Could not load — is the app running?</p>';
+  }
+}
+
+function renderAttention(items) {
+  const panel = document.getElementById('attentionPanel');
+  const heading = document.getElementById('attentionHeading');
+  const rows = document.getElementById('attentionRows');
+  const showHidden = document.getElementById('showHidden').checked;
+  
+  const filtered = items.filter(item => showHidden || item.is_visible !== 0);
+  
+  if (!filtered.length) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  heading.innerHTML = `&#9888; Needs attention (${filtered.length})`;
+  rows.innerHTML = filtered.map(item => {
+    const status = missingReason(item);
+    const dotColor = item.display_name ? 'amber' : 'red';
+    return `
+      <div class="attention-row">
+        <span class="dot ${dotColor}"></span>
+        <span class="name">${item.display_name || item.source_name}</span>
+        <span class="meta">seen ${item.times_seen} times &middot; ${status}</span>
+        <a class="setup-btn" href="/pages/known_trains_edit.html?id=${item.id}">Set up</a>
+      </div>`;
+  }).join('');
+}
+
+function missingReason(item) {
+  if (!item.display_name) return 'no display name set';
+  if (!item.group_id) return 'has a name, but no group assigned';
+  if (!item.livery_id || !item.livery_name) return 'has a name and group, but no operator/livery assigned';
+  if (!item.is_steam && !item.is_diesel && !item.is_electric) return 'has a name, group and livery, but no power type set';
+  return 'missing one or more details';
+}
+
+function getRandomColor() {
+  const colors = ['#5fd07a', '#e05a4e', '#e8b74a', '#5f9be0', '#dd6ba0', '#4fb8a8', '#e0a83f'];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
+function buildPhotoFilename(trainClass, liveryCode) {
+  if (!trainClass || !liveryCode) return null;
+  return trainClass.replace(/\s+/g, '_') + '_' + liveryCode;
+}
+
+async function renderTable(classes) {
+  const container = document.getElementById('groupsContainer');
+  const empty = document.getElementById('emptyState');
+  const showHidden = document.getElementById('showHidden').checked;
+  
+  const filtered = classes.filter(c => c.times_seen > 0 && c.source_name !== 'Error' && (showHidden || c.is_visible !== 0));
+  
+  if (!filtered.length) {
+    container.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  const groups = new Map();
+  for (const c of filtered) {
+    // Prefer the higher-level Group (family) name so multiple Classes that
+    // belong to the same family (e.g. Class 801/802/805/807 all under
+    // "Class 8xx") appear together in one section. Falls back to the
+    // Class name, then Ungrouped, for trains with no family assigned.
+    const key = c.family_name || c.group_name || '(Ungrouped)';
+    if (!groups.has(key)) groups.set(key, { groupId: c.group_id, familyId: c.family_id, items: [] });
+    groups.get(key).items.push(c);
+  }
+
+  let html = '';
+  for (const [groupName, { groupId, familyId, items }] of groups) {
+    const settingsLink = familyId
+      ? `<a href="/pages/groups.html">&#9881; Group settings</a>`
+      : (groupId ? `<a href="/pages/known_trains_group.html?id=${groupId}">&#9881; Group settings</a>` : '');
+    html += `<div class="group-pill">
+      <div class="group-pill-header">${groupName}${settingsLink}</div>
+      <div class="trains-grid">`;
+    
+    for (const c of items) {
+      // Extract train class from display_name
+      const dashIdx = (c.display_name || '').indexOf(' - ');
+      const trainClass = dashIdx >= 0 ? (c.display_name || '').substring(0, dashIdx) : (c.display_name || '');
+      
+      // Get livery colour or white if no livery
+      const liveryColor = c.operator_colour || 'rgba(255,255,255,0.15)';
+      
+      // Build photo filename and try to load it
+      const photoFilename = buildPhotoFilename(trainClass, c.livery_name);
+      const thumb = photoFilename 
+        ? `<img src="/known_train_pictures/${photoFilename}.png" alt="" onerror="this.parentElement.innerHTML='<div class=&quot;none&quot;>no<br>photo</div>'" style="width:100%;height:100%;object-fit:cover;">`
+        : `<div class="none">no<br>photo</div>`;
+      
+      html += `<div class="pill-wrap" style="--livery-color: ${liveryColor};">
+        <div class="train-pill">
+          <div class="train-pill-content">
+            <div style="flex: 1; width: 100%;">
+              <div class="train-pill-name">${c.display_name || c.source_name}</div>
+              <div class="train-pill-meta">
+                <span><span class="dot ${c.status.color}"></span> Seen ${c.times_seen}</span>
+                <span>${Math.round(c.resolved_max_speed_mph)} mph</span>
+              </div>
+            </div>
+            <div class="train-pill-actions">
+              <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
+            </div>
+          </div>
+          <div class="train-pill-thumb">${thumb}</div>
+        </div>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  container.innerHTML = html;
+}
+
+document.getElementById('showHidden').addEventListener('change', load);
+
+async function renderTableFromCache(classes) {
+  const filtered = classes.filter(c => c.times_seen > 0 && c.source_name !== 'Error' && (document.getElementById('showHidden').checked || c.is_visible !== 0));
+  const container = document.getElementById('groupsContainer');
+  const empty = document.getElementById('emptyState');
+  if (!filtered.length) { container.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  const grouped = new Map();
+  for (const c of filtered) {
+    const key = c.family_name || c.group_name || '(Ungrouped)';
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(c);
+  }
+  let html = '';
+  for (const [key, items] of grouped) {
+    html += `<div class="group-pill">
+      <div class="group-pill-header">${key}</div>
+      <div class="trains-grid">`;
+    for (const c of items) {
+      const dashIdx = (c.display_name || '').indexOf(' - ');
+      const trainClass = dashIdx >= 0 ? (c.display_name || '').substring(0, dashIdx) : (c.display_name || '');
+      const liveryColor = c.operator_colour || 'rgba(255,255,255,0.15)';
+      const photoFilename = buildPhotoFilename(trainClass, c.livery_name);
+      const thumb = photoFilename 
+        ? `<img src="/known_train_pictures/${photoFilename}.png" alt="" onerror="this.parentElement.innerHTML='<div class=&quot;none&quot;>no<br>photo</div>'" style="width:100%;height:100%;object-fit:cover;">`
+        : `<div class="none">no<br>photo</div>`;
+      html += `<div class="pill-wrap" style="--livery-color: ${liveryColor};">
+        <div class="train-pill">
+          <div class="train-pill-content">
+            <div style="flex: 1; width: 100%;">
+              <div class="train-pill-name">${c.display_name || c.source_name}</div>
+              <div class="train-pill-meta">
+                <span>Seen ${c.times_seen}</span>
+                <span>${c.max_speed_mph ? Math.round(c.max_speed_mph) + ' mph' : '—'}</span>
+              </div>
+            </div>
+            <div class="train-pill-actions">
+              <a class="edit-btn" href="/pages/known_trains_edit.html?id=${c.id}">Edit</a>
+            </div>
+          </div>
+          <div class="train-pill-thumb">${thumb}</div>
+        </div>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  container.innerHTML = html;
+}
+
+
+
+function exitApp() {
+  fetch('/api/shutdown', {method: 'POST'});
+}
+
+async function downloadData() {
+  // Two routes, on purpose. The server-side backup is the one that is
+  // trusted: a Blob + a.click() download does NOTHING inside pywebview,
+  // which has no download handler, so this button worked in a browser and
+  // appeared completely dead in the desktop app. Writing the file server
+  // side always works and can be verified and named.
+  let msg = '';
+  try {
+    const r = await fetch('/api/known_trains/backup', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      const counts = Object.entries(d.table_counts || {})
+        .filter(([, n]) => n).map(([t, n]) => `${t}: ${n}`).join('\n  ');
+      msg = `Backup saved (${d.total_rows} rows, verified):\n\n`
+          + `  ${d.json_path}\n  ${d.db_path || '(database copy failed)'}\n\n  ${counts}`;
+    } else {
+      msg = 'Backup could not be verified after writing. Do NOT wipe anything yet.\n\n'
+          + JSON.stringify(d, null, 2);
+    }
+  } catch (e) {
+    alert('Backup FAILED: ' + e.message + '\n\nDo not wipe anything.');
+    return;
+  }
+  // Also offer it as a normal download, which works when the page is open
+  // in a real browser or on the tablet. Failure here is harmless - the file
+  // on disk is the actual backup.
+  try {
+    const a = document.createElement('a');
+    a.href = '/api/known_trains/export';
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch (e) { /* the disk copy above is what counts */ }
+  alert(msg);
+}
+
+async function uploadData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const res = await fetch('/api/known_trains/restore', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    });
+    if (res.ok) {
+      alert('Data restored successfully');
+      load();
+    } else {
+      alert('Restore failed: ' + res.statusText);
+    }
+  } catch (e) {
+    alert('Upload failed: ' + e.message);
+  }
+  event.target.value = '';
+}
+
+async function wipeAllData() {
+  if (!confirm('This will permanently delete every train, class, subclass, group, operator, and livery on this machine. This cannot be undone. Continue?')) return;
+  if (!confirm('Are you absolutely sure? Consider using Download first to keep a backup.')) return;
+  try {
+    const res = await fetch('/api/known_trains/wipe_all', { method: 'POST' });
+    if (res.ok) {
+      alert('All data wiped.');
+      load();
+    } else {
+      alert('Wipe failed: ' + res.statusText);
+    }
+  } catch (e) {
+    alert('Wipe failed: ' + e.message);
+  }
+}
+
+load();
+</script>
+<script src="/pages/nav.js"></script>
+</body>
+</html>

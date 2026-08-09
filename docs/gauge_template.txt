@@ -1,0 +1,148 @@
+================================================================================
+GAUGE TEMPLATE — TSW Hud
+================================================================================
+Use this for adding a new instrument panel to the real Dashboard (both
+dashboard.html and dashboard_tablet.html — they must always be kept in sync).
+
+The workflow is: HUD Lab → Preview → Approval → Build.
+Never skip the preview step. Never add to the Dashboard without approval.
+
+================================================================================
+STEP 1: HUD LAB CONFIRMATION
+================================================================================
+
+Before designing anything, use the HUD Lab multi-pill watcher to watch the
+real CommAPI endpoint during actual driving and confirm:
+
+  1. The exact endpoint path (e.g. CurrentDrivableActor.Function.HUD_GetXxx)
+  2. The response field name and raw value type (float, int, etc.)
+  3. The real value range (min, max) during normal operation
+  4. The correct scaling factor (e.g. Amps ÷ 1000 = kA for the ammeter)
+  5. The red-zone threshold (what value = "too high")
+
+Do NOT proceed to the preview until all 5 are confirmed on real hardware.
+The endpoint and scaling are facts about the game, not guesses.
+
+================================================================================
+STEP 2: PREVIEW (always before real code)
+================================================================================
+
+Build an HTML file at design_previews/preview_GAUGE_NAME.html.
+Rules:
+  - Use a rolled accent colour (exclude 2-3 recently used, never use purple)
+  - Letterbox it inside a real 16:9 HUD frame matching dashboard.html's layout
+  - Include interactive demo buttons (e.g. "idle", "normal", "red zone")
+  - Test all states with Playwright before showing to the user
+  - Position is often provisional at preview stage — note that clearly
+
+Deliver the .html file, not a screenshot.
+
+================================================================================
+STEP 3: ADD TO gauges_registry.json
+================================================================================
+
+pages/gauges_registry.json drives the HUD panel toggles in Group Settings.
+Add an entry:
+  {
+    "key": "GAUGE_KEY",           // e.g. "ammeter", "brake_pipe"
+    "name": "Human-readable name", // shown in Group Settings
+    "dev_only": false,
+    "core": false,                // true only for speed (always on, unremovable)
+    "note": "Optional note"       // e.g. "Electric locos only"
+  }
+
+================================================================================
+STEP 4: ADD TO dashboard.js AND BOTH HTML FILES
+================================================================================
+
+In dashboard.js:
+  1. Add a new proxyGet() call in the appropriate poll cycle (300ms for fast-
+     changing values like speed/ammeter, 800ms for slower values like gradient)
+  2. Store the value in a module-level variable (like currentSpeedMph)
+  3. Add an update function (like updateAmmeter()) that sets the DOM
+  4. Call your update function whenever the value changes
+
+In both dashboard.html and dashboard_tablet.html (ALWAYS both):
+  1. Add the HTML for the new gauge panel (.hud-corner or inline)
+  2. Position using CSS absolute positioning
+  3. Add any SVG markup (needle, arc, etc.) with unique element IDs
+
+In pages/style.css if new shared styles are needed:
+  - Add them after the existing HUD component section
+  - Comment them clearly as belonging to the new gauge
+
+================================================================================
+NEEDLE GAUGE PATTERN (SVG, used by Ammeter etc.)
+================================================================================
+
+The needle rotates around its base point using CSS transform.
+Set transform-origin on the line element to its base point.
+
+SVG viewBox example (158×100, landscape half-circle):
+  Arc track (background):
+    <path d="M 9 92 A 70 70 0 0 1 149 92" fill="none" stroke="#3a3a42" stroke-width="10"/>
+  
+  Coloured zones (stack on top of track using stroke-dasharray/offset):
+    <path d="M 9 92 A 70 70 0 0 1 149 92" fill="none" stroke="#5fd07a" stroke-width="10"
+          stroke-dasharray="<green_length> <total_circumference>"
+          stroke-dashoffset="-<start_offset>" stroke-linecap="butt"/>
+  
+  Scale labels (0 at left, max at right):
+    <text x="9" y="99" fill="var(--text-dim)" font-size="9">0</text>
+    <text x="141" y="99" fill="var(--text-dim)" font-size="9">8</text>
+  
+  Needle (second SVG layer for z-ordering):
+    <line id="needle-GAUGE_KEY" class="gauge-needle" 
+          x1="79" y1="92" x2="79" y2="30"
+          stroke="#eef0f4" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="79" cy="92" r="5" fill="#eef0f4"/>  <!-- pivot dot -->
+
+CSS for the needle:
+  .gauge-needle { transition: transform 0.2s ease; transform-origin: 79px 92px; }
+
+JS to update the needle:
+  function setNeedle(valueKA, minKA, maxKA, minDeg, maxDeg) {
+    const frac = Math.max(0, Math.min(1, (valueKA - minKA) / (maxKA - minKA)));
+    const angle = minDeg + frac * (maxDeg - minDeg);
+    document.getElementById('needle-GAUGE_KEY').style.transform = `rotate(${angle}deg)`;
+  }
+  // Ammeter example: setNeedle(ka, 0, 8, -50, 50)
+  // The -50 to +50 range was hand-picked for the Ammeter. Verify vs real gauge.
+
+================================================================================
+RING GAUGE PATTERN (SVG, used by speed gauge)
+================================================================================
+
+  SVG circle: cx=60 cy=60 r=50, viewBox="0 0 120 120"
+  Container rotated -90deg so 0 is at top (12 o'clock position).
+  Circumference = 2 × π × 50 ≈ 314px.
+  
+  Background ring:
+    <circle cx="60" cy="60" r="50" fill="none" stroke="#2a2a30" stroke-width="8"/>
+  
+  Value ring (animated):
+    <circle id="gauge-ring" cx="60" cy="60" r="50" fill="none" stroke="#5fd07a"
+            stroke-width="8" stroke-dasharray="0 314" stroke-linecap="round"/>
+  
+  Max-speed tick mark (optional, line that rotates to max-speed position):
+    <line id="max-tick" x1="60" y1="10" x2="60" y2="22"
+          stroke="#eef0f4" stroke-width="3" stroke-linecap="round"/>
+  
+  Update:
+    const frac = Math.max(0, Math.min(1, value / dialMax));
+    ring.setAttribute('stroke-dasharray', (frac * 314).toFixed(1) + ' 314');
+    ring.setAttribute('stroke', overMax ? 'var(--status-red)' : 'var(--status-green)');
+    tick.setAttribute('transform', `rotate(${(maxSpeed/dialMax) * 360} 60 60)`);
+
+================================================================================
+DIAL_HEADROOM_MULTIPLIER NOTE
+================================================================================
+
+The current speed gauge uses:
+  const DIAL_HEADROOM_MULTIPLIER = 1.2;
+  const dialMax = currentMaxSpeedMph * DIAL_HEADROOM_MULTIPLIER;
+
+This is a TEMPORARY PLACEHOLDER. It will be replaced when the Dashboard is
+rewired to Known Trains v2's resolve_speeds() output, which provides a real,
+independently-set dial_max value per group/subclass/individual. When building
+a new gauge, do NOT use this multiplier — only the speed gauge has it as legacy.

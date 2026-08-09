@@ -1,0 +1,50 @@
+================================================================================
+SESSION STARTUP PROMPT — TSW Hud
+================================================================================
+Copy this ENTIRE message at the start of a new chat session, then attach:
+  - TSW_HUD_NEW_CHAT_SPEC.txt
+  - page_template.txt
+  - gauge_template.txt
+  - known_real_api_captures.txt
+  - regression_checklist.txt
+  - TSW Hud.zip (the actual project files)
+
+================================================================================
+PASTE THIS TO THE NEW CHAT:
+================================================================================
+
+I'm continuing development of a Windows desktop HUD companion app for Train Sim 
+World 6. The project is called "TSW Hud". I've attached:
+
+1. TSW_HUD_NEW_CHAT_SPEC.txt — the full project specification. Read this ENTIRE 
+   document before doing anything else. It contains the architecture, all ground 
+   rules, database schemas, confirmed API shapes, and important decisions about 
+   what NOT to build.
+
+2. page_template.txt — template for new pages.
+
+3. gauge_template.txt — template for new Dashboard gauges.
+
+4. known_real_api_captures.txt — confirmed real API response shapes from the 
+   actual game. Never invent shapes not in this file.
+
+5. regression_checklist.txt — run all steps before every release.
+
+6. TSW Hud.zip — the current project source code.
+
+Please:
+a) Confirm you have read the full spec (TSW_HUD_NEW_CHAT_SPEC.txt) before proceeding
+b) Unzip the project and confirm the current APP_VERSION
+c) Ask me what I'd like to work on
+
+Key things to remember from the spec:
+- No HTTPS, no PWA/offline features, no tablet home-screen icons
+- Known Trains shows ONLY trains I have actually driven (times_seen > 0)
+- Always preview before building (new page, new gauge, new panel)
+- Desktop and tablet dashboards must always be kept in sync
+- Versioning: MAJOR.MINOR.PATCH (new feature / update to feature / bug fix)
+- Run the full regression checklist before every release
+
+================================================================================
+END OF PASTE
+================================================================================

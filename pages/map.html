@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Map</title>
+<link rel="stylesheet" href="/pages/style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="/pages/theme.js"></script>
+<script src="/pages/hud-controls.js"></script>
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  main { padding: 0; height: 100%; overflow: hidden; }
+  #map { position: absolute; inset: 0; background: #0b0a10; }
+
+  .waiting {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-family: var(--heading); font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-dim); z-index: 100; pointer-events: none;
+  }
+
+  /* Themed dot marker */
+  .player-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent-bright);
+    border: 2px solid rgba(255,255,255,0.9);
+    box-shadow: 0 0 10px var(--accent-bright), 0 0 0 6px rgba(160,107,240,0.2);
+    box-shadow: 0 0 10px var(--accent-bright), 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  [data-theme="rainbow"] .player-dot {
+    background: conic-gradient(from 0deg, #ff5f5f, #ffbb5f, #f5e75f, #7fe37f, #5fb8ff, #a06bf0, #ff5f5f);
+  }
+
+  /* Keep the required OSM attribution small and unobtrusive */
+  .leaflet-control-attribution { font-size: 10px; background: rgba(10,10,11,0.75) !important; color: #999 !important; }
+  .leaflet-control-attribution a { color: #bbb !important; }
+
+  .rail-toggle-btn {
+    background: var(--panel-raised); border: 1px solid var(--hairline); color: var(--text);
+    font-family: var(--heading); font-size: 12px; letter-spacing: 0.04em;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+  }
+  .rail-toggle-btn:hover { border-color: var(--accent); }
+  .rail-toggle-btn.active { border-color: var(--accent); color: var(--accent-bright); }
+</style>
+</head>
+<body>
+  <div class="hud-controls-overlay" id="hud-controls">
+    <a href="/" class="brand" style="text-decoration:none;"><strong>TSW Hud</strong> · map</a>
+    <div class="btns">
+      <button class="rail-toggle-btn" id="rail-toggle-btn" onclick="toggleRailOverlay()">Rail Overlay: Off</button>
+      <button class="rail-toggle-btn" id="historic-toggle-btn" onclick="toggleHistoric()">Historic Lines: Hidden</button>
+      <button class="rail-toggle-btn" id="overlay-mode-btn" onclick="cycleOverlayMode()">Overlay: full</button>
+      <button class="fullscreen-btn" onclick="toggleFullScreen()">Full Screen</button>
+      <button class="exit-btn" onclick="exitApp()">Exit</button>
+    </div>
+  </div>
+
+  <main>
+    <div id="map"></div>
+    <div class="waiting" id="waiting">Waiting for player location…</div>
+  </main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const DEFAULT_ZOOM = 17;   // two notches closer than the previous 15
+const MOVE_DURATION_MS = 1800; // just under the 2s poll interval, so motion finishes before the next update
+let map = null;
+let marker = null;
+let moveAnimFrame = null;
+let railLayer = null;
+let railOverlayOn = false; // defaults to off every launch
+let liveryColour = null;   // colour of the train currently being driven
+let hideHistoric = true;   // mask out disused/abandoned lines
+
+// Diagnostic. The overlay has now been "fixed" twice on reasoning about what
+// the tiles probably contain, and it is still wrong, so this exists to find
+// out WHICH stage is responsible instead of guessing a third time. Cycles:
+//   full       - recoloured and stencilled (normal)
+//   blend      - the old blend-mode recolour, kept as a fallback comparison
+//                for the case where tiles cannot be read pixel by pixel
+//   no-stencil - recoloured, gauge stencil skipped
+//   raw        - OpenRailwayMap's tiles untouched, no recolour, no stencil
+// If 'raw' already looks soft and washed out, nothing in compositeRailTile
+// is to blame and the cause is upstream - tile scaling, zoom, or the style
+// itself. If 'raw' is crisp, the stage that breaks it is whichever one
+// changes the picture.
+const OVERLAY_MODES = ['full', 'no-stencil', 'blend', 'raw'];
+let overlayMode = 'full';
+const railTiles = new Set();
+
+// OpenRailwayMap's INFRASTRUCTURE style ("standard") is the one with the
+// line-thickness and tunnel treatment worth keeping - tunnels drawn hollow,
+// sidings thinner than running lines. It also draws disused, abandoned and
+// razed alignments, which are not wanted here.
+const RAIL_STYLE_URL = 'https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png';
+// The GAUGE style renders only track that carries gauge tagging, which in
+// practice excludes historic alignments. It is used purely as a STENCIL -
+// none of its colours are shown. Infrastructure supplies every visible
+// pixel; gauge only decides which pixels survive.
+const RAIL_MASK_URL = 'https://{s}.tiles.openrailwaymap.org/gauge/{z}/{x}/{y}.png';
+const RAIL_SUBDOMAINS = ['a', 'b', 'c'];
+// OpenRailwayMap serves 512px images for standard 256-unit tile coordinates -
+// they are 2x/retina tiles. MEASURED off a real tile. The previous code
+// assumed 256 and drew the artwork into a 256 canvas, downsampling it, after
+// which Leaflet scaled it back up for display. That resample down-then-up is
+// what made every line soft and doubled-looking, through every version of the
+// colour code. It was never the tinting.
+const TILE_PIXELS = 512;      // backing store, the tile's real pixel size
+const TILE_CSS_PX = 256;      // ground footprint, matching the OSM basemap
+
+// Gauge geometry is not infrastructure geometry, so the stencil must be grown
+// before it can clip. MEASURED on real tiles: infrastructure lines run
+// 12-13px, gauge runs 8-14px, so the worst case needs about 3px of growth per
+// side. 4 gives margin - over-dilating a stencil is cheap, because the
+// failure mode is a historic line surviving rather than a live line being cut
+// in half.
+const MASK_DILATE_PX = 4;     // at TILE_PIXELS resolution
+// Darkest shade any line may reach once recoloured, or null for none.
+// Deliberately null: see the note in compositeRailTile. Set it to something
+// like '#4d4d4d' only if the overlay is ever run over a DARK basemap, where
+// ORM's near-black casings would otherwise disappear.
+const LUMINANCE_FLOOR = null;
+// Whether to lighten dark livery colours before tinting. Only useful over a
+// dark basemap; see tintColour().
+const LIFT_DARK_LIVERIES = false;
+
+// Luminance of an ordinary OpenRailwayMap running line. MEASURED off a real
+// tile: the running line is #ff8100 (lum 146.5) and a tunnel section is
+// #ffcb97 (lum 210.3). Everything else in the style sits around these, so
+// this is the anchor the livery colour is matched to.
+//
+// The previous value of 137 was invented off a synthetic tile. It happened
+// to be close, which is worth knowing: the near-black overlay was NOT caused
+// by this being wrong, so if the output is still too dark after the tile-size
+// fix, look elsewhere before touching this number.
+const REFERENCE_LINE_LUM = 147;
+
+function luminanceOf(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return REFERENCE_LINE_LUM;
+  const n = parseInt(m[1], 16);
+  return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+}
+
+// How much to scale ORM's lightness so an ordinary line lands on the
+// livery's lightness.
+function lightnessRatio(colour) {
+  return luminanceOf(colour) / REFERENCE_LINE_LUM;
+}
+
+function greyOf(f) {
+  const v = Math.max(0, Math.min(255, Math.round(f * 255)));
+  const h = v.toString(16).padStart(2, '0');
+  return '#' + h + h + h;
+}
+
+function animateMarkerAndMap(newLat, newLon) {
+  const start = marker.getLatLng();
+  const startTime = performance.now();
+  if (moveAnimFrame) cancelAnimationFrame(moveAnimFrame);
+
+  function step(now) {
+    const t = Math.min(1, (now - startTime) / MOVE_DURATION_MS);
+    const lat = start.lat + (newLat - start.lat) * t;
+    const lon = start.lng + (newLon - start.lng) * t;
+    marker.setLatLng([lat, lon]);
+    if (t < 1) {
+      moveAnimFrame = requestAnimationFrame(step);
+    }
+  }
+  moveAnimFrame = requestAnimationFrame(step);
+
+  // easeLinearity: 1 makes the map's own pan linear too, matching the
+  // marker's linear interpolation above so they move together instead of
+  // the dot reaching the new spot before the map catches up (which is what
+  // was reading as a sudden jump).
+  map.panTo([newLat, newLon], { animate: true, duration: MOVE_DURATION_MS / 1000, easeLinearity: 1 });
+}
+
+// Composites one tile: infrastructure artwork, stencilled by gauge, painted
+// in the livery colour.
+//
+// Every step is alpha-preserving on purpose. The whole point of using the
+// infrastructure style is its line weights and its hollow tunnel casings,
+// and those live entirely in the alpha channel - flatten alpha and the
+// overlay becomes uniform spaghetti. So:
+//   destination-in  keeps base pixels only where the stencil covers them,
+//                   multiplying alpha rather than replacing it;
+//   source-in       paints a flat colour through whatever alpha survives,
+//                   giving the EXACT livery colour while thickness,
+//                   anti-aliasing and tunnel translucency all carry through.
+// Recolours by inspecting pixels, which is far better than any blend can be -
+// but only works if the tile is readable. Returns false if the canvas is
+// tainted, so the caller can fall back.
+//
+// The reason this is worth doing: an OpenRailwayMap tile is not just track.
+// It also carries LABELS - blue text on white halos ("Down North", "1435") -
+// and those are opaque pixels sitting right on top of the lines. Any
+// whole-tile recolour turns them into dark smears, which is what has been
+// appearing along the tracks in every screenshot. Classifying pixels lets
+// the labels be dropped entirely: the basemap underneath already has its own
+// labels, so ORM's are redundant here anyway.
+//
+// Track pixels are the orange family (MEASURED: running line #ff8100, tunnel
+// #ffcb97). Labels are blue, white or black, none of which have that
+// red-over-blue bias, so the two separate cleanly.
+function recolourPixels(canvas, base, colour) {
+  const S = canvas.width;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0, 0, S, S);
+  ctx.drawImage(base, 0, 0, S, S);
+
+  let img;
+  try {
+    img = ctx.getImageData(0, 0, S, S);
+  } catch (e) {
+    return false;      // cross-origin tile without CORS headers
+  }
+
+  const m = /^#?([0-9a-f]{6})$/i.exec((colour || '').trim());
+  if (!m) return true;
+  const n = parseInt(m[1], 16);
+  const lr = (n >> 16) & 255, lg = (n >> 8) & 255, lb = n & 255;
+
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (!a) continue;
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (!(r > 120 && r >= g && g >= b && r - b > 40)) {
+      d[i + 3] = 0;    // not track - a label, a halo, or its text
+      continue;
+    }
+    // Keep this pixel's brightness RELATIVE to an ordinary running line, so
+    // a tunnel stays paler and anything darker stays darker, then express
+    // that in the livery colour.
+    const t = (0.2126 * r + 0.7152 * g + 0.0722 * b) / REFERENCE_LINE_LUM;
+    d[i] = Math.min(255, lr * t);
+    d[i + 1] = Math.min(255, lg * t);
+    d[i + 2] = Math.min(255, lb * t);
+  }
+  ctx.putImageData(img, 0, 0);
+  return true;
+}
+
+function compositeRailTile(canvas, base, mask, colour) {
+  const ctx = canvas.getContext('2d');
+  const S = canvas.width;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0, 0, S, S);
+  if (!base) return;
+  ctx.drawImage(base, 0, 0, S, S);
+
+  if (overlayMode === 'raw') return;   // untouched, for comparison
+  if (overlayMode === 'no-stencil') mask = null;
+
+  // Preferred path: per-pixel, which also strips ORM's labels.
+  if (colour && overlayMode !== 'blend' && recolourPixels(canvas, base, colour)) {
+    if (mask) {
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(buildStencil(mask, S), 0, 0);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    return;
+  }
+
+  if (colour) {
+    // The luminance floor was a MISTAKE and is off by default.
+    //
+    // It filled the tile with #4d4d4d under 'lighten' (per-channel maximum)
+    // to stop near-black casings vanishing on a dark basemap. But ORM's
+    // lines are mid-tone, so flooring every pixel at 30% grey washed them
+    // out and flattened the contrast between line and casing - and since
+    // the 'color' blend below preserves whatever luminosity it is given,
+    // the output came out pale no matter which livery colour was fed in.
+    // A dark ScotRail navy arriving as light blue was this, not the tint.
+    //
+    // It was also solving a problem that does not exist here: the basemap
+    // is the light OSM style, where dark casings read perfectly well.
+    if (LUMINANCE_FLOOR && overlayMode !== 'no-floor') {
+      ctx.globalCompositeOperation = 'lighten';
+      ctx.fillStyle = LUMINANCE_FLOOR;
+      ctx.fillRect(0, 0, S, S);
+    }
+
+    // 'color' blend takes hue and saturation from the fill and keeps the
+    // LUMINOSITY of the artwork underneath.
+    //
+    // The previous version used a flat 'source-in' fill, on the assumption
+    // that everything worth keeping lived in the alpha channel. That was
+    // wrong, and it is why tunnels vanished: OpenRailwayMap does not draw a
+    // tunnel with lower opacity, it draws it in a PALER SHADE of the same
+    // colour. Replacing every RGB value with one flat colour threw that
+    // distinction away, so a tunnel came out identical to open track.
+    // Keeping luminosity keeps the tunnel casing pale, the black
+    // no-electrification casings dark, and every other shade ORM uses to
+    // mean something.
+    ctx.globalCompositeOperation = 'color';
+    ctx.fillStyle = colour;
+    ctx.fillRect(0, 0, S, S);
+
+    // Re-anchor the lightness onto the LIVERY's own lightness.
+    //
+    // 'color' alone keeps ORM's luminosity, so a running line came out at
+    // ORM's mid-tone in the right hue - #6d95cc for a #1e467d ScotRail
+    // navy. Hue right, lightness wrong, which is the "colour has gone very
+    // light" report.
+    //
+    // Scaling the whole tile by (livery lightness / ORM's typical line
+    // lightness) puts an ordinary running line at the livery colour while
+    // keeping every shade ORM uses RELATIVE to it - tunnels still lighter,
+    // casings still darker. 'multiply' with a grey darkens by that ratio,
+    // 'screen' with a grey lightens, so either direction is reachable.
+    const k = lightnessRatio(colour);
+    if (k < 0.98 || k > 1.02) {
+      if (k < 1) {
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillStyle = greyOf(k);
+      } else {
+        ctx.globalCompositeOperation = 'screen';
+        ctx.fillStyle = greyOf((k - 1) / Math.max(0.001, (255 / REFERENCE_LINE_LUM) - 1));
+      }
+      ctx.fillRect(0, 0, S, S);
+    }
+
+    // A blend mode still composites source-over, so the fill just covered
+    // the transparent parts of the tile too. Re-clip to the artwork's own
+    // alpha.
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(base, 0, 0, S, S);
+  }
+
+  if (mask) {
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(buildStencil(mask, S), 0, 0);
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// Turns the gauge tile into a hard-edged stencil.
+//
+// Used raw it produced exactly the "fades out at the edges" look: an
+// anti-aliased gauge line has edge pixels at partial alpha, and
+// destination-in MULTIPLIES alpha, so every line got a soft translucent
+// border and the whole overlay looked washed out. Redrawing the stencil on
+// itself drives partial alpha towards opaque - a = 1-(1-a)^n - which turns
+// soft edges hard without needing pixel access, so it still works on
+// cross-origin tiles that would otherwise taint the canvas.
+function buildStencil(mask, S) {
+  const m = document.createElement('canvas');
+  m.width = m.height = S;
+  const mc = m.getContext('2d');
+  // Dilate: gauge draws thinner than infrastructure, so without this the
+  // stencil would shave the casings off every line.
+  for (let dx = -MASK_DILATE_PX; dx <= MASK_DILATE_PX; dx++) {
+    for (let dy = -MASK_DILATE_PX; dy <= MASK_DILATE_PX; dy++) {
+      if (Math.abs(dx) + Math.abs(dy) <= MASK_DILATE_PX) {
+        mc.drawImage(mask, dx, dy, S, S);
+      }
+    }
+  }
+  // Harden: 6 further passes take alpha 0.5 to 0.998 and alpha 0.1 to 0.53.
+  for (let i = 0; i < 6; i++) {
+    mc.drawImage(m, 0, 0);
+  }
+  return m;
+}
+
+// Built inside a function rather than at top level, because
+// `L.GridLayer.extend` needs Leaflet to have loaded. At top level, one failed
+// CDN fetch throws before the rest of the script runs - the page then loses
+// its livery polling entirely and shows an uncoloured map with no obvious
+// cause. Deferring it keeps the failure contained to the map itself.
+function makeRailLayer() {
+  const TintedRailLayer = L.GridLayer.extend({
+  createTile: function (coords, done) {
+    const canvas = L.DomUtil.create('canvas');
+    // Backing store at the tile's real pixel size, displayed at its ground
+    // footprint. Leaflet would otherwise size the canvas to the footprint and
+    // the 512px artwork would be squeezed into 256 before being scaled back
+    // up on screen.
+    const S = TILE_PIXELS;
+    canvas.width = canvas.height = S;
+    canvas.style.width = canvas.style.height = TILE_CSS_PX + 'px';
+
+    const sub = RAIL_SUBDOMAINS[Math.abs(coords.x + coords.y) % RAIL_SUBDOMAINS.length];
+    const url = (tpl) => tpl.replace('{s}', sub).replace('{z}', coords.z)
+                            .replace('{x}', coords.x).replace('{y}', coords.y);
+
+    // The stencil is always fetched, even when not currently applied, so
+    // switching modes re-composites the same bytes rather than pulling new
+    // tiles - otherwise a mode comparison would be comparing two different
+    // downloads and prove nothing.
+    let pending = 2;
+    const settle = () => {
+      if (--pending > 0) return;
+      // If the stencil failed to load, draw the infrastructure tile
+      // UNMASKED rather than masking with nothing - masking against a
+      // missing stencil would erase the tile completely and look like a
+      // broken overlay rather than a missing filter.
+      compositeRailTile(canvas, canvas._base,
+                        hideHistoric ? canvas._mask : null,
+                        tintColour(liveryColour));
+      railTiles.add(canvas);
+      done(null, canvas);
+    };
+    // crossOrigin='anonymous' is what makes the tile's pixels READABLE, which
+    // the per-pixel recolour needs. But if the server does not send CORS
+    // headers, that same attribute makes the image fail to load at all - so
+    // a failure retries WITHOUT it. The tile then draws normally and is
+    // merely unreadable, and compositeRailTile falls back to the blend path.
+    // Losing the label-stripping is a far better outcome than losing the
+    // overlay.
+    const load = (u, key) => {
+      const attempt = (useCors) => {
+        const img = new Image();
+        if (useCors) img.crossOrigin = 'anonymous';
+        img.onload = () => { canvas[key] = img; settle(); };
+        img.onerror = () => { if (useCors) attempt(false); else settle(); };
+        img.src = u;
+      };
+      attempt(true);
+    };
+
+    load(url(RAIL_STYLE_URL), '_base');
+    load(url(RAIL_MASK_URL), '_mask');
+    return canvas;
+  },
+  });
+  return new TintedRailLayer({
+    maxZoom: 19,
+    // Full opacity. 0.85 was compounding with the soft stencil edges and the
+    // glow to make every line look washed out.
+    opacity: 1,
+    attribution: 'Rendering: OpenRailwayMap, Map data: OpenStreetMap contributors',
+  });
+}
+
+// Re-tinting reuses the images already held on each tile canvas, so a livery
+// change costs no network at all - redraw() would refetch every tile from
+// OpenRailwayMap, which is both slow and rude to a free tile service.
+function retintRailTiles() {
+  const colour = tintColour(liveryColour);
+  for (const canvas of railTiles) {
+    if (!canvas.isConnected) { railTiles.delete(canvas); continue; }
+    compositeRailTile(canvas, canvas._base, hideHistoric ? canvas._mask : null, colour);
+  }
+}
+
+function initMap(lat, lon) {
+  map = L.map('map', {
+    center: [lat, lon],
+    zoom: DEFAULT_ZOOM,
+    zoomControl: false,
+    dragging: false,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    boxZoom: false,
+    keyboard: false,
+    touchZoom: false,
+    attributionControl: true,
+  });
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors',
+  }).addTo(map);
+
+  // Real-world rail infrastructure overlay (tracks, platforms, signals,
+  // switches) from OpenRailwayMap - built on OSM data, free for
+  // non-commercial use. Off by default; toggled on via the button.
+  railLayer = makeRailLayer();
+  railLayer.on('tileunload', (e) => railTiles.delete(e.tile));
+
+  const icon = L.divIcon({ className: 'player-dot', iconSize: [16, 16] });
+  marker = L.marker([lat, lon], { icon }).addTo(map);
+
+  document.getElementById('waiting').style.display = 'none';
+  applyLiveryColour();   // the marker exists now
+}
+
+// OpenRailwayMap tiles are dark thin lines on transparent, so on a dark
+// basemap a straight tint reads as almost black. The hue is kept exactly -
+// it is the train's livery - but lightness is floored so a navy or maroon
+// livery is still visible. Without this, ScotRail blue on the dark map is
+// very nearly invisible.
+function tintColour(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return null;
+  if (!LIFT_DARK_LIVERIES || overlayMode === 'no-floor') return '#' + m[1];
+
+  // Only for a dark basemap. Over the light OSM style this is actively
+  // wrong: it turned ScotRail's #1e467d into a washed-out mid blue, when
+  // the dark navy was both more legible AND the actual livery colour. The
+  // 'color' blend keeps the artwork's luminosity anyway, so a dark livery
+  // does not come out as a dark smudge - it comes out as ORM's own line
+  // shading in that hue.
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const l = (Math.max(r, g, b) + Math.min(r, g, b)) / 2;
+  if (l >= 0.5) return '#' + m[1];
+  const k = 0.5 / Math.max(l, 0.001);
+  const up = (v) => Math.min(255, Math.round(v * 255 * k));
+  return '#' + [up(r), up(g), up(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+function applyLiveryColour() {
+  const c = tintColour(liveryColour);
+
+  retintRailTiles();
+  // The glow lifts the thin lines off the basemap; without it a tinted line
+  // at this zoom is easy to lose against dark terrain. Applied to the whole
+  // layer container rather than per tile, so it does not clip at tile seams.
+  if (railLayer && railLayer.getContainer()) {
+    railLayer.getContainer().style.filter = c ? `drop-shadow(0 0 2px ${c})` : '';
+  }
+
+  const dot = document.querySelector('.player-dot');
+  if (dot) {
+    dot.style.background = c || '';
+    dot.style.boxShadow = c
+      ? `0 0 10px ${c}, 0 0 0 6px color-mix(in srgb, ${c} 25%, transparent)`
+      : '';
+  }
+}
+
+function cycleOverlayMode() {
+  overlayMode = OVERLAY_MODES[(OVERLAY_MODES.indexOf(overlayMode) + 1) % OVERLAY_MODES.length];
+  const btn = document.getElementById('overlay-mode-btn');
+  btn.textContent = 'Overlay: ' + overlayMode;
+  btn.classList.toggle('active', overlayMode !== 'full');
+  // Re-composites from the images already held on each tile - no refetch,
+  // so the three modes are the SAME pixels processed differently. That is
+  // the point: any difference between them is caused by this code.
+  retintRailTiles();
+}
+
+function toggleHistoric() {
+  hideHistoric = !hideHistoric;
+  const btn = document.getElementById('historic-toggle-btn');
+  btn.textContent = hideHistoric ? 'Historic Lines: Hidden' : 'Historic Lines: Shown';
+  btn.classList.toggle('active', !hideHistoric);
+  retintRailTiles();   // stencil is already on each tile; no refetch needed
+}
+
+async function pollLivery() {
+  try {
+    const d = await (await fetch('/api/loco')).json();
+    const next = d.livery_colour || null;
+    if (next !== liveryColour) {
+      liveryColour = next;
+      // The player dot takes the same colour, so the train and the line it
+      // is running on read as one thing.
+      applyLiveryColour();
+    }
+  } catch (e) {
+    // leave the last known colour in place
+  }
+}
+
+function toggleRailOverlay() {
+  const btn = document.getElementById('rail-toggle-btn');
+  if (!map || !railLayer) return;
+  railOverlayOn = !railOverlayOn;
+  if (railOverlayOn) {
+    railLayer.addTo(map);
+    applyLiveryColour();
+    btn.textContent = 'Rail Overlay: On';
+    btn.classList.add('active');
+  } else {
+    map.removeLayer(railLayer);
+    btn.textContent = 'Rail Overlay: Off';
+    btn.classList.remove('active');
+  }
+}
+
+async function pollLocation() {
+  try {
+    const res = await fetch('/api/location');
+    const data = await res.json();
+    if (data.latitude === null || data.longitude === null) return;
+
+    if (!map) {
+      initMap(data.latitude, data.longitude);
+    } else {
+      animateMarkerAndMap(data.latitude, data.longitude);
+    }
+  } catch (e) {
+    // stays on the "waiting" state / keeps last known position until the
+    // next successful poll
+  }
+}
+
+function toggleFullScreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+function exitApp() {
+  fetch('/api/shutdown', {method: 'POST'});
+}
+
+initHudControls('hud-controls');
+pollLocation();
+setInterval(pollLocation, 2000);
+pollLivery();
+setInterval(pollLivery, 5000);   // livery changes only when the train does
+</script>
+</body>
+</html>

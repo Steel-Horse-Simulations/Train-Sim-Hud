@@ -1,0 +1,159 @@
+================================================================================
+KNOWN REAL API CAPTURES — TSW Hud
+================================================================================
+These are real response shapes confirmed from actual game sessions.
+Do not invent new shapes. Do not assume untested endpoints exist.
+
+All requests: GET http://127.0.0.1:31270/<path>
+Header on every request: DTGCommKey: <key from CommAPIKey.txt>
+
+================================================================================
+SPEED (m/s — multiply × 2.23694 for mph)
+================================================================================
+GET /get/CurrentDrivableActor.Function.HUD_GetSpeed
+{
+  "Result": "Success",
+  "Values": {
+    "ReturnValue": 22.34   // float, m/s
+  }
+}
+
+================================================================================
+DRIVER AID DATA (multiple fields in one call — most efficient)
+================================================================================
+GET /get/DriverAid.Data
+{
+  "Result": "Success",
+  "Values": {
+    "SpeedLimit": 22.34,           // m/s, use _get_ci() case-insensitive
+    "formationMaxSpeed": 33.52,    // m/s, formation's rated max speed
+    "gradient": 0.5,               // percent (positive = uphill)
+    "latitude": 55.9432,
+    "longitude": -3.2143,
+    "elevation": 42.1
+    // Other fields may exist — only use confirmed ones
+  }
+}
+
+================================================================================
+LOCO IDENTITY
+================================================================================
+GET /get/CurrentDrivableActor.ObjectClass
+{
+  "Result": "Success",
+  "Values": {
+    "ObjectClass": "RVM_CJP_BNSF_ES44C4_C"  // raw string, key name may vary
+  }
+}
+
+GET /get/CurrentFormation/0.Function.IS_GetVehicleInfo
+{
+  "Result": "Success",
+  "Values": {
+    "Output": {
+      "class_14_DEF4FFB0...": "390/0",  // key name has hash suffix, use prefix match
+      "unit_...": "390 001"
+    }
+  }
+}
+Note: Match keys by prefix "class_" (case-insensitive). Hash suffix changes between
+game builds. The value is the clean class name, e.g. "Class 66", "390/0", "43".
+
+================================================================================
+AMMETER (Amps — divide by 1000 for kA)
+================================================================================
+GET /get/CurrentDrivableActor.Function.HUD_GetAmmeter
+{
+  "Result": "Success",
+  "Values": {
+    "Amps": 3531.388   // float, raw Amps
+  }
+}
+Scaling: ÷ 1000 = kA. Confirmed from a real Class 68 capture.
+Real gauge scale: 0–8 kA. Green zone: ~3–5 kA. Red zone: ~6–8 kA.
+
+================================================================================
+BRAKE GAUGES (endpoints confirmed, values NOT YET CONFIRMED)
+================================================================================
+GET /get/CurrentDrivableActor.Function.HUD_GetBrakeGauge_1
+GET /get/CurrentDrivableActor.Function.HUD_GetBrakeGauge_2
+Response shape not yet captured. Use HUD Lab to watch both side-by-side.
+Which is brake pipe, which is main reservoir: UNKNOWN.
+Psi scaling: UNKNOWN. Do not build gauge until confirmed.
+
+================================================================================
+WEATHER (WRITE — PATCH to game)
+================================================================================
+PATCH /set/WeatherSystem.Temperature   Body: {"Value": 12.5}  // Celsius
+PATCH /set/WeatherSystem.Cloudiness    Body: {"Value": 0.75}  // 0.0–1.0
+PATCH /set/WeatherSystem.Precipitation Body: {"Value": 0.2}   // 0.0–1.0
+PATCH /set/WeatherSystem.Wetness       Body: {"Value": 0.1}   // 0.0–1.0
+PATCH /set/WeatherSystem.GroundSnow    Body: {"Value": 0.0}   // 0.0–1.0
+PATCH /set/WeatherSystem.PiledSnow     Body: {"Value": 0.0}   // 0.0–1.0
+PATCH /set/WeatherSystem.FogDensity    Body: {"Value": 0.05}  // 0.0–1.0
+
+These scale factors are estimates, not from game documentation:
+  precipitation = min(1.0, precip_mm / 4.0)
+  wetness = min(1.0, rain_mm / 3.0)
+  ground_snow = min(1.0, snow_cm / 2.0) if temp_c <= 1.5 else 0.0
+  fog_density = min(1.0, 1 - (visibility_m / 20000.0))
+
+Open-Meteo API base: https://api.open-meteo.com/v1/forecast
+Parameters used: temperature_2m, precipitation, rain, snowfall, cloud_cover,
+                 visibility, weather_code, timezone=auto
+
+================================================================================
+GSM-R RADIO (endpoints exist, value shapes NOT YET CONFIRMED)
+================================================================================
+Confirmed on BP_Class375-6_GSMR_Radio. Get() each property during a real
+registration/call to confirm the value shapes and PageData mapping.
+Visual mockup (Siemens cab replica, fixed real-world colours) is approved.
+NOT YET BUILT. Blocked on real value confirmation.
+
+================================================================================
+DISCOVERY (enumerate all available endpoints)
+================================================================================
+GET /list
+{
+  "Result": "Success",
+  "Nodes": [
+    {"Name": "CurrentDrivableActor", ...},
+    {"Name": "DriverAid", ...},
+    ...
+  ]
+}
+
+GET /list/CurrentDrivableActor
+{
+  "Nodes": [
+    {"Name": "Function", ...},
+    {"Name": "ObjectClass", ...},
+    ...
+  ]
+}
+
+GET /info/CurrentDrivableActor.ObjectClass
+{
+  "Type": "String",
+  "Readable": true,
+  "Writable": false
+}
+
+================================================================================
+CASE-INSENSITIVE KEY LOOKUP PATTERN
+================================================================================
+The game API returns field names inconsistently (SpeedLimit, speedlimit, etc.).
+Always use this helper:
+
+  def _get_ci(d, keys, default=None):
+      """Case-insensitive dict key lookup. Tries each key in order."""
+      if not isinstance(d, dict):
+          return default
+      lower_map = {k.lower(): v for k, v in d.items()}
+      for key in keys:
+          val = lower_map.get(key.lower())
+          if val is not None:
+              return val
+      return default
+
+Usage: speed_limit_ms = _get_ci(values, ["SpeedLimit", "speedlimit", "speed_limit"])

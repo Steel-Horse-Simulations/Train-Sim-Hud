@@ -1,0 +1,116 @@
+================================================================================
+REGRESSION CHECKLIST — TSW Hud
+================================================================================
+Run ALL of these before packaging any release. Every item must pass.
+
+================================================================================
+1. PYTHON COMPILE CHECK
+================================================================================
+cd "TSW Hud"
+for f in *.py; do python3 -m py_compile "$f" && echo "OK: $f" || echo "FAIL: $f"; done
+
+Expected: OK for every .py file. Any FAIL = do not ship.
+
+================================================================================
+2. JSON VALIDITY (registries + config files)
+================================================================================
+python3 -c "
+import json, os
+for f in os.listdir('pages'):
+    if f.endswith('.json'):
+        with open(f'pages/{f}') as fh:
+            json.load(fh)
+        print('OK:', f)
+"
+
+================================================================================
+3. EXTERNAL JS SYNTAX CHECK
+================================================================================
+for f in pages/*.js; do node --check "$f" && echo "OK: $f" || echo "FAIL: $f"; done
+
+================================================================================
+4. INLINE JS SYNTAX CHECK (every <script> block in every HTML page)
+================================================================================
+python3 -c "
+import re, subprocess, os
+fail = False
+for f in sorted(os.listdir('pages')):
+    if not f.endswith('.html'): continue
+    with open(os.path.join('pages', f)) as fh: content = fh.read()
+    for i, s in enumerate(re.findall(r'<script>(.*?)</script>', content, re.DOTALL)):
+        tmp = f'/tmp/check_{f}_{i}.js'
+        with open(tmp, 'w') as out: out.write(s)
+        r = subprocess.run(['node', '--check', tmp], capture_output=True, text=True)
+        if r.returncode != 0: fail = True
+        print(f'{f} script {i}:', 'OK' if r.returncode==0 else 'FAIL: '+r.stderr.strip())
+        os.remove(tmp)
+print('ANY FAIL:', fail)
+"
+
+================================================================================
+5. PAGE / ROUTE LOAD CHECK (every URL must return 200)
+================================================================================
+Start the server first: python3 -c "import app; app.app.run(host='127.0.0.1', port=5999, use_reloader=False)" &
+sleep 3
+
+FAIL=0
+for p in / /pages/dashboard.html /pages/dashboard_tablet.html \
+          /pages/timetable.html /pages/timetables_browser.html \
+          /pages/map.html /pages/explorer.html /pages/weather.html \
+          /pages/customisation.html /pages/classes.html \
+          /pages/groups.html /pages/operators.html \
+          /pages/known_trains.html /pages/known_trains_edit.html \
+          /pages/known_trains_group.html /pages/hud_lab.html \
+          /api/config /api/theme /api/timetables \
+          /api/known_trains/list /api/known_trains/groups \
+          /api/known_trains/families /api/operators \
+          /api/other_hud_sync/status; do
+  code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:5999$p")
+  if [ "$code" != "200" ]; then FAIL=1; fi
+  echo "$p -> $code"
+done
+echo "ALL PASS: $([ $FAIL -eq 0 ] && echo YES || echo NO)"
+
+================================================================================
+6. VERSION BUMP
+================================================================================
+- Update APP_VERSION in app.py
+- Update "Current version" in PROJECT_NOTES.md
+- Versioning: MAJOR.MINOR.PATCH
+  MAJOR = new feature | MINOR = update to feature | PATCH = bug fix / cosmetic
+
+================================================================================
+7. NAV LINK VERIFICATION
+================================================================================
+# After adding a new page, verify exactly 1 occurrence per file:
+grep -c 'NEW_PAGE_NAME.html' pages/*.html
+# Every file should show 1, not 0 or 2+.
+
+================================================================================
+8. PACKAGING
+================================================================================
+cd ..  # parent of "TSW Hud" folder
+find "TSW Hud" -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+find "TSW Hud" -name "*.pyc" -delete 2>/dev/null
+rm -rf "TSW Hud/extracted"
+rm -f "TSW Hud/data/"*.db "TSW Hud/config.json"
+rm -f "TSW Hud/diagnostics/"*.log "TSW Hud/diagnostics/latest_snapshot.txt"
+zip -r "TSW Hud.zip" "TSW Hud" -x "*/__pycache__/*" -x "*.pyc"
+
+The data/*.db line is NOT optional. Those databases hold live Known Trains
+data on the real machine; shipping empty ones means extracting the zip in
+place wipes it.
+
+Zip name must always be "TSW Hud" (the user extracts and replaces in place).
+
+================================================================================
+9. EXCLUDED FEATURES MUST STAY EXCLUDED (spec section 3)
+================================================================================
+grep -rn "HTTPS_SETUP\|sw\.js\|offline-db\|sync-client\|install-prompt\|\
+manifest-\|/api/sync/\|https_cert\|ssl_context" --include=*.py --include=*.html \
+  --include=*.js --include=*.md --include=*.txt . | grep -v "^./docs/"
+
+Expected: no output. Anything here means HTTPS, PWA or offline sync has crept
+back in. (PROJECT_NOTES.md's historical changelog entries are excluded by the
+docs/ filter only if you moved it there - it legitimately mentions all of these
+in past tense.)

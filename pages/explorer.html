@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Discovery</title>
+<link rel="stylesheet" href="/pages/style.css">
+<script src="/pages/theme.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><strong>TSW Hud</strong> · discovery</div>
+    <div class="nav" id="navContainer"></div>
+    <button class="exit-btn" onclick="exitApp()">Exit</button>
+  </div>
+
+  <main>
+    <div class="panel">
+      <h2>Pak inspection (offline timetables, step 2)</h2>
+      <div style="padding:10px;background:rgba(255,255,255,0.04);border-radius:6px;margin-bottom:12px;">
+        <p class="small dim" style="margin:0 0 8px;">
+          <strong>Check this first.</strong> The other extractor can export one JSON per service
+          with times and coordinates already decoded. If you have ever run it, those files may
+          already be on disk — importing them is far less work than decoding the game's binary.
+        </p>
+        <button class="btn primary" onclick="findExports()">Search for exported timetables</button>
+        <p class="small" id="exp-status" style="margin-top:8px;"></p>
+        <div id="exp-results"></div>
+      </div>
+      <p class="small dim">
+        Reads what's <em>inside</em> a route's <span class="mono">.pak</span> archive without
+        extracting it. This is the step that pins down where timetable data actually lives in
+        the archive and what format it's in — the one thing still blocking a parser.
+      </p>
+      <p class="small dim">
+        Needs <span class="mono">repak</span>, the Unreal pak unpacker
+        (<a href="https://github.com/trumank/repak/releases" target="_blank" rel="noopener"
+        style="color:var(--accent-bright);">github.com/trumank/repak</a>) — the same tool the other
+        extractor uses, because it handles the Oodle compression TSW's paks use. Put
+        <span class="mono">repak.exe</span> next to this app, in a <span class="mono">resources</span>
+        folder, or on PATH.
+      </p>
+      <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn primary" onclick="checkRepak()">Check repak</button>
+        <button class="btn" onclick="copyPakResults()">Copy results</button>
+      </div>
+      <p class="small" id="repak-status" style="margin-top:8px;"></p>
+      <div style="margin-top:10px;">
+        <p class="small dim" style="margin-bottom:6px;">Pak file to inspect (full path — the game files scan above lists them):</p>
+        <input type="text" id="pak-path" placeholder="e.g. D:\SteamLibrary\...\Train Sim World 6\...\SomeRoute.pak"
+               style="width:100%;font-family:var(--mono);font-size:12px;">
+        <div class="field-row" style="gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <input type="text" id="pak-filter" placeholder="optional: only show paths containing… e.g. Timetable"
+                 style="flex:1;min-width:220px;font-family:var(--mono);font-size:12px;">
+          <button class="btn primary" onclick="listPak()">List contents</button>
+        </div>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline);">
+        <p class="small dim" style="margin-bottom:6px;">
+          A route can have more than one timetable, and the extras aren't always in that route's
+          own pak. This scans every pak and reports which timetables exist and where.
+        </p>
+        <button class="btn primary" onclick="scanAllPaks()">Find all timetables</button>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline);">
+        <p class="small dim" style="margin-bottom:6px;">
+          <strong>Inspect one timetable asset.</strong> Extracts a single asset and reports what's
+          readable inside it. This decides whether a parser is realistic: if station names, times
+          and service codes show up as plain text it's doable; if only field names appear, the
+          values are packed binary and it's a much bigger job. Paste the pak path above, then the
+          asset path from the scan results.
+        </p>
+        <input type="text" id="pak-asset" placeholder="e.g. TS2Prototype/Plugins/DLC/FifeCircle_Route_Gameplay/Content/Timetable/FCE_Timetable_TT.uasset"
+               style="width:100%;font-family:var(--mono);font-size:12px;margin-bottom:8px;">
+        <button class="btn primary" onclick="inspectAsset()">Extract &amp; inspect</button>
+        <button class="btn" onclick="clearExtracted()">Clear extracted folder</button>
+        <button class="btn primary" onclick="scanTimes()">Scan for times</button>
+        <button class="btn primary" onclick="analyseRecords()">Analyse record layout</button>
+        <button class="btn primary" onclick="diffRecords()">Map fields</button>
+        <button class="btn primary" onclick="decodeStride()">Decode all times</button>
+        <button class="btn primary" onclick="extractServices()">Extract services</button>
+        <button class="btn primary" onclick="findStops()">Find stop points</button>
+        <button class="btn primary" onclick="readRecords()">Read records (tagged properties)</button>
+        <button class="btn primary" onclick="probeFormat()">Probe format</button>
+        <button class="btn primary" onclick="recordTemplate()">Recover record template</button>
+        <button class="btn primary" onclick="decodeFixed()">Decode fixed records</button>
+      </div>
+      <p class="small" id="pak-status" style="margin-top:8px;"></p>
+      <div id="pak-results" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Game files (timetable source investigation)</h2>
+      <p class="small dim">
+        Finds your Train Sim World install and lists what content files are actually in it.
+        This is step one of reading timetables straight from the game instead of importing them
+        from another HUD's database. <strong>Read-only</strong> — it lists and measures files,
+        it never opens, extracts or changes anything in the game folder.
+      </p>
+      <p class="small dim">
+        What comes back tells us whether this is straightforward or not: loose
+        <span class="mono">.json</span>/<span class="mono">.csv</span>/<span class="mono">.uasset</span>
+        files would be readable directly, whereas everything being sealed inside
+        <span class="mono">.pak</span> archives means an extraction step first. Copy the results
+        back to the chat and we can work out the route from there.
+      </p>
+      <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn primary" onclick="scanGameFiles()">Scan game files</button>
+        <button class="btn" onclick="copyGameFileResults()">Copy results</button>
+      </div>
+      <div style="margin-top:10px;">
+        <p class="small dim" style="margin-bottom:6px;">
+          Installed somewhere unusual? Paste the folder here (the game folder, or its Content folder):
+        </p>
+        <input type="text" id="gf-path" placeholder="e.g. D:\SteamLibrary\steamapps\common\Train Sim World 5"
+               style="width:100%;font-family:var(--mono);font-size:12px;">
+      </div>
+      <p class="small" id="gf-status" style="margin-top:8px;"></p>
+      <div id="gf-results" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Timetable data (investigation)</h2>
+      <p class="small dim">
+        Checks whether the game exposes live timetable/service data — destination, calling points,
+        scheduled times — through its own API. Right now this app gets timetables by importing
+        another HUD's database rather than from the game directly, so this is finding out whether
+        reading them live is possible.
+      </p>
+      <p class="small dim">
+        It does two things: crawls the node tree for timetable-ish names, and directly probes a list
+        of likely paths. That second part matters because this build's <span class="mono">/list</span>
+        only reports the node tree, <em>not</em> the properties on each node — so something like
+        <span class="mono">DriverAid.Data.nextStopName</span> could be readable while never showing up
+        in any listing. <strong>Run this while actually driving a timetabled service</strong>, not from
+        the menu and not in free roam.
+      </p>
+      <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn primary" onclick="scanTimetable()">Scan for timetable data</button>
+        <button class="btn" onclick="copyTimetableResults()">Copy results</button>
+      </div>
+      <p class="small" id="tt-status" style="margin-top:8px;"></p>
+      <div id="tt-results" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Safety systems</h2>
+      <p class="small dim">
+        Walks the <span class="mono">CurrentDrivableActor</span> node tree looking for any endpoint or property
+        whose name contains a safety keyword (AWS, TPWS, PZB, Sifa, vigilance, cruise, deadman, etc.).
+        For each match, attempts a <span class="mono">GET</span> to see if this loco actually exposes it.
+        Those that respond with readable data are listed below; "Enable all" sends <span class="mono">Value=true</span>
+        to each. Run this while in an active driving session with a loco loaded.
+      </p>
+      <p class="small dim">
+        If this finds nothing but the full "Scan endpoints" below finds safety nodes, copy that
+        scan and paste it to Claude — the exact paths can be extracted and enabled manually.
+      </p>
+      <div class="field-row" style="gap:8px;flex-wrap:wrap;">
+        <button class="btn primary" onclick="scanSafety()">Scan for safety systems</button>
+        <button class="btn" id="enable-btn" onclick="enableSafety()" disabled>Enable all found</button>
+      </div>
+      <p class="small" id="safety-status" style="margin-top:8px;"></p>
+      <div id="safety-results" style="margin-top:12px;"></div>
+      
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--hairline);">
+        <p class="small dim" style="margin-bottom:8px;">Or test specific paths manually (one per line):</p>
+        <textarea id="manual-paths" placeholder="e.g.&#10;CurrentDrivableActor.AVIs&#10;CurrentDrivableActor.Cab_UK_TPWS.TPWS_BrakeOverride" style="width:100%;height:100px;font-family:var(--mono);font-size:12px;"></textarea>
+        <button class="btn" onclick="testManualPaths()" style="margin-top:8px;">Test these paths</button>
+        <div id="manual-results" style="margin-top:8px;"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Scan the game's API</h2>
+      <p class="small dim">
+        This walks every node the game currently exposes (via <span class="mono">/info</span> and
+        <span class="mono">/list</span>) and builds a full text map of every endpoint — which ones
+        are readable, which are writable, and the exact path to call. It only changes with your
+        loco/route/session, so re-run it any time you want an up-to-date picture. Nothing here is
+        sent anywhere automatically — copy or save the result yourself and paste it to Claude when
+        you want a new dashboard built around it.
+      </p>
+      <div class="field-row">
+        <button class="btn primary" onclick="runScan(false)" id="scan-btn">Scan endpoints</button>
+        <button class="btn" onclick="runScan(true)" id="scan-deep-btn">Scan + sample values (slower)</button>
+        <button class="btn" onclick="copyDump()">Copy to clipboard</button>
+        <button class="btn" onclick="saveDump()">Save to file</button>
+      </div>
+      <p class="small" id="scan-status"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Raw response (bypasses all parsing)</h2>
+      <p class="small dim">
+        If Scan keeps coming back empty even though the game is clearly responding, this shows
+        the <em>exact, unprocessed</em> JSON the game sends back for a given path - no
+        interpretation on our end at all. This is the most reliable way to see the real shape of
+        the data so it can be matched exactly, instead of guessing again.
+      </p>
+      <div class="field-row">
+        <input type="text" id="raw-path" value="list" placeholder="e.g. list, info, list/WeatherManager">
+        <button class="btn" onclick="fetchRaw()">Fetch raw</button>
+      </div>
+      <textarea class="dump" id="raw-dump" readonly style="min-height:200px;" placeholder="Raw JSON will appear here."></textarea>
+    </div>
+
+    <div class="panel">
+      <h2>Result</h2>
+      <textarea class="dump" id="dump" readonly placeholder="Run a scan to see results here."></textarea>
+    </div>
+  </main>
+
+<script>
+let lastSafetyResults = null;
+
+let lastPakResult = null;
+
+async function findExports() {
+  const status = document.getElementById('exp-status');
+  const out = document.getElementById('exp-results');
+  status.textContent = 'Searching (time-limited, about 20s)…';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/timetable/find_exports')).json();
+    lastPakResult = d;
+    if (d.error) { status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`; return; }
+    const n = (d.exports || []).length;
+    if (!n) {
+      status.innerHTML = '<span style="color:var(--status-amber);">No exported timetables found.</span>'
+        + (d.timed_out ? ' <span class="dim">(search hit its time limit)</span>' : '')
+        + '<br><span class="dim">If you know where that app saved its exports, say so and I can point the search at it.</span>';
+      return;
+    }
+    status.innerHTML = `<span style="color:var(--status-green);">${n} exported timetable file(s) found</span>`;
+    status.style.color = '';
+    out.innerHTML = d.exports.map(e => `
+      <div style="padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:6px;margin-top:6px;">
+        <div class="mono" style="font-size:11px;color:var(--accent-bright);word-break:break-all;">${esc(e.path)}</div>
+        <div class="small dim">${e.row_count} rows${e.has_coords ? ' · has coordinates' : ''}</div>
+        <div class="mono" style="font-size:10px;color:var(--text-dim);">${esc((e.row_keys||[]).join(', '))}</div>
+      </div>`).join('');
+  } catch (e) { status.textContent = 'Error: ' + e.message; status.style.color='var(--status-red)'; }
+}
+
+async function checkRepak() {
+  const el = document.getElementById('repak-status');
+  el.textContent = 'Checking…';
+  el.style.color = 'var(--text-dim)';
+  try {
+    const d = await (await fetch('/api/paks/repak')).json();
+    lastPakResult = d;
+    if (!d.found) {
+      el.innerHTML = '<span style="color:var(--status-amber);">Not found.</span>'
+        + '<br><span class="dim">Put <span class="mono">repak.exe</span> in this exact folder:</span>'
+        + `<br><span class="mono" style="color:var(--accent-bright);font-size:12px;">${esc(d.put_it_here || '')}</span>`
+        + '<br><span class="dim">then press Check repak again.</span>';
+      return;
+    }
+    el.innerHTML = '<span style="color:var(--status-green);">Found</span> '
+      + `<span class="mono">${esc(d.path)}</span>`
+      + (d.version ? ` — ${esc(d.version)}` : '')
+      + (d.subcommands && d.subcommands.length
+          ? `<br><span class="dim">supports: ${esc(d.subcommands.join(', '))}</span>` : '');
+  } catch (e) {
+    el.textContent = 'Error: ' + e.message;
+    el.style.color = 'var(--status-red)';
+  }
+}
+
+async function listPak() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  const pakPath = document.getElementById('pak-path').value.trim();
+  if (!pakPath) { alert('Paste the full path to a .pak file first.'); return; }
+  status.textContent = 'Reading the pak index… (no extraction, but can take a moment on a big route)';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/list', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ pak_path: pakPath,
+                             path_filter: document.getElementById('pak-filter').value.trim() })
+    })).json();
+    lastPakResult = d;
+
+    if (d.error) {
+      status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`;
+      out.innerHTML = (d.stderr ? `<pre class="mono" style="font-size:11px;white-space:pre-wrap;color:var(--status-amber);">${esc(d.stderr)}</pre>` : '')
+        + (d.hint ? `<p class="small dim">${esc(d.hint)}</p>` : '');
+      return;
+    }
+
+    status.innerHTML = `<span style="color:var(--status-green);">${d.entry_count} entries</span>`
+      + (d.match_count ? ` — <strong>${d.matches_shown}</strong> likely scheduling assets (of ${d.match_count} raw matches)` : ' — no keyword matches')
+      + (d.filtered_count !== undefined ? ` — <strong>${d.filtered_count}</strong> match your filter` : '');
+    status.style.color = '';
+
+    const promising = Object.entries(d.promising_folders || {});
+    const promisingHtml = promising.length
+      ? `<p class="small" style="margin:0 0 6px;font-weight:600;color:var(--status-green);">Scheduling data found in these folders</p>
+         <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">
+         ${promising.map(([f,c]) => `<tr><td class="mono" style="padding:2px 12px 2px 0;font-size:11px;color:var(--accent-bright);">${esc(f)}</td>
+             <td style="padding:2px 0;text-align:right;">${c}</td></tr>`).join('')}</table>` : '';
+
+    const folderRows = Object.entries(d.content_folders || {}).slice(0, 40)
+      .map(([f,c]) => `<tr><td class="mono" style="padding:2px 12px 2px 0;font-size:11px;">${esc(f)}</td>
+                           <td style="padding:2px 0;text-align:right;">${c}</td></tr>`).join('');
+
+    const filtered = (d.filtered || []).slice(0, 80);
+    const matches = (d.matches || []).slice(0, 80);
+
+    out.innerHTML = `
+      ${promisingHtml}
+      <p class="small" style="margin:0 0 6px;font-weight:600;">All folders inside the pak</p>
+      <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">${folderRows}</table>
+      ${d.filtered_count !== undefined ? `
+        <p class="small" style="margin:0 0 6px;font-weight:600;">Your filter: “${esc(d.path_filter)}”</p>
+        ${filtered.length
+          ? filtered.map(m => `<div class="mono" style="font-size:11px;color:var(--accent-bright);">${esc(m)}</div>`).join('')
+          : '<p class="small dim">Nothing matched.</p>'}
+        <div style="height:14px;"></div>` : ''}
+      <p class="small" style="margin:0 0 6px;font-weight:600;">Likely scheduling assets</p>
+      ${matches.length
+        ? matches.map(m => `<div class="mono" style="font-size:11px;color:var(--accent-bright);">${esc(m)}</div>`).join('')
+        : '<p class="small dim">None. Use the folder list above to spot a likely folder, then re-run with it as a filter.</p>'}`;
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+async function scanAllPaks() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  status.textContent = 'Scanning every pak — this reads each pak index, so it can take a few minutes…';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/scan_all', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+    })).json();
+    lastPakResult = d;
+    if (d.error) {
+      status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`;
+      return;
+    }
+    status.innerHTML = `<span style="color:var(--status-green);">${d.total_timetables} timetables</span>`
+      + ` across ${d.paks_with_timetables} of ${d.paks_scanned} paks`;
+    status.style.color = '';
+    out.innerHTML = (d.results || []).map(r => `
+      <div style="padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:6px;margin-bottom:8px;">
+        <div class="mono" style="font-size:12px;color:var(--accent-bright);">${esc(r.pak_name || '')}</div>
+        ${(r.timetables || []).map(t => `<div class="mono" style="font-size:11px;">${esc(t)}</div>`).join('')}
+        <div class="small dim" style="margin-top:4px;">${(r.layer_datatracks || []).length} layer data tracks</div>
+      </div>`).join('') || '<p class="small dim">No timetables found.</p>';
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+async function decodeFixed() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Decoding at a fixed stride and checking against the whole-file scan…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/decode_fixed',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`
+      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');return;}
+    const good=d.confirmed;
+    status.innerHTML=`<span style="color:var(--status-${good?'green':'amber'});">`
+      +`${d.record_starts} records, stride ${d.stride}</span>`
+      +` <span class="small dim">· anchor ${esc(d.anchor)} · type at +${d.type_field_offset}`
+      +` · ${Math.round(d.coverage*100)}% typed</span>`;
+    status.style.color='';
+    const pair=(o)=>Object.entries(o||{}).map(([k,v])=>`${esc(k)} <span class="dim">${v}</span>`).join(' · ');
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);
+        border-left:3px solid var(--status-${good?'green':'amber'});">${esc(d.verdict)}</p>
+      <p class="small" style="margin:6px 0;">Decoded at +${d.type_field_offset}: ${pair(d.type_distribution)}</p>
+      <p class="small" style="margin:6px 0;">Whole-file upper bound: ${pair(d.reference_distribution)}</p>
+      <p class="small dim" style="margin:6px 0;">Candidate time fields (offset, share):
+        ${(d.time_field_offsets||[]).map(t=>`+${t[0]} <span class="dim">${Math.round(t[1]*100)}%</span>`).join(' · ')}</p>
+      <p class="small dim" style="margin:8px 0 4px;">First records:</p>
+      <div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">
+      ${(d.sample_records||[]).map(r=>`<div>${Object.entries(r).map(([k,v])=>
+        `<span class="dim">${esc(k)}</span> <span style="color:var(--accent-bright);">${esc(String(v))}</span>`).join('  ')}</div>`).join('')}
+      </div>`;
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
+async function recordTemplate() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Finding what recurs at the same offset in every record…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/template',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">${d.record_count} records</span>`
+      +` <span class="small dim">· anchor ${esc(d.anchor)} · median size ${d.record_size_median} bytes`
+      +` · ${d.fixed_length?'fixed length':'variable length'}</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);
+        border-left:3px solid var(--accent);">${esc(d.verdict)}</p>
+      <p class="small" style="margin:6px 0;">Names referenced exactly ${d.record_count} times:
+        <span class="dim">${(d.names_at_that_count||[]).map(esc).join(', ')}</span></p>
+      <p class="small dim" style="margin:8px 0 4px;">Record template — offset from anchor:</p>
+      <div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);
+        border-radius:5px;max-height:340px;overflow:auto;">
+        ${(d.template||[]).map(t=>`<div><span class="dim">${t.rel>=0?'+':''}${t.rel}</span>
+          <span style="color:var(--accent-bright);">${esc(t.name)}</span>
+          <span class="dim">${Math.round(t.share*100)}%</span></div>`).join('')}
+      </div>`;
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
+function renderProbe(d) {
+  const list=(a)=>((a||[]).map(x=>`${esc(x[0])} <span class="dim">${x[1]}</span>`).join(' · ')||'<span class="dim">none</span>');
+  return `<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);
+      border-left:3px solid var(--accent);">${esc(d.verdict)}</p>
+    <p class="small" style="margin:6px 0;">Property TYPE names referenced: ${list(d.property_type_names_referenced)}</p>
+    <p class="small" style="margin:6px 0;">Field names referenced: ${list(d.field_names_referenced)}</p>
+    <p class="small" style="margin:6px 0;">Enum VALUES referenced: ${list(d.enum_values_referenced)}</p>
+    <p class="small dim" style="margin:6px 0;">${d.uexp_size} bytes · ${d.name_count} names ·
+      ${d.total_fname_references} FName references · longest tag chain ${d.longest_tag_chain}</p>
+    ${d.chain_break?`<p class="small dim" style="margin:8px 0 4px;">Longest tag chain
+      (${esc(String(d.longest_chain_width))}-byte FName fields) — read
+      ${d.chain_break.tags_read.length}, then broke at ${d.chain_break.broke_at}:</p>
+      <div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">
+      ${d.chain_break.tags_read.map(t=>`<div><span style="color:var(--accent-bright);">${esc(t.name)}</span>
+        <span class="dim">${esc(t.type)} size ${t.size}</span></div>`).join('')||'<span class="dim">none</span>'}
+      <div class="dim" style="margin-top:4px;word-break:break-all;">next: ${esc(d.chain_break.next_bytes_hex||'')}</div>
+      </div>`:''}
+    ${(d.windows||[]).map((w,i)=>`<p class="small dim" style="margin:8px 0 4px;">
+      Window ${i+1} around <strong>${esc(d.window_around)}</strong> at ${w.centre}:</p>
+      <div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">
+      ${(w.resolved_names||[]).map(x=>`<div><span class="dim">${x.rel>0?'+':''}${x.rel}</span>
+        <span style="color:var(--accent-bright);">${esc(x.name)}</span>
+        <span class="dim">${x.fname8_ok?'8-byte':''}${x.fname16_ok?' 16-byte':''}</span></div>`).join('')}
+      </div>`).join('')}
+    <p class="small dim" style="margin:8px 0 4px;">First 256 bytes:</p>
+    <div class="mono" style="font-size:10px;color:var(--text-dim);word-break:break-all;
+      padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">${esc(d.head_hex||'')}</div>`;
+}
+
+async function probeFormat() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Counting FName references…'; status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/probe',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">format probe complete</span>`;
+    status.style.color=''; out.innerHTML=renderProbe(d);
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
+async function readRecords() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Reading records as tagged properties…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/records',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`
+      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');
+      if(d.probe) out.innerHTML=renderProbe(d.probe);
+      return;}
+    status.innerHTML=`<span style="color:var(--status-green);">${d.records_parsed} records, `
+      +`${d.stop_points} StopPoint</span> <span class="small dim">·`
+      +` name table ${d.name_count} · guid byte ${d.guid_byte}</span>`;
+    status.style.color='';
+    const fields=(d.field_usage||[]).map(f=>`${esc(f[0])} <span class="dim">${f[1]}</span>`).join(' · ');
+    const types=(d.data_types||[]).map(t=>`${esc(t[0])} <span class="dim">${t[1]}</span>`).join(' · ');
+    const rec=r=>`<div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+        ${Object.entries(r.fields||{}).map(([k,v])=>`<div class="mono" style="font-size:11px;">
+          <span style="color:var(--text-dim);">${esc(k)}</span>
+          <span style="color:var(--accent-bright);">${esc(v&&v.time?v.time:JSON.stringify(v))}</span></div>`).join('')}
+      </div>`;
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);">${esc(d.verdict)}</p>`
+      +`<p class="small" style="margin:6px 0;">Types: ${types}</p>`
+      +`<p class="small" style="margin:6px 0;">Fields: ${fields}</p>`
+      +`<p class="small dim" style="margin-top:10px;">Sample StopPoints</p>`
+      +(d.sample_stops||[]).map(rec).join('')
+      +`<p class="small dim" style="margin-top:10px;">First records of any type</p>`
+      +(d.sample_records||[]).slice(0,4).map(rec).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
+async function findStops() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Resolving station and type names against the name table…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/stops',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`
+      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');return;}
+    const good=d.confirmed;
+    status.innerHTML=`<span style="color:var(--status-${good?'green':'amber'});">`
+      +`${d.typed_stop_point} typed StopPoint, ${d.with_station} with a station name</span>`
+      +` <span class="small dim">of ${d.total_times} times · shift ${d.shift} · ${esc(d.encoding)}`
+      +(d.corroboration!=null?` · corroboration ${(d.corroboration*100).toFixed(0)}%`:'')+`</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.04);`
+      +`border-left:3px solid var(--status-${good?'green':'amber'});">${esc(d.verdict)}</p>`
+      +(d.names_sample&&d.station_names===0
+         ? `<p class="small dim" style="margin:8px 0 4px;">Name table (${d.name_count}) - no station-shaped entries:</p>`
+           +`<div class="mono" style="font-size:10.5px;color:var(--text-dim);max-height:220px;overflow:auto;`
+           +`padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;">`
+           +d.names_sample.map((n,i)=>`${i}. ${esc(n)}`).join('<br>')+`</div>` : '')
+      +(d.services||[]).slice(0,20).map(sv=>`
+        <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+          <div><strong>${sv.stop_count} stops</strong> <span class="small dim">of ${sv.track_points} track points ·
+            ${sv.distinct_stations} stations · ${sv.paired_times} arr/dep pairs</span>
+            <span class="mono" style="color:var(--accent-bright);">${esc(sv.first)} → ${esc(sv.last)}</span></div>
+          ${(sv.stops||[]).slice(0,14).map(st=>`<div class="mono" style="font-size:11px;">
+            <span style="color:var(--accent-bright);">${esc(st.time)}</span>
+            ${esc(st.station||'(no station name)')}
+            <span class="small dim">${esc(st.type||'')}</span></div>`).join('')}
+        </div>`).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
+async function extractServices() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Extracting services (scans every byte, takes a moment on 8 MB)…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/services',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">${d.run_count} candidate services</span> from ${d.total_times} times`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      +(d.runs||[]).slice(0,25).map(r=>`
+        <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+          <div><strong>${r.stop_count} stops</strong> <span class="mono" style="color:var(--accent-bright);">${esc(r.first)} → ${esc(r.last)}</span>
+            <span class="small dim">(${r.duration_min} min)</span></div>
+          <div class="mono" style="font-size:10px;color:var(--text-dim);">${(r.times||[]).slice(0,14).map(esc).join(', ')}</div>
+        </div>`).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
+async function decodeStride() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Decoding the time field in every record…'; status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/decode',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop(),stride:2828,offset:0})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">${d.valid_times} times</span>`
+      +` from ${d.records_read} records — ${d.with_fractional_seconds} sub-second, ${Math.round(d.ascending_ratio*100)}% ascending`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      +`<p class="small" style="margin:10px 0 4px;font-weight:600;">First times</p>`
+      +`<div class="mono" style="font-size:11px;color:var(--accent-bright);">${(d.first_times||[]).map(esc).join(', ')}</div>`
+      +`<p class="small dim" style="margin-top:8px;">zero: ${d.zero_value} · out of range: ${d.out_of_range}</p>`;
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
+async function diffRecords() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Comparing records to map the fields…'; status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/diff',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">record = ${d.stride} bytes</span> — ${d.varying_field_count} varying fields across ${d.records_compared} records`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      +(d.varying_fields||[]).slice(0,40).map(v=>`
+        <div style="padding:5px 8px;background:rgba(255,255,255,0.03);border-radius:4px;margin-bottom:4px;">
+          <span class="mono" style="font-size:11px;color:var(--accent-bright);">+${v.offset}</span>
+          <span class="small dim"> ${esc(v.note||'')}</span>
+          <div class="mono" style="font-size:10px;">${esc(JSON.stringify(v.as_times||v.as_floats||v.values).slice(0,150))}</div>
+        </div>`).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
+async function analyseRecords() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  const asset = document.getElementById('pak-asset').value.trim();
+  if (!asset) { alert('Put the DataTrack asset path in the box first.'); return; }
+  status.textContent = 'Analysing record layout…';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/analyse', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ asset_name: asset.split('/').pop() })
+    })).json();
+    lastPakResult = d;
+    if (d.error) { status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`; return; }
+    status.innerHTML = `<span style="color:var(--status-green);">${d.time_count} times</span>`
+      + ` — ${d.records_with_paired_time} paired, ${d.records_with_single_time} single`
+      + (d.records_with_absent_markers ? `, ${d.records_with_absent_markers} with absent-time markers` : '');
+    status.style.color = '';
+    out.innerHTML = `<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      + '<p class="small" style="margin:10px 0 4px;font-weight:600;">Most common gaps between times</p>'
+      + `<div class="mono" style="font-size:11px;">${(d.common_gaps||[]).map(g=>`${g.gap_bytes}b ×${g.count}`).join(' · ')}</div>`
+      + '<p class="small" style="margin:10px 0 4px;font-weight:600;">First records</p>'
+      + (d.records||[]).slice(0,4).map(r=>`
+          <div style="padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:6px;">
+            <div class="mono" style="font-size:11px;color:var(--accent-bright);">@${r.offset} ${esc(r.time)}</div>
+            <div class="small dim">paired: ${(r.nearby_times||[]).map(t=>esc(t.time)+' @'+t.offset_delta).join(', ')||'none'}</div>
+          </div>`).join('')
+      + '<p class="small dim">Use Copy results and send the JSON — the hex windows are in there.</p>';
+  } catch (e) { status.textContent='Error: '+e.message; status.style.color='var(--status-red)'; }
+}
+
+async function scanTimes() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  const asset = document.getElementById('pak-asset').value.trim();
+  if (!asset) { alert('Put the asset path in the box first (the one you inspected).'); return; }
+  status.textContent = 'Scanning the .uexp for time values… (26 MB takes a moment)';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/timespans', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ asset_name: asset.split('/').pop() })
+    })).json();
+    lastPakResult = d;
+    if (d.error) { status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`; return; }
+    status.innerHTML = `<span style="color:var(--status-green);">${d.hit_count} plausible times</span>`
+      + ` in ${d.run_count} clusters`;
+    status.style.color = '';
+    out.innerHTML = `<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      + (d.largest_runs || []).map(r => `
+        <p class="small" style="margin:10px 0 4px;font-weight:600;">Cluster of ${r.count} at offset ${r.start_offset}</p>
+        <div class="mono" style="font-size:11px;color:var(--accent-bright);">${r.times.map(esc).join(', ')}</div>`).join('');
+  } catch (e) { status.textContent = 'Error: ' + e.message; status.style.color='var(--status-red)'; }
+}
+
+async function clearExtracted() {
+  const status = document.getElementById('pak-status');
+  try {
+    const d = await (await fetch('/api/paks/clear_extracted', {method:'POST'})).json();
+    if (d.error) { status.textContent = 'Error: ' + d.error; status.style.color = 'var(--status-red)'; return; }
+    status.innerHTML = d.existed
+      ? `<span style="color:var(--status-green);">Cleared</span> <span class="mono" style="font-size:11px;">${esc(d.path)}</span>`
+      : '<span class="dim">Nothing to clear - the folder does not exist yet.</span>';
+    status.style.color = '';
+  } catch (e) { status.textContent = 'Error: ' + e.message; }
+}
+
+async function inspectAsset() {
+  const status = document.getElementById('pak-status');
+  const out = document.getElementById('pak-results');
+  const pakPath = document.getElementById('pak-path').value.trim();
+  const assetPath = document.getElementById('pak-asset').value.trim();
+  if (!pakPath || !assetPath) { alert('Need both the pak path and the asset path.'); return; }
+  status.textContent = 'Extracting and inspecting… (unpacking can take a while on a big pak)';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const d = await (await fetch('/api/paks/inspect', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ pak_path: pakPath, asset_path: assetPath })
+    })).json();
+    lastPakResult = d;
+    if (d.error) {
+      status.innerHTML = `<span style="color:var(--status-red);">${esc(d.error)}</span>`;
+      out.innerHTML = d.stderr ? `<pre class="mono" style="font-size:11px;white-space:pre-wrap;">${esc(d.stderr)}</pre>` : '';
+      return;
+    }
+    status.innerHTML = `<span style="color:var(--status-green);">${d.string_count} readable strings</span>`
+      + ` — ${d.time_count} times, ${d.headcode_count} service codes`;
+    status.style.color = '';
+    const list = (title, arr) => arr && arr.length
+      ? `<p class="small" style="margin:10px 0 4px;font-weight:600;">${title}</p>`
+        + `<div class="mono" style="font-size:11px;color:var(--accent-bright);word-break:break-all;">${arr.map(esc).join(', ')}</div>`
+      : '';
+    out.innerHTML = `<p class="small" style="padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;">${esc(d.verdict)}</p>`
+      + list('Object types (the schema)', d.object_types)
+      + list('Enums', d.enums)
+      + list('Stations', d.stations)
+      + list('Times', d.times_found)
+      + list('Service codes', d.headcodes_found)
+      + list('Timetable-ish field names', d.interesting_properties)
+      + list('First strings in the file', (d.sample_strings || []).slice(0, 120));
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+function copyPakResults() {
+  if (!lastPakResult) { alert('Run a check or listing first.'); return; }
+  const text = JSON.stringify(lastPakResult, null, 2);
+  navigator.clipboard.writeText(text).then(
+    () => alert('Copied — paste it into the chat.'),
+    () => { const w = window.open('', '_blank');
+            if (w) w.document.write('<pre>' + esc(text) + '</pre>'); else console.log(text); }
+  );
+}
+
+let lastGameFileScan = null;
+
+async function scanGameFiles() {
+  const status = document.getElementById('gf-status');
+  const out = document.getElementById('gf-results');
+  const manual = document.getElementById('gf-path').value.trim();
+  status.textContent = 'Scanning the filesystem…';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const opts = manual
+      ? { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ path: manual }) }
+      : {};
+    const res = await fetch('/api/gamefiles/scan', opts);
+    const data = await res.json();
+    lastGameFileScan = data;
+
+    if (data.error) {
+      status.textContent = 'Error: ' + data.error;
+      status.style.color = 'var(--status-red)';
+      return;
+    }
+
+    const inv = data.inventory;
+    if (!inv) {
+      status.textContent = data.conclusion || 'No install found.';
+      status.style.color = 'var(--status-amber)';
+      if ((data.installs_found || []).length) {
+        out.innerHTML = '<p class="small dim">Folders found:</p>'
+          + data.installs_found.map(i =>
+              `<div class="mono" style="font-size:12px;">${esc(i.install_dir)}</div>`).join('');
+      }
+      return;
+    }
+
+    status.textContent = `Scanned ${esc(data.scanned.game_name)} — ${inv.total_files} files`
+      + (inv.truncated ? ' (capped)' : '');
+    status.style.color = 'var(--status-green)';
+
+    const extRows = (inv.by_extension || []).slice(0, 12).map(e =>
+      `<tr><td class="mono" style="padding:3px 10px 3px 0;">${esc(e.ext)}</td>
+           <td style="padding:3px 10px 3px 0;color:var(--text-dim);">${esc(e.description)}</td>
+           <td style="padding:3px 10px 3px 0;text-align:right;">${e.count}</td>
+           <td style="padding:3px 0;text-align:right;">${e.mb} MB</td></tr>`).join('');
+
+    const hints = inv.timetable_name_matches || [];
+    const hintRows = hints.length
+      ? hints.slice(0, 25).map(h =>
+          `<div class="mono" style="font-size:11px;color:var(--accent-bright);">${esc(h.path)}
+             <span style="color:var(--text-dim);">(${(h.bytes/1048576).toFixed(1)} MB)</span></div>`).join('')
+      : '<p class="small dim">No filenames matched timetable keywords — likely means it\'s packed inside the .pak archives rather than sitting in named files.</p>';
+
+    out.innerHTML = `
+      <div class="mono" style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">${esc(inv.content_dir)}</div>
+      <p class="small" style="margin:0 0 6px;font-weight:600;">File types present</p>
+      <table style="font-size:12px;border-collapse:collapse;margin-bottom:14px;">${extRows}</table>
+      <p class="small" style="margin:0 0 6px;font-weight:600;">Files whose names suggest timetable data</p>
+      ${hintRows}`;
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+function copyGameFileResults() {
+  if (!lastGameFileScan) { alert('Run the scan first.'); return; }
+  const text = JSON.stringify(lastGameFileScan, null, 2);
+  navigator.clipboard.writeText(text).then(
+    () => alert('Copied — paste it into the chat.'),
+    () => { const w = window.open('', '_blank');
+            if (w) w.document.write('<pre>' + esc(text) + '</pre>'); else console.log(text); }
+  );
+}
+
+let lastTimetableScan = null;
+
+async function scanTimetable() {
+  const status = document.getElementById('tt-status');
+  const out = document.getElementById('tt-results');
+  status.textContent = 'Scanning… (probing ~50 paths, this can take a few seconds)';
+  status.style.color = 'var(--text-dim)';
+  out.innerHTML = '';
+  try {
+    const res = await fetch('/api/timetable/scan');
+    const data = await res.json();
+    lastTimetableScan = data;
+    if (data.error) {
+      status.textContent = 'Error: ' + data.error;
+      status.style.color = 'var(--status-red)';
+      return;
+    }
+    const hits = data.responding || [];
+    status.textContent = data.summary || '';
+    status.style.color = hits.length ? 'var(--status-green)' : 'var(--status-amber)';
+
+    if (!hits.length) {
+      out.innerHTML = `<p class="small dim">Nothing responded. That either means this build doesn't
+        expose timetable data at these paths, or the scan ran outside an active timetabled service.
+        Copy the results and send them over — the full list of what was tried is in there, and the
+        next step would be widening the path list or checking the full endpoint scan below.</p>`;
+      return;
+    }
+
+    out.innerHTML = '<p class="small" style="color:var(--status-green);margin-bottom:8px;">'
+      + 'Paths that returned data:</p>'
+      + hits.map(h => `
+        <div style="padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:6px;margin-bottom:6px;">
+          <div class="mono" style="font-size:12px;color:var(--accent-bright);">${esc(h.path)}</div>
+          <pre class="mono" style="font-size:11px;margin:6px 0 0;white-space:pre-wrap;word-break:break-all;color:var(--text-dim);">${esc(JSON.stringify(h.values, null, 2))}</pre>
+        </div>`).join('');
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--status-red)';
+  }
+}
+
+function copyTimetableResults() {
+  if (!lastTimetableScan) {
+    alert('Run the scan first.');
+    return;
+  }
+  const text = JSON.stringify(lastTimetableScan, null, 2);
+  navigator.clipboard.writeText(text).then(
+    () => alert('Copied. Paste it into the chat and we can work out what to do with whatever came back.'),
+    () => {
+      // Clipboard can be blocked depending on how the page is being served -
+      // fall back to showing the text so it can still be copied by hand.
+      const w = window.open('', '_blank');
+      if (w) { w.document.write('<pre>' + esc(text) + '</pre>'); }
+      else { alert('Could not copy automatically. The results are in the browser console.'); console.log(text); }
+    }
+  );
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function scanSafety() {
+  const status = document.getElementById('safety-status');
+  const results = document.getElementById('safety-results');
+  const btn = document.getElementById('enable-btn');
+  status.textContent = 'Scanning CurrentDrivableActor… (needs an active driving session)';
+  results.innerHTML = '';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/safety/scan');
+    const data = await res.json();
+    lastSafetyResults = data;
+    let html = '';
+    const nodes = data.safety_nodes || [];
+    if (!nodes.length) {
+      html = `<p class="small dim">No safety-related nodes found. This may mean your loco doesn't expose safety systems via the API.</p>`;
+      status.textContent = 'Scan complete: 0 paths found.';
+    } else {
+      const responding = nodes.filter(n => n.responded);
+      html = `<p class="small" style="color:var(--accent-bright);margin-bottom:8px;">${responding.length} of ${nodes.length} paths responded with readable data:</p>`;
+      html += `<div style="font-size:12px;font-family:var(--mono);max-height:300px;overflow-y:auto;border:1px solid var(--hairline);border-radius:4px;padding:8px;background:rgba(0,0,0,0.2);">`;
+      for (const n of nodes) {
+        const dot = n.responded ? `<span style="color:var(--status-green)">●</span>` : `<span style="color:var(--text-dim)">○</span>`;
+        const val = n.value ? ` = ${JSON.stringify(n.value).substring(0,60)}` : '';
+        html += `<div style="padding:2px 0;border-bottom:1px solid var(--hairline);">${dot} ${n.path}${val}</div>`;
+      }
+      html += `</div>`;
+      status.textContent = `Scan complete: ${responding.length} path(s) can be read.`;
+      btn.disabled = responding.length === 0;
+    }
+    results.innerHTML = html;
+  } catch(e) {
+    status.textContent = 'Scan failed: ' + e;
+  }
+}
+
+async function enableSafety() {
+  if (!lastSafetyResults || !lastSafetyResults.safety_nodes) { alert('Run scan first'); return; }
+  const paths = lastSafetyResults.safety_nodes.filter(n => n.responded).map(n => n.path);
+  if (!paths.length) { alert('No paths responded'); return; }
+  const status = document.getElementById('safety-status');
+  status.textContent = 'Enabling…';
+  try {
+    const res = await fetch('/api/safety/enable_all', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ paths })
+    });
+    const data = await res.json();
+    const ok = (data.outcomes || []).filter(o => o.ok).length;
+    const failed = (data.outcomes || []).filter(o => !o.ok && !o.skipped).length;
+    const skipped = (data.outcomes || []).filter(o => o.skipped).length;
+    status.textContent = `Enabled ${ok} systems, ${failed} failed, ${skipped} skipped.`;
+  } catch(e) {
+    status.textContent = 'Enable failed: ' + e;
+  }
+}
+
+async function testManualPaths() {
+  const textarea = document.getElementById('manual-paths');
+  const paths = textarea.value.trim().split('\n').filter(p => p.trim()).map(p => p.trim());
+  if (!paths.length) { alert('Enter at least one path'); return; }
+  const results = document.getElementById('manual-results');
+  results.innerHTML = 'Testing…';
+  try {
+    const res = await fetch('/api/safety/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ test_paths: paths })
+    });
+    const data = await res.json();
+    const responding = (data.test_results || []).filter(r => r.responded);
+    let html = `<p class="small" style="color:var(--accent-bright);">Tested ${paths.length}, ${responding.length} responded:</p>`;
+    html += `<div style="font-size:12px;font-family:var(--mono);">`;
+    for (const r of (data.test_results || [])) {
+      const dot = r.responded ? `<span style="color:var(--status-green)">●</span>` : `<span style="color:var(--text-dim)">○</span>`;
+      const val = r.value ? ` = ${JSON.stringify(r.value).substring(0,50)}` : '';
+      html += `<div style="padding:2px 0;">${dot} ${r.path} [${r.status}]${val}</div>`;
+    }
+    html += `</div>`;
+    if (responding.length > 0) {
+      const pathsJson = JSON.stringify(responding.map(r => r.path));
+      html += `<button class="btn primary" style="margin-top:8px;" onclick="enableTestPathsHelper('${pathsJson.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">Enable these ${responding.length} path(s)</button>`;
+    }
+    results.innerHTML = html;
+  } catch(e) {
+    results.innerHTML = 'Test failed: ' + e;
+  }
+}
+
+async function enableTestPathsHelper(pathsJson) {
+  const paths = JSON.parse(pathsJson);
+  if (!paths.length) return;
+  const results = document.getElementById('manual-results');
+  results.innerHTML = 'Enabling…';
+  try {
+    const res = await fetch('/api/safety/enable_all', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ paths })
+    });
+    const data = await res.json();
+    const ok = (data.outcomes || []).filter(o => o.ok).length;
+    results.innerHTML = `<p class="small" style="color:var(--status-green);">Enabled ${ok}/${paths.length} systems.</p>`;
+  } catch(e) {
+    results.innerHTML = 'Enable failed: ' + e;
+  }
+}
+
+async function fetchRaw() {
+  const path = document.getElementById('raw-path').value.trim() || 'list';
+  const dump = document.getElementById('raw-dump');
+  dump.value = 'Fetching…';
+  try {
+    const res = await fetch('/api/proxy/raw/' + path);
+    const data = await res.json();
+    dump.value = JSON.stringify(data, null, 2);
+  } catch (e) {
+    dump.value = 'Failed: ' + e;
+  }
+}
+
+async function runScan(deep) {
+  const status = document.getElementById('scan-status');
+  const dump = document.getElementById('dump');
+  status.textContent = deep ? 'Scanning and sampling values — this can take a little while…' : 'Scanning…';
+  dump.value = '';
+  try {
+    const url = '/api/discover/text' + (deep ? '?deep=true' : '');
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.text) {
+      dump.value = data.text;
+      status.textContent = 'Done. ' + dump.value.split('\n').length + ' lines.';
+    } else {
+      status.textContent = 'Scan failed: ' + (data.detail ? JSON.stringify(data.detail) : data.error);
+    }
+  } catch (e) {
+    status.textContent = 'Scan failed: ' + e;
+  }
+}
+
+async function copyDump() {
+  const dump = document.getElementById('dump');
+  if (!dump.value) { alert('Run a scan first.'); return; }
+  await navigator.clipboard.writeText(dump.value);
+  document.getElementById('scan-status').textContent = 'Copied to clipboard.';
+}
+
+async function saveDump() {
+  const dump = document.getElementById('dump');
+  if (!dump.value) { alert('Run a scan first.'); return; }
+  const res = await fetch('/api/discover/save', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: dump.value})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    document.getElementById('scan-status').textContent = 'Saved to ' + data.path;
+  } else {
+    document.getElementById('scan-status').textContent = 'Save failed.';
+  }
+}
+
+function exitApp() {
+  fetch('/api/shutdown', {method: 'POST'});
+}
+</script>
+<script src="/pages/nav.js"></script>
+</body>
+</html>

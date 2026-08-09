@@ -1,0 +1,5 @@
+[
+  {"key": "speed", "name": "Speed gauge", "dev_only": false, "core": true, "note": "Always on - core panel"},
+  {"key": "air_pressure", "name": "Air pressure gauge", "dev_only": false, "core": false, "note": "Not built yet"},
+  {"key": "ammeter", "name": "Ammeter", "dev_only": false, "core": false, "note": "Not built yet"}
+]
