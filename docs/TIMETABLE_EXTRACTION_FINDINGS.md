@@ -733,3 +733,66 @@ and writing journeys into `timetables.db`.
 If it comes back false, the 707 stride is coincidence and the template
 offsets go in the bin - which is exactly what this endpoint exists to find
 out before anything is built on them.
+
+## The anchor bug that invalidated the v7.41.0 decode run (fixed v7.48.1)
+
+The `decode_fixed` run on the real Leven layer reported `confirmed: false`,
+stride 196 and 19% coverage - and none of that meant what it said, because it
+had anchored on the wrong name.
+
+It picked **`EnumProperty` (61,036 references)** over **`Class` (12,207)**.
+Scoring was count x evenness, so five times the references beat slightly
+better spacing. Every downstream number was then framed against a record
+boundary that does not exist: "19% coverage" was 11,371 typed hits over
+61,036 fake records, which against the real 12,207 is **93%**.
+
+### What that run DID establish
+
+Reading the type at a fixed offset reproduced all six whole-file counts
+exactly:
+
+```
+ActionPoint 4/4 · GoVia 27/27 · MultiOccupancy 36/36
+ReversePoint 908/908 · StopPoint 5198/5198 · TrackSectionEntry 5198/5198
+```
+
+`within_upper_bound: true`, `rank_agrees: true`. Six exact matches including
+ActionPoint at 4, where being off by one record would show. The type field is
+real and sits at a fixed offset; only the record boundary was wrong.
+
+### The fix: score anchors by MODAL GAP DOMINANCE
+
+What fraction of the gaps between a name's references are the same value. A
+name written once per record repeats at exactly one interval and scores near
+1. A name written five times per record has gaps alternating short and long,
+so no single gap dominates. Coincidence scatters.
+
+On the fixture: `Class` 0.958, `Package` 0.942, `Guid` 0.939 - all real
+boundaries - against `StopPoint` 0.384 (a subset of records) and `P2K51`
+0.125 (noise).
+
+Two earlier schemes were each fooled, and the fixture now reproduces both:
+  - **count x evenness** picked the five-per-record impostor;
+  - **requiring an identical shared count** then latched onto a coincidental
+    cluster of four rare names, because with noisy data the real anchors'
+    counts get perturbed by a few coincidental hits and stop matching
+    exactly. On the real file sixteen names DID land on exactly 12,207, which
+    is why that scheme looked sound.
+
+Gap dominance needs neither an exact count match nor a low reference count.
+
+### Also fixed: two copies of the selection logic
+
+`record_template()` and `decode_fixed_records()` each had their own anchor
+picker. They drifted, and disagreed: the template picked a name with 25
+coincidental references while the decoder picked the true boundary, so the
+two functions were describing different records of the same file. Both now
+call `_pick_anchor()`.
+
+### Next step
+
+Re-run **Recover record template** and then **Decode fixed records** on the
+real Leven layer. Expect anchor `Class`, 12,207 records, stride 707, and a
+type distribution at or below 5198/5198/908/36/27/4. If `confirmed` comes
+back true this time, the record layout is settled and the remaining work is
+reading the time fields and writing journeys into `timetables.db`.

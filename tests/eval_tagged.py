@@ -159,28 +159,45 @@ def run_probe():
 def run_template_recovery():
     """Layout recovery by repetition must find the real field order, and must
     NOT be fooled by a tiny name table where most 'FName references' are
-    coincidences. The noise-heavy control is the point: on the real Leven
-    layer 29% of all byte offsets read as a valid FName."""
+    coincidences. On the real Leven layer 29% of all byte offsets read as a
+    valid FName.
+
+    Two anchors are checked, because they answer different questions:
+      - the DEFAULT anchor should be a genuine record boundary, and the
+        template then holds the fields present on EVERY record;
+      - anchoring explicitly on StopPoint should surface the fields carried
+        only by stops. Those appear on 48 of 220 records, so they correctly
+        fall below the share threshold under the default anchor - that is
+        the template working, not failing.
+    """
     print("\n--- record template recovered by repetition ---")
     base, truth = T.main("/tmp/eval_tmpl")
-    r = pak_tools.record_template(base + ".uexp")
     ok = True
-    if "error" in r:
-        print("  FAIL:", r["error"]); return False
-    fields = [n for _rel, n in r["stable_fields"]]
-    print(f"  anchor           {r['anchor']}")
-    print(f"  record count     {r['record_count']}")
-    print(f"  stable fields    {fields[:6]}")
+
+    auto = pak_tools.record_template(base + ".uexp")
+    if "error" in auto:
+        print("  FAIL:", auto["error"]); return False
+    fields = [n for _rel, n in auto["stable_fields"]]
+    print(f"  default anchor   {auto['anchor']} ({auto['record_count']} records)")
+    print(f"  every-record fields {fields[:5]}")
+    if "DataType" not in fields:
+        print("  FAIL: missed DataType, which is on every record"); ok = False
+    if auto["record_count"] != len(truth):
+        print(f"  FAIL: record count {auto['record_count']} != {len(truth)}"); ok = False
+
+    stops = pak_tools.record_template(
+        base + ".uexp", anchor="ETimetableTrackDataType::StopPoint")
+    sfields = [n for _rel, n in stops["stable_fields"]]
+    print(f"  anchored on StopPoint: {sfields[:6]}")
     for want in ("InstructionIndex", "Distance", "NetworkRibbonLocation"):
-        if want not in fields:
-            print(f"  FAIL: missed {want}"); ok = False
-    # order must match how the fixture writes them
+        if want not in sfields:
+            print(f"  FAIL: missed {want} on stop records"); ok = False
     try:
-        if not (fields.index("InstructionIndex") < fields.index("Distance")
-                < fields.index("NetworkRibbonLocation")):
+        if not (sfields.index("InstructionIndex") < sfields.index("Distance")
+                < sfields.index("NetworkRibbonLocation")):
             print("  FAIL: field order wrong"); ok = False
         else:
-            print("  field order matches the fixture")
+            print("  stop-record field order matches the fixture")
     except ValueError:
         ok = False
 
@@ -234,9 +251,48 @@ def run_fixed_stride():
     return ok
 
 
+def run_anchor_impostor():
+    """The anchor must be the record BOUNDARY, not whichever name is
+    referenced most.
+
+    Reproduces the real failure: on the Leven layer `EnumProperty` had 61,036
+    references against `Class`'s 12,207, and count-based scoring picked it -
+    giving a stride of 196 instead of 707 and framing every downstream
+    measurement against a record boundary that does not exist. The fixture
+    writes a name five times per record to recreate exactly that.
+    """
+    from collections import Counter
+    print("\n--- anchor selection with a high-count impostor ---")
+    base, truth, stride, type_at, time_at = T.main_fixed("/tmp/eval_anchor")
+    ok = True
+
+    tpl = pak_tools.record_template(base + ".uexp")
+    dec = pak_tools.decode_fixed_records(base + ".uexp")
+    print(f"  template anchor {tpl['anchor']}  stride {tpl['record_size_median']}")
+    print(f"  decode   anchor {dec['anchor']}  stride {dec['stride']}  type +{dec['type_field_offset']}")
+
+    if tpl["anchor"] == "EnumProperty" or dec["anchor"] == "EnumProperty":
+        print("  FAIL: picked the five-per-record impostor"); ok = False
+    if tpl["anchor"] != dec["anchor"]:
+        print("  FAIL: the two functions disagree on the record boundary"); ok = False
+    for label, got in (("template", tpl["record_size_median"]), ("decode", dec["stride"])):
+        if got != stride:
+            print(f"  FAIL: {label} stride {got} != {stride}"); ok = False
+    if dec["type_field_offset"] != type_at:
+        print(f"  FAIL: type offset {dec['type_field_offset']} != {type_at}"); ok = False
+    if dec["type_distribution"] != dict(Counter(truth).most_common()):
+        print("  FAIL: type distribution does not match ground truth"); ok = False
+    else:
+        print("  type distribution matches ground truth exactly")
+    if not dec["confirmed"]:
+        print("  FAIL: refused a correct decode"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
-               run_template_recovery(), run_fixed_stride()]
+               run_template_recovery(), run_fixed_stride(),
+               run_anchor_impostor()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

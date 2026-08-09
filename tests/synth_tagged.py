@@ -328,6 +328,13 @@ def build_uexp_fixed(path, rng, stride=707, n_records=600):
                 rec += struct.pack("<i", rng.randint(1 << 20, (1 << 31) - 1))
         rec = bytearray(rec[:stride])
         kind = rng.choice(pool)
+        # An impostor: a name referenced FIVE times per record, mimicking
+        # EnumProperty on the real Leven layer (61,036 refs against Class's
+        # 12,207). It is evenly spaced too, so only the shared-count cluster
+        # tells it apart from a genuine record boundary.
+        for k in range(5):
+            off = 400 + k * 12
+            rec[off:off + 8] = _fname("EnumProperty")
         # The real layer has SIXTEEN names referenced exactly once per
         # record, which is how the record count was found at all. One
         # anchor is not a faithful fixture.

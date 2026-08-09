@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.48.0**
+**App version at end of session: 7.48.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,26 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.48.1 - anchor selection fixed (timetable work)
+
+The v7.41.0 decode run's "confirmed: false, stride 196, 19% coverage" was
+meaningless: it anchored on `EnumProperty` (61,036 refs) instead of `Class`
+(12,207), because scoring was count x evenness and 5x the references beat
+better spacing. The 19% was 11,371 hits over 61,036 fake records - against the
+real 12,207 that is 93%.
+
+That run DID prove the type field is real: all six whole-file counts
+reproduced exactly from a fixed offset (4/27/36/908/5198/5198), including
+ActionPoint at 4.
+
+Anchors are now scored by MODAL GAP DOMINANCE - what fraction of gaps between
+a name's references are identical. Once-per-record names score ~0.95;
+five-per-record impostors and coincidences do not. Also consolidated two
+duplicate anchor pickers that had drifted and disagreed.
+
+**Next: Recover record template, then Decode fixed records, on the real Leven
+layer.** Expect anchor Class, 12,207 records, stride 707.
 
 ## What changed in v7.48.0 - Download button fixed, and it was never a backup
 

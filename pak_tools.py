@@ -2254,54 +2254,70 @@ def _name_ref_offsets(data, names, width=4):
     return out
 
 
+def _gap_profile(offsets):
+    """(modal gap, share of gaps equal to it). The share is the measurement
+    that matters: a real record boundary repeats at ONE gap."""
+    gaps = [b - a for a, b in zip(offsets, offsets[1:])]
+    if not gaps:
+        return None, 0.0
+    modal = Counter(gaps).most_common(1)[0][0]
+    share = sum(1 for g in gaps if abs(g - modal) <= 1) / len(gaps)
+    return modal, share
+
+
 def _pick_anchor(names, refs, min_count=8):
     """Chooses a once-per-record name to anchor on, and returns
     (anchor, modal_count, cluster).
 
-    Two signals, and neither is required on its own:
+    Scored on MODAL GAP DOMINANCE - what fraction of the gaps between a
+    name's references are the same. A name written once per record repeats
+    at exactly one interval, so it scores near 1. Everything else fails:
+      - a name written FIVE times per record has gaps alternating short and
+        long, so no single gap dominates;
+      - a name that is mostly coincidence has gaps scattered everywhere.
 
-      A COUNT SHARED BY MANY NAMES. One name hitting a number proves
-      nothing; sixteen names all referenced exactly 12,207 times, as on the
-      real Leven layer, is structure and gives the record count directly.
+    Two earlier scoring schemes were both fooled, and the fixture now
+    reproduces each:
+      - count x evenness let `EnumProperty` win on the real Leven layer with
+        61,036 references against `Class`'s 12,207. Five times the
+        references beat slightly better spacing, the stride came out 196
+        instead of 707, and everything downstream was framed against a
+        record boundary that does not exist.
+      - restricting to names sharing an identical count then latched onto a
+        coincidental cluster of four rare names, because with noisy data the
+        real anchors' counts get perturbed and stop matching exactly.
 
-      EVEN SPACING. A once-per-record field recurs at a near-constant
-      interval. A name that clusters is riding on coincidence, and with an
-      88-entry table there is a great deal of coincidence to ride on.
-
-    An earlier version REQUIRED the cluster, and so picked a name with 26
-    scattered references over one with 600 evenly spaced ones the moment no
-    two names happened to share a count. Scoring both together, weighted by
-    how many references there are, is robust either way.
+    Gap dominance needs neither an exact count match nor a low reference
+    count, so it survives both.
     """
     counts = {names[i]: len(v) for i, v in refs.items() if names[i] != "None"}
+    idx_of = {n: i for i, n in enumerate(names)}
+
     by_count = defaultdict(list)
     for nm, c in counts.items():
         if c >= min_count:
             by_count[c].append(nm)
     if not by_count:
         return None, None, []
-    modal = max(by_count, key=lambda c: (len(by_count[c]), c))
-    cluster = sorted(by_count[modal])
+    modal_count = max(by_count, key=lambda c: (len(by_count[c]), c))
+    cluster = sorted(by_count[modal_count])
 
-    idx_of = {n: i for i, n in enumerate(names)}
+    scored = []
+    for nm, c in counts.items():
+        if c < min_count:
+            continue
+        gap, share = _gap_profile(refs[idx_of[nm]])
+        if not gap or gap < 32:
+            continue
+        scored.append((share, c, nm, gap))
+    if not scored:
+        return None, modal_count, cluster
 
-    def evenness(nm):
-        offs = refs[idx_of[nm]]
-        gaps = [b - a for a, b in zip(offs, offs[1:])]
-        if not gaps:
-            return 0.0
-        mean = sum(gaps) / len(gaps)
-        dev = sum(abs(g - mean) for g in gaps) / len(gaps) / max(mean, 1)
-        return max(0.0, 1.0 - dev)
-
-    def score(nm):
-        # Membership of the shared-count cluster is a bonus, not a gate.
-        bonus = 2.0 if nm in cluster else 1.0
-        return counts[nm] * evenness(nm) * bonus
-
-    best = max((nm for nm in counts if counts[nm] >= min_count), key=score,
-               default=None)
-    return best, modal, cluster
+    # Highest gap dominance; among equals, the most references, since that
+    # is the finest boundary consistent with the evidence.
+    scored.sort(key=lambda t: (round(t[0], 3), t[1]), reverse=True)
+    best = scored[0]
+    return best[2], counts[best[2]], cluster
 
 
 def record_template(path, anchor=None, samples=24, min_share=0.6, width=4):
@@ -2344,29 +2360,17 @@ def record_template(path, anchor=None, samples=24, min_share=0.6, width=4):
     if not counts:
         return {"error": "no_name_references", "path": path}
 
-    # The record count is the count shared by the MOST names. One name
-    # hitting a number proves nothing; sixteen agreeing on it is structure.
-    by_count = defaultdict(list)
-    for nm, c in counts.items():
-        if c >= 8:
-            by_count[c].append(nm)
-    if not by_count:
+    # One selection routine, shared with decode_fixed_records(). These were
+    # duplicated, drifted apart, and disagreed: the template picked a name
+    # with 25 coincidental references while the decoder correctly picked the
+    # record boundary, so the two functions described different records of
+    # the same file.
+    picked, modal_count, cluster = _pick_anchor(names, refs)
+    if picked is None:
         return {"error": "no_repeated_names", "path": path, "counts": counts}
-    modal_count = max(by_count, key=lambda c: (len(by_count[c]), c))
-    cluster = sorted(by_count[modal_count])
-
     if anchor is None:
-        # Prefer the most evenly spaced member - the one least likely to be
-        # riding on coincidence.
-        def spread(nm):
-            idx = next(i for i, n in enumerate(names) if n == nm)
-            offs = refs[idx]
-            gaps = [b - a for a, b in zip(offs, offs[1:])]
-            if not gaps:
-                return float("inf")
-            mean = sum(gaps) / len(gaps)
-            return sum(abs(g - mean) for g in gaps) / len(gaps) / max(mean, 1)
-        anchor = min(cluster, key=spread) if cluster else None
+        anchor = picked
+
     if anchor not in counts:
         return {"error": "anchor_not_referenced", "anchor": anchor,
                 "candidates": cluster}
