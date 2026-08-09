@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.46.0**
+**App version at end of session: 7.47.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,29 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.47.0 - overlay fixed with REAL tile measurements
+
+Five attempts failed because all were validated against synthetic tiles. Two
+real tiles from the user overturned three assumptions at once:
+
+1. **Tiles are 512px, not 256.** The canvas drew them into a 256 canvas and
+   Leaflet scaled back up - that resample was the soft, doubled edges all
+   along, not the colour maths. Now TILE_PIXELS=512 backing / TILE_CSS_PX=256
+   footprint.
+2. **ORM tiles contain labels** (#0000ff text, #ffffff halos) which the
+   whole-tile recolour turned into the dark smears seen in every screenshot.
+   recolourPixels() now classifies per pixel - orange family = track,
+   everything else dropped.
+3. **REFERENCE_LINE_LUM was nearly right** (real 146.5 vs guessed 137), so it
+   was NOT the cause of the near-black output. Don't blame it if darkness
+   returns.
+
+Measured on the real tile with livery #1e467d: running line -> #1e467d
+exactly, tunnel -> #2b64b3 (lighter), 0 label pixels surviving.
+
+crossOrigin retries without CORS on failure (tile still draws, blend path
+used). Stencil dilation 1px -> 4px at 512, measured from real line widths.
 
 ## What changed in v7.46.0 - overlay fixed; the luminance floor was the cause
 

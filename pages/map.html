@@ -76,15 +76,15 @@ let hideHistoric = true;   // mask out disused/abandoned lines
 // the tiles probably contain, and it is still wrong, so this exists to find
 // out WHICH stage is responsible instead of guessing a third time. Cycles:
 //   full       - recoloured and stencilled (normal)
-//   no-floor   - as full, but WITHOUT the luminance floor and without the
-//                lightness lift on the livery colour
+//   blend      - the old blend-mode recolour, kept as a fallback comparison
+//                for the case where tiles cannot be read pixel by pixel
 //   no-stencil - recoloured, gauge stencil skipped
 //   raw        - OpenRailwayMap's tiles untouched, no recolour, no stencil
 // If 'raw' already looks soft and washed out, nothing in compositeRailTile
 // is to blame and the cause is upstream - tile scaling, zoom, or the style
 // itself. If 'raw' is crisp, the stage that breaks it is whichever one
 // changes the picture.
-const OVERLAY_MODES = ['full', 'no-floor', 'no-stencil', 'raw'];
+const OVERLAY_MODES = ['full', 'no-stencil', 'blend', 'raw'];
 let overlayMode = 'full';
 const railTiles = new Set();
 
@@ -99,9 +99,22 @@ const RAIL_STYLE_URL = 'https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y
 // pixel; gauge only decides which pixels survive.
 const RAIL_MASK_URL = 'https://{s}.tiles.openrailwaymap.org/gauge/{z}/{x}/{y}.png';
 const RAIL_SUBDOMAINS = ['a', 'b', 'c'];
-// Gauge draws thinner than infrastructure, so masking straight would shave
-// the casings off every line. The stencil is dilated first.
-const MASK_DILATE_PX = 1;
+// OpenRailwayMap serves 512px images for standard 256-unit tile coordinates -
+// they are 2x/retina tiles. MEASURED off a real tile. The previous code
+// assumed 256 and drew the artwork into a 256 canvas, downsampling it, after
+// which Leaflet scaled it back up for display. That resample down-then-up is
+// what made every line soft and doubled-looking, through every version of the
+// colour code. It was never the tinting.
+const TILE_PIXELS = 512;      // backing store, the tile's real pixel size
+const TILE_CSS_PX = 256;      // ground footprint, matching the OSM basemap
+
+// Gauge geometry is not infrastructure geometry, so the stencil must be grown
+// before it can clip. MEASURED on real tiles: infrastructure lines run
+// 12-13px, gauge runs 8-14px, so the worst case needs about 3px of growth per
+// side. 4 gives margin - over-dilating a stencil is cheap, because the
+// failure mode is a historic line surviving rather than a live line being cut
+// in half.
+const MASK_DILATE_PX = 4;     // at TILE_PIXELS resolution
 // Darkest shade any line may reach once recoloured, or null for none.
 // Deliberately null: see the note in compositeRailTile. Set it to something
 // like '#4d4d4d' only if the overlay is ever run over a DARK basemap, where
@@ -111,11 +124,16 @@ const LUMINANCE_FLOOR = null;
 // dark basemap; see tintColour().
 const LIFT_DARK_LIVERIES = false;
 
-// Luminance of an ordinary OpenRailwayMap running line, measured off a real
-// tile (its mid-tone orange). Everything else in the style sits above or
-// below this - tunnels lighter, casings darker - so it is the anchor point
-// the livery colour is matched to.
-const REFERENCE_LINE_LUM = 137;
+// Luminance of an ordinary OpenRailwayMap running line. MEASURED off a real
+// tile: the running line is #ff8100 (lum 146.5) and a tunnel section is
+// #ffcb97 (lum 210.3). Everything else in the style sits around these, so
+// this is the anchor the livery colour is matched to.
+//
+// The previous value of 137 was invented off a synthetic tile. It happened
+// to be close, which is worth knowing: the near-black overlay was NOT caused
+// by this being wrong, so if the output is still too dark after the tile-size
+// fix, look elsewhere before touching this number.
+const REFERENCE_LINE_LUM = 147;
 
 function luminanceOf(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
@@ -171,6 +189,61 @@ function animateMarkerAndMap(newLat, newLon) {
 //   source-in       paints a flat colour through whatever alpha survives,
 //                   giving the EXACT livery colour while thickness,
 //                   anti-aliasing and tunnel translucency all carry through.
+// Recolours by inspecting pixels, which is far better than any blend can be -
+// but only works if the tile is readable. Returns false if the canvas is
+// tainted, so the caller can fall back.
+//
+// The reason this is worth doing: an OpenRailwayMap tile is not just track.
+// It also carries LABELS - blue text on white halos ("Down North", "1435") -
+// and those are opaque pixels sitting right on top of the lines. Any
+// whole-tile recolour turns them into dark smears, which is what has been
+// appearing along the tracks in every screenshot. Classifying pixels lets
+// the labels be dropped entirely: the basemap underneath already has its own
+// labels, so ORM's are redundant here anyway.
+//
+// Track pixels are the orange family (MEASURED: running line #ff8100, tunnel
+// #ffcb97). Labels are blue, white or black, none of which have that
+// red-over-blue bias, so the two separate cleanly.
+function recolourPixels(canvas, base, colour) {
+  const S = canvas.width;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0, 0, S, S);
+  ctx.drawImage(base, 0, 0, S, S);
+
+  let img;
+  try {
+    img = ctx.getImageData(0, 0, S, S);
+  } catch (e) {
+    return false;      // cross-origin tile without CORS headers
+  }
+
+  const m = /^#?([0-9a-f]{6})$/i.exec((colour || '').trim());
+  if (!m) return true;
+  const n = parseInt(m[1], 16);
+  const lr = (n >> 16) & 255, lg = (n >> 8) & 255, lb = n & 255;
+
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (!a) continue;
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (!(r > 120 && r >= g && g >= b && r - b > 40)) {
+      d[i + 3] = 0;    // not track - a label, a halo, or its text
+      continue;
+    }
+    // Keep this pixel's brightness RELATIVE to an ordinary running line, so
+    // a tunnel stays paler and anything darker stays darker, then express
+    // that in the livery colour.
+    const t = (0.2126 * r + 0.7152 * g + 0.0722 * b) / REFERENCE_LINE_LUM;
+    d[i] = Math.min(255, lr * t);
+    d[i + 1] = Math.min(255, lg * t);
+    d[i + 2] = Math.min(255, lb * t);
+  }
+  ctx.putImageData(img, 0, 0);
+  return true;
+}
+
 function compositeRailTile(canvas, base, mask, colour) {
   const ctx = canvas.getContext('2d');
   const S = canvas.width;
@@ -181,6 +254,16 @@ function compositeRailTile(canvas, base, mask, colour) {
 
   if (overlayMode === 'raw') return;   // untouched, for comparison
   if (overlayMode === 'no-stencil') mask = null;
+
+  // Preferred path: per-pixel, which also strips ORM's labels.
+  if (colour && overlayMode !== 'blend' && recolourPixels(canvas, base, colour)) {
+    if (mask) {
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(buildStencil(mask, S), 0, 0);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    return;
+  }
 
   if (colour) {
     // The luminance floor was a MISTAKE and is off by default.
@@ -294,8 +377,13 @@ function makeRailLayer() {
   const TintedRailLayer = L.GridLayer.extend({
   createTile: function (coords, done) {
     const canvas = L.DomUtil.create('canvas');
-    const S = this.getTileSize().x;
+    // Backing store at the tile's real pixel size, displayed at its ground
+    // footprint. Leaflet would otherwise size the canvas to the footprint and
+    // the 512px artwork would be squeezed into 256 before being scaled back
+    // up on screen.
+    const S = TILE_PIXELS;
     canvas.width = canvas.height = S;
+    canvas.style.width = canvas.style.height = TILE_CSS_PX + 'px';
 
     const sub = RAIL_SUBDOMAINS[Math.abs(coords.x + coords.y) % RAIL_SUBDOMAINS.length];
     const url = (tpl) => tpl.replace('{s}', sub).replace('{z}', coords.z)
@@ -318,12 +406,22 @@ function makeRailLayer() {
       railTiles.add(canvas);
       done(null, canvas);
     };
+    // crossOrigin='anonymous' is what makes the tile's pixels READABLE, which
+    // the per-pixel recolour needs. But if the server does not send CORS
+    // headers, that same attribute makes the image fail to load at all - so
+    // a failure retries WITHOUT it. The tile then draws normally and is
+    // merely unreadable, and compositeRailTile falls back to the blend path.
+    // Losing the label-stripping is a far better outcome than losing the
+    // overlay.
     const load = (u, key) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => { canvas[key] = img; settle(); };
-      img.onerror = () => settle();
-      img.src = u;
+      const attempt = (useCors) => {
+        const img = new Image();
+        if (useCors) img.crossOrigin = 'anonymous';
+        img.onload = () => { canvas[key] = img; settle(); };
+        img.onerror = () => { if (useCors) attempt(false); else settle(); };
+        img.src = u;
+      };
+      attempt(true);
     };
 
     load(url(RAIL_STYLE_URL), '_base');

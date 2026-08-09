@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.46.0
+## Current version: 7.47.0
 
 ## Shipped features (working, tested against real data)
 
@@ -1312,3 +1312,73 @@ Known limitation: a dark, highly saturated livery comes out slightly muted
 with the artwork's own colour. Mid-tone liveries land almost exactly (red
 #e05a4e -> #cc594f). Making this exact would mean giving up the tunnel
 shading, which is the thing that was asked for.
+
+
+## FIXED in v7.47.0 - rail overlay, using REAL tiles for the first time
+
+Five attempts at this failed because every one was validated against
+synthetic tiles I invented to look like a screenshot. Two real tiles from the
+user's machine overturned three assumptions immediately.
+
+### 1. The tiles are 512px, not 256 - this was the soft edges
+
+MEASURED: OpenRailwayMap serves **512x512** images for standard 256-unit tile
+coordinates (2x/retina tiles). The canvas layer created 256px tiles and drew
+the artwork in with `drawImage(base, 0, 0, 256, 256)`, downsampling it, after
+which Leaflet scaled it back up for display.
+
+**That resample down-then-up is what made every line soft and doubled-looking
+in every version.** It had nothing to do with the colour maths, which is why
+three rounds of colour fixes changed nothing. The canvas backing store is now
+`TILE_PIXELS` (512) with a `TILE_CSS_PX` (256) footprint - 1:1 with the
+artwork.
+
+### 2. ORM tiles contain LABELS, and we were recolouring them into blobs
+
+MEASURED on the real tile: `#0000ff` blue label text (6778 px) and `#ffffff`
+halos (3016 px), against `#ff8100` running lines (2687 px) and `#ffcb97`
+tunnel sections (2694 px). The labels are opaque pixels sitting on the track.
+
+Any whole-tile recolour turned them into dark smears - and those smears are
+exactly the patches that had been appearing along the tracks in every
+screenshot.
+
+`recolourPixels()` now classifies pixel by pixel. Track is the orange family
+(`r > 120 && r >= g >= b && r - b > 40`); labels are blue, white or black and
+have no such red-over-blue bias, so they separate cleanly and are dropped
+entirely. The basemap already has its own labels.
+
+Result on the real tile, livery `#1e467d`:
+
+```
+running line #ff8100  ->  #1e467d   EXACTLY the livery colour
+tunnel       #ffcb97  ->  #2b64b3   lighter, as ORM draws it
+label/halo pixels surviving: 0
+```
+
+### 3. The reference luminance was NOT the problem
+
+MEASURED 146.5 against the invented 137 - a 7% difference, nowhere near
+enough to explain the near-black overlay of v7.46.0. Worth recording,
+because it means the near-black output came from the blend pipeline, not the
+constant, and the constant should not be blamed if darkness returns.
+
+### Fallbacks
+
+  - `crossOrigin='anonymous'` is what makes pixels readable, but it also
+    makes the image fail to load outright if the server sends no CORS
+    headers. A failed load now retries WITHOUT it: the tile still draws, is
+    merely unreadable, and `compositeRailTile` falls back to the blend path.
+    Losing label-stripping beats losing the overlay.
+  - `recolourPixels()` returns false on a tainted canvas, and the old
+    blend-mode path is kept as mode `blend` for comparison.
+  - Stencil dilation raised 1px -> 4px, at 512 resolution. MEASURED:
+    infrastructure lines 12-13px, gauge 8-14px, so ~3px per side is needed.
+
+### A warning worth keeping
+
+A test combining tiles 40848 and 40846 - DIFFERENT coordinates - produced a
+completely blank overlay, because the stencil did not overlap the artwork.
+In the app both are fetched at the same coords so this cannot happen, but it
+shows the failure mode: if gauge and standard ever disagree, the overlay
+vanishes rather than degrading. That is what the `no-stencil` mode is for.
