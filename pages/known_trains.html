@@ -340,22 +340,40 @@ function exitApp() {
 }
 
 async function downloadData() {
+  // Two routes, on purpose. The server-side backup is the one that is
+  // trusted: a Blob + a.click() download does NOTHING inside pywebview,
+  // which has no download handler, so this button worked in a browser and
+  // appeared completely dead in the desktop app. Writing the file server
+  // side always works and can be verified and named.
+  let msg = '';
   try {
-    const res = await fetch('/api/known_trains/list');
-    const data = await res.json();
-    const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+    const r = await fetch('/api/known_trains/backup', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      const counts = Object.entries(d.table_counts || {})
+        .filter(([, n]) => n).map(([t, n]) => `${t}: ${n}`).join('\n  ');
+      msg = `Backup saved (${d.total_rows} rows, verified):\n\n`
+          + `  ${d.json_path}\n  ${d.db_path || '(database copy failed)'}\n\n  ${counts}`;
+    } else {
+      msg = 'Backup could not be verified after writing. Do NOT wipe anything yet.\n\n'
+          + JSON.stringify(d, null, 2);
+    }
+  } catch (e) {
+    alert('Backup FAILED: ' + e.message + '\n\nDo not wipe anything.');
+    return;
+  }
+  // Also offer it as a normal download, which works when the page is open
+  // in a real browser or on the tablet. Failure here is harmless - the file
+  // on disk is the actual backup.
+  try {
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `known-trains-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.href = '/api/known_trains/export';
+    a.download = '';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    alert('Download failed: ' + e.message);
-  }
+  } catch (e) { /* the disk copy above is what counts */ }
+  alert(msg);
 }
 
 async function uploadData(event) {

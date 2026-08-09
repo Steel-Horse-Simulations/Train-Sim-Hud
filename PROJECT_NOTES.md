@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.47.0
+## Current version: 7.48.0
 
 ## Shipped features (working, tested against real data)
 
@@ -1382,3 +1382,54 @@ completely blank overlay, because the stencil did not overlap the artwork.
 In the app both are fetched at the same coords so this cannot happen, but it
 shows the failure mode: if gauge and standard ever disagree, the overlay
 vanishes rather than degrading. That is what the `no-stencil` mode is for.
+
+
+## FIXED in v7.48.0 - Known Trains Download did nothing, and was not a backup
+
+Two faults. The dead button was the reported one; the second was worse.
+
+### The button did nothing in the desktop app
+
+It built a Blob in JavaScript and called `a.click()`. **pywebview has no
+download handler**, so that silently does nothing - the button worked in a
+browser and appeared dead in the app.
+
+Now `/api/known_trains/backup` writes the file SERVER SIDE, into
+`<app>/backups/`, and reports the exact path. A file the server wrote and can
+name is verifiable; a browser download can be blocked, ignored by the
+embedded webview, or land somewhere unfindable. It also reads the file back
+and compares row counts before reporting success, rather than assuming the
+write worked because nothing threw. A normal download is still offered via
+`/api/known_trains/export` for when the page is open in a real browser.
+
+### It was backing up the WRONG DATA
+
+The old code saved `/api/known_trains/list` - the DRIVEN-ONLY, RESOLVED view.
+Demonstrated on a seeded database: **the old backup captured 1 of 3 trains.**
+It silently omitted every catalog row with `times_seen = 0`, every hidden
+row, and all variants, subclasses, families, operators, liveries and aliases.
+Restoring from it after a wipe would have destroyed most of the data while
+looking like a successful backup.
+
+`export_everything()` now dumps every table by walking `sqlite_master`, so a
+table added later is included without anyone remembering. A copy of the
+SQLite file itself is saved alongside the JSON - restoring by putting that
+file back needs no import code to be correct, which makes it the most
+reliable recovery available.
+
+### Restore, and a bug the test caught
+
+`import_everything()` restores a dump; merges by default, `?replace=1`
+overwrites.
+
+The first restore test brought back trains and operators but **zero
+liveries**. Tables were restoring in alphabetical order, which puts
+`operator_liveries` before `operators`, so every livery failed its foreign
+key and was dropped - silently. Import now runs parents-first, and records
+the reason for every skipped row. A restore that quietly drops rows is worse
+than one that fails outright, because it looks like it worked.
+
+Verified end to end: seed, back up, DELETE every table, restore, compare.
+Row counts identical across all tables, 0 skipped, 0 errors. The button was
+then clicked in a real browser and the two files confirmed on disk (6 KB JSON
++ 96 KB .db).

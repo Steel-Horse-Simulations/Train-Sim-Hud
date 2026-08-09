@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import sys
 import threading
@@ -42,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.47.0"
+APP_VERSION = "7.48.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -2853,6 +2854,83 @@ def operators_update_livery(livery_id):
 def operators_delete_livery(livery_id):
     train_classes_db.delete_livery(livery_id)
     return jsonify({"ok": True})
+
+
+@app.route("/api/known_trains/export", methods=["GET"])
+def known_trains_export():
+    """A complete backup of the Known Trains database as a downloadable file.
+
+    Sent with Content-Disposition so a browser saves it directly. The old
+    button built a Blob in JavaScript and called a.click(), which does
+    nothing at all inside pywebview - there is no download handler - so the
+    button appeared dead in the desktop app while working in a browser."""
+    data = train_classes_db.export_everything()
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    resp = app.response_class(json.dumps(data, indent=2),
+                              mimetype="application/json")
+    resp.headers["Content-Disposition"] = (
+        f'attachment; filename="known-trains-backup-{stamp}.json"')
+    return resp
+
+
+@app.route("/api/known_trains/backup", methods=["POST"])
+def known_trains_backup():
+    """Writes the backup to disk on this machine and returns where it went.
+
+    This is the one that matters in the desktop app. A browser download can
+    be blocked, silently ignored by the embedded webview, or land somewhere
+    the user cannot find; a file the server has written and can name is
+    verifiable. A copy of the SQLite file itself goes alongside the JSON,
+    because restoring by putting that file back is the most reliable
+    recovery there is - it needs no import code to be correct."""
+    folder = os.path.join(APP_DIR, "backups")
+    os.makedirs(folder, exist_ok=True)
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    data = train_classes_db.export_everything()
+
+    json_path = os.path.join(folder, f"known-trains-backup-{stamp}.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+    db_path = None
+    try:
+        src = train_classes_db.DB_PATH
+        if os.path.isfile(src):
+            db_path = os.path.join(folder, f"train_classes-{stamp}.db")
+            shutil.copy2(src, db_path)
+    except Exception as e:
+        log_call("backup db copy", 0.0, f"failed: {e}")
+
+    # Read the file back and count it, rather than reporting success just
+    # because no exception was raised.
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            check = json.load(f)
+        verified = check.get("total_rows")
+    except Exception:
+        verified = None
+
+    return jsonify({
+        "ok": verified is not None and verified == data["total_rows"],
+        "json_path": json_path,
+        "db_path": db_path,
+        "folder": folder,
+        "table_counts": data["table_counts"],
+        "total_rows": data["total_rows"],
+        "verified_rows": verified,
+    })
+
+
+@app.route("/api/known_trains/import", methods=["POST"])
+def known_trains_import():
+    """Restores a backup. Merges by default; ?replace=1 overwrites."""
+    body = request.get_json(force=True, silent=True) or {}
+    replace = request.args.get("replace") in ("1", "true", "yes")
+    try:
+        result = train_classes_db.import_everything(body, replace=replace)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "replace": replace, **result})
 
 
 @app.route("/api/known_trains/list", methods=["GET"])

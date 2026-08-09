@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.47.0**
+**App version at end of session: 7.48.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,30 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.48.0 - Download button fixed, and it was never a backup
+
+Reported as "the download button does nothing". It built a Blob and called
+a.click(), which pywebview ignores entirely - worked in a browser, dead in
+the app.
+
+MUCH more serious: it was saving /api/known_trains/list, the DRIVEN-ONLY
+resolved view. On a seeded DB the old backup captured 1 of 3 trains, omitting
+never-driven catalog rows, hidden rows, variants, subclasses, families,
+operators, liveries and aliases. Restoring it after a wipe would have lost
+most of the data while appearing to succeed.
+
+Now: /api/known_trains/backup writes JSON + a copy of the .db server-side to
+<app>/backups/, verifies by reading back and comparing row counts, and reports
+the paths. /api/known_trains/export serves a normal download for browsers.
+/api/known_trains/import restores (merge by default, ?replace=1 to overwrite).
+
+Import must run PARENTS FIRST - the first test restored trains and operators
+but zero liveries, because alphabetical order put operator_liveries before
+operators and every FK failed silently. Skipped rows now record their reason.
+
+Verified: seed -> backup -> DELETE all tables -> restore -> identical counts,
+0 skipped.
 
 ## What changed in v7.47.0 - overlay fixed with REAL tile measurements
 

@@ -4,7 +4,7 @@ TSW HUD — NEW CHAT HANDOFF SPECIFICATION
 This document is a complete specification for recreating the TSW Hud project in
 a new chat session. Read every section before writing a single line of code.
 
-VERSION THIS SPEC DESCRIBES: 7.47.0
+VERSION THIS SPEC DESCRIBES: 7.48.0
 
 ================================================================================
 SECTION 1: WHAT THIS PROJECT IS
@@ -514,6 +514,12 @@ KNOWN TRAINS v2 (driven-only view of the catalog):
   PATCH  /api/known_trains/classes/<id>  → edit (EDITABLE_FIELDS only)
   POST   /api/known_trains/restore       → restore a wiped/hidden entry
   POST   /api/known_trains/wipe_all      → clear the whole Known Trains set
+  GET    /api/known_trains/export        → full DB as a download
+  POST   /api/known_trains/backup        → write JSON + .db copy to
+                                           <app>/backups/, verified
+  POST   /api/known_trains/import        → restore (?replace=1 to overwrite).
+                                           MUST insert parents before children
+                                           or foreign keys drop rows silently
 
 CLASSES (API path still says "groups" — the PAGE is called Classes):
   GET    /api/known_trains/groups       → {groups:[...]}
