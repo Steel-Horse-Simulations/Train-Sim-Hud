@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.45.2
+## Current version: 7.46.0
 
 ## Shipped features (working, tested against real data)
 
@@ -1253,3 +1253,62 @@ Reading it:
 The stencil tile is now always fetched even when not applied, so switching
 modes never triggers a refetch - otherwise a comparison would be comparing
 two different downloads.
+
+
+## FIXED in v7.46.0 - overlay washed out; the luminance floor was the cause
+
+Three screenshots from the diagnostic modes settled it, after two fixes that
+were reasoned rather than measured:
+
+  - **raw was crisp** - clean solid lines, matching openrailwaymap.org. So
+    the tiles, the zoom and the tile scaling were never the problem, and the
+    "probably upstream resampling" guess was wrong too.
+  - **full and no-stencil were near identical**, both washed out. That
+    cleared the gauge stencil.
+
+Which left the recolour, and specifically the `lighten` pass to
+`LUMINANCE_FLOOR` added in v7.45.1. It floors EVERY pixel at 30% grey before
+the `color` blend. ORM's lines are mid-tone, so this washed them out and
+flattened the contrast between line and casing; the `color` blend then
+faithfully preserved that flattened luminosity, so the output was pale
+whatever colour went in. **A dark ScotRail navy arriving as light blue was
+this, not the tint.**
+
+It was also solving a problem that does not exist here: the basemap is the
+LIGHT OSM style, where near-black casings read perfectly well. The floor was
+protecting against a dark basemap that is not in use.
+
+### Changes
+
+  - `LUMINANCE_FLOOR` now `null`. Kept as a constant with a note, for the day
+    someone runs this over a dark basemap.
+  - `LIFT_DARK_LIVERIES` now `false`. `tintColour()`'s 50% lightness floor was
+    the other half of the same mistake - it turned #1e467d into a mid blue
+    before compositing even started. Over a light basemap a dark navy is more
+    legible AND more correct.
+  - **Lightness re-anchoring.** `color` alone keeps ORM's luminosity, so a
+    running line came out at ORM's mid-tone in the right hue - #6d95cc for a
+    #1e467d navy. Hue right, lightness wrong. The tile is now scaled by
+    (livery luminance / `REFERENCE_LINE_LUM`), which puts an ordinary running
+    line ON the livery colour while keeping every ORM shade relative to it.
+    `multiply` with a grey darkens, `screen` lightens, so either direction
+    works.
+  - Fourth diagnostic mode `no-floor`, which skips both the floor and the
+    lift, so this can be compared directly against `raw` in future.
+
+### Measured against a tile matched to the user's raw screenshot
+
+```
+luminance error vs raw:   floor+lift 17%   ->   no floor 5%
+ScotRail #1e467d requested:
+  running line -> #344862 (lum 70, requested lum 63)
+  tunnel       -> #54647a (lum 98)  LIGHTER than running - preserved
+  casing       -> #021125 (lum 15)  DARKER  than running - preserved
+red #e05a4e requested -> running line #cc594f
+```
+
+Known limitation: a dark, highly saturated livery comes out slightly muted
+(#344862 against a requested #1e467d) because the `color` blend mixes hue
+with the artwork's own colour. Mid-tone liveries land almost exactly (red
+#e05a4e -> #cc594f). Making this exact would mean giving up the tunnel
+shading, which is the thing that was asked for.

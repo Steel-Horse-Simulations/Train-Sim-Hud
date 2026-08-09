@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.45.2**
+**App version at end of session: 7.46.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,28 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.46.0 - overlay fixed; the luminance floor was the cause
+
+Diagnostic screenshots: raw CRISP, full and no-stencil both washed out and
+near identical. So not the tiles, not the zoom, not the stencil - the
+recolour, and specifically v7.45.1's `lighten` pass to LUMINANCE_FLOOR, which
+floored every pixel at 30% grey before the `color` blend. That washed the
+mid-tone lines out and flattened line-vs-casing contrast, and the pale result
+was then faithfully preserved. It also explained the "colour has gone light"
+report - the livery was fine, the luminosity under it was destroyed.
+
+LUMINANCE_FLOOR -> null, LIFT_DARK_LIVERIES -> false (tintColour's 50%
+lightness floor was the other half of the same mistake). Both kept as
+constants for a dark basemap someday.
+
+Added lightness RE-ANCHORING: scale by (livery luminance /
+REFERENCE_LINE_LUM) so an ordinary running line lands ON the livery colour
+while tunnels stay lighter and casings darker.
+
+Measured: luminance error vs raw 17% -> 5%. Tunnel and casing ordering
+preserved. Caveat: dark saturated liveries come out slightly muted
+(#1e467d -> #344862); mid-tone ones land almost exactly.
 
 ## What changed in v7.45.2 - overlay diagnostic
 

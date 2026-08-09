@@ -76,13 +76,15 @@ let hideHistoric = true;   // mask out disused/abandoned lines
 // the tiles probably contain, and it is still wrong, so this exists to find
 // out WHICH stage is responsible instead of guessing a third time. Cycles:
 //   full       - recoloured and stencilled (normal)
+//   no-floor   - as full, but WITHOUT the luminance floor and without the
+//                lightness lift on the livery colour
 //   no-stencil - recoloured, gauge stencil skipped
 //   raw        - OpenRailwayMap's tiles untouched, no recolour, no stencil
 // If 'raw' already looks soft and washed out, nothing in compositeRailTile
 // is to blame and the cause is upstream - tile scaling, zoom, or the style
 // itself. If 'raw' is crisp, the stage that breaks it is whichever one
 // changes the picture.
-const OVERLAY_MODES = ['full', 'no-stencil', 'raw'];
+const OVERLAY_MODES = ['full', 'no-floor', 'no-stencil', 'raw'];
 let overlayMode = 'full';
 const railTiles = new Set();
 
@@ -100,9 +102,39 @@ const RAIL_SUBDOMAINS = ['a', 'b', 'c'];
 // Gauge draws thinner than infrastructure, so masking straight would shave
 // the casings off every line. The stencil is dilated first.
 const MASK_DILATE_PX = 1;
-// Darkest shade any line is allowed to reach once recoloured. See the
-// 'lighten' pass in compositeRailTile.
-const LUMINANCE_FLOOR = '#4d4d4d';
+// Darkest shade any line may reach once recoloured, or null for none.
+// Deliberately null: see the note in compositeRailTile. Set it to something
+// like '#4d4d4d' only if the overlay is ever run over a DARK basemap, where
+// ORM's near-black casings would otherwise disappear.
+const LUMINANCE_FLOOR = null;
+// Whether to lighten dark livery colours before tinting. Only useful over a
+// dark basemap; see tintColour().
+const LIFT_DARK_LIVERIES = false;
+
+// Luminance of an ordinary OpenRailwayMap running line, measured off a real
+// tile (its mid-tone orange). Everything else in the style sits above or
+// below this - tunnels lighter, casings darker - so it is the anchor point
+// the livery colour is matched to.
+const REFERENCE_LINE_LUM = 137;
+
+function luminanceOf(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return REFERENCE_LINE_LUM;
+  const n = parseInt(m[1], 16);
+  return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+}
+
+// How much to scale ORM's lightness so an ordinary line lands on the
+// livery's lightness.
+function lightnessRatio(colour) {
+  return luminanceOf(colour) / REFERENCE_LINE_LUM;
+}
+
+function greyOf(f) {
+  const v = Math.max(0, Math.min(255, Math.round(f * 255)));
+  const h = v.toString(16).padStart(2, '0');
+  return '#' + h + h + h;
+}
 
 function animateMarkerAndMap(newLat, newLon) {
   const start = marker.getLatLng();
@@ -151,15 +183,23 @@ function compositeRailTile(canvas, base, mask, colour) {
   if (overlayMode === 'no-stencil') mask = null;
 
   if (colour) {
-    // Lift the darkest shades before recolouring. OpenRailwayMap draws some
-    // casings almost black, which reads fine on its own white basemap and
-    // disappears entirely on ours. 'lighten' takes the per-channel maximum,
-    // so this raises the floor without touching anything already brighter -
-    // the tunnel/open-track distinction, which is what actually matters
-    // here, survives intact.
-    ctx.globalCompositeOperation = 'lighten';
-    ctx.fillStyle = LUMINANCE_FLOOR;
-    ctx.fillRect(0, 0, S, S);
+    // The luminance floor was a MISTAKE and is off by default.
+    //
+    // It filled the tile with #4d4d4d under 'lighten' (per-channel maximum)
+    // to stop near-black casings vanishing on a dark basemap. But ORM's
+    // lines are mid-tone, so flooring every pixel at 30% grey washed them
+    // out and flattened the contrast between line and casing - and since
+    // the 'color' blend below preserves whatever luminosity it is given,
+    // the output came out pale no matter which livery colour was fed in.
+    // A dark ScotRail navy arriving as light blue was this, not the tint.
+    //
+    // It was also solving a problem that does not exist here: the basemap
+    // is the light OSM style, where dark casings read perfectly well.
+    if (LUMINANCE_FLOOR && overlayMode !== 'no-floor') {
+      ctx.globalCompositeOperation = 'lighten';
+      ctx.fillStyle = LUMINANCE_FLOOR;
+      ctx.fillRect(0, 0, S, S);
+    }
 
     // 'color' blend takes hue and saturation from the fill and keeps the
     // LUMINOSITY of the artwork underneath.
@@ -176,6 +216,30 @@ function compositeRailTile(canvas, base, mask, colour) {
     ctx.globalCompositeOperation = 'color';
     ctx.fillStyle = colour;
     ctx.fillRect(0, 0, S, S);
+
+    // Re-anchor the lightness onto the LIVERY's own lightness.
+    //
+    // 'color' alone keeps ORM's luminosity, so a running line came out at
+    // ORM's mid-tone in the right hue - #6d95cc for a #1e467d ScotRail
+    // navy. Hue right, lightness wrong, which is the "colour has gone very
+    // light" report.
+    //
+    // Scaling the whole tile by (livery lightness / ORM's typical line
+    // lightness) puts an ordinary running line at the livery colour while
+    // keeping every shade ORM uses RELATIVE to it - tunnels still lighter,
+    // casings still darker. 'multiply' with a grey darkens by that ratio,
+    // 'screen' with a grey lightens, so either direction is reachable.
+    const k = lightnessRatio(colour);
+    if (k < 0.98 || k > 1.02) {
+      if (k < 1) {
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillStyle = greyOf(k);
+      } else {
+        ctx.globalCompositeOperation = 'screen';
+        ctx.fillStyle = greyOf((k - 1) / Math.max(0.001, (255 / REFERENCE_LINE_LUM) - 1));
+      }
+      ctx.fillRect(0, 0, S, S);
+    }
 
     // A blend mode still composites source-over, so the fill just covered
     // the transparent parts of the tile too. Re-clip to the artwork's own
@@ -327,22 +391,23 @@ function initMap(lat, lon) {
 function tintColour(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
   if (!m) return null;
+  if (!LIFT_DARK_LIVERIES || overlayMode === 'no-floor') return '#' + m[1];
+
+  // Only for a dark basemap. Over the light OSM style this is actively
+  // wrong: it turned ScotRail's #1e467d into a washed-out mid blue, when
+  // the dark navy was both more legible AND the actual livery colour. The
+  // 'color' blend keeps the artwork's luminosity anyway, so a dark livery
+  // does not come out as a dark smudge - it comes out as ORM's own line
+  // shading in that hue.
   const n = parseInt(m[1], 16);
-  let r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2;
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const l = (Math.max(r, g, b) + Math.min(r, g, b)) / 2;
   if (l >= 0.5) return '#' + m[1];
   const k = 0.5 / Math.max(l, 0.001);
   const up = (v) => Math.min(255, Math.round(v * 255 * k));
   return '#' + [up(r), up(g), up(b)].map(v => v.toString(16).padStart(2, '0')).join('');
 }
 
-// Applies the livery colour to both the rail lines and the player dot.
-// Called on every livery change AND after the map initialises, because
-// neither the tile layer nor the marker exists before that - an earlier
-// version returned early when the overlay was off, so the filter kept a
-// stale colour and the dot was never coloured at all if the first livery
-// poll landed before the map was built.
 function applyLiveryColour() {
   const c = tintColour(liveryColour);
 
