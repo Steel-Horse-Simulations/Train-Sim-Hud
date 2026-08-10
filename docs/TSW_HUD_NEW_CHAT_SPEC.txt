@@ -4,7 +4,7 @@ TSW HUD — NEW CHAT HANDOFF SPECIFICATION
 This document is a complete specification for recreating the TSW Hud project in
 a new chat session. Read every section before writing a single line of code.
 
-VERSION THIS SPEC DESCRIBES: 7.53.0
+VERSION THIS SPEC DESCRIBES: 7.54.0
 
 ================================================================================
 SECTION 1: WHAT THIS PROJECT IS
@@ -566,7 +566,8 @@ PAK / GAME FILES (Discovery page, offline timetable extraction):
   GET  /api/paks/repak           → is repak available
   POST /api/paks/{list,timetables,scan_all,inspect,timespans,analyse,diff,
                   decode,services,stops,records,probe,template,decode_fixed,
-                  timetable,service_field,call_field,unpack,clear_extracted}
+                  timetable,service_field,call_field,inspect_field,
+                  unpack,clear_extracted}
   /api/paks/records  → reads a DataTrack as Unreal TAGGED PROPERTIES, field
                        by field by name. Works on tagged assets; the real
                        Leven layer is NOT one - see the findings doc.

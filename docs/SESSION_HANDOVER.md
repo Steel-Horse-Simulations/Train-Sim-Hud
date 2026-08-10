@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.53.0**
+**App version at end of session: 7.54.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,32 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.54.0 - +692 has 14 distinct values; 13 stations
+
+find_call_field found no 507-run field, but the CANDIDATE LIST holds the
+find: **+692-695, 429 runs, 14 DISTINCT values**, 12.12 records per run. A
+Leven-Edinburgh service calls at 13 stations. Random fields do not land on
+14, and 12.12 matches the ~10.7 records-per-call ratio.
+
+429 vs 485 is explainable: runs sharing a value merge, including across the
+38 service boundaries (485 - 38 = 447).
+
+Also: +696-698 has 40 runs / 2 distinct - almost exactly the 39 services,
+likely a direction flag.
+
+Bug found: expected_calls was sent as 39x13 = 507, true total 485 (two
+Glenrothes shuttles have 2 calls). A 4.5% overshoot against a 5% tolerance
+could reject a correct field. Widened to 15%; candidates always returned.
+
+`inspect_field()` / `/api/paks/inspect_field` / **Inspect field** + a Field
+offset box dumps a field's VALUES per service. Statistics say 14 states; only
+the sequence says whether they are stations - it must visit 13 per service,
+reverse on return workings, and show 2 on the shuttles.
+
+**Next: Inspect field, offset 692, services 39.** 13 distinct per service in
+order = station identity AND station order, which is what stop labelling
+needs.
 
 ## What changed in v7.53.0 - time clustering does NOT give station calls
 

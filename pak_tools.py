@@ -3237,7 +3237,13 @@ def find_call_field(path, expected_calls=None, stride=None, anchor=None,
     else:
         candidates.sort(key=lambda c: abs(c["records_per_run"] - 10.7))
     best = candidates[0] if candidates else None
-    if expected_calls and best and abs(best["runs"] - expected_calls) > max(2, expected_calls * 0.05):
+    # A 5% tolerance was too tight for a target that is itself approximate:
+    # services x calls overstates the total, because not every service calls
+    # everywhere. On Leven that gave 507 against a true 485. Widened to 15%,
+    # and the candidate list is returned regardless so a near miss can still
+    # be judged on its DISTINCT count - which is the informative number for
+    # a station field.
+    if expected_calls and best and abs(best["runs"] - expected_calls) > max(4, expected_calls * 0.15):
         best = None
 
     return {
@@ -3257,5 +3263,126 @@ def find_call_field(path, expected_calls=None, stride=None, anchor=None,
             "delimited inside these records at all - the grouping may live in "
             "the RibbonLocation values, or one call may simply BE one record "
             "with the ~10.7 ratio meaning something else entirely."
+        ),
+    }
+
+
+def inspect_field(path, offset, stride=None, anchor=None, width=4,
+                  stop_points_only=True, services=6, expected_services=None):
+    """Dumps one field's actual VALUES, per service, so a candidate can be
+    checked against the real route rather than judged on statistics.
+
+    This is how a promising candidate gets confirmed or killed. The call
+    field search on the real Leven layer turned up +692 with 429 runs and
+    only **14 distinct values** across the whole file - and a
+    Leven-Edinburgh service calls at 13 stations. Fourteen is not a number
+    a random field lands on. But run counts cannot tell a station
+    identifier from any other field with 14 states; the VALUE SEQUENCE can,
+    because a station id must:
+
+      - visit ~13 distinct values within one service, not repeat two,
+      - run in the OPPOSITE order on a return working, and
+      - show only 2 distinct values on the Glenrothes shuttles.
+
+    None of those can be faked by a coincidence, and all of them are
+    visible by simply printing the sequence.
+    """
+    layout = decode_fixed_records(path, stride=stride, anchor=anchor, width=width)
+    if "error" in layout:
+        return layout
+    stride = layout["stride"]
+    with open(path, "rb") as f:
+        data = f.read()
+    with open(layout["uasset"], "rb") as f:
+        names = _read_fname_strings(f.read())
+    type_idx = {i: n.split("::")[-1] for i, n in enumerate(names)
+                if "::" in n and n.split("::")[-1] in _TRACK_DATA_TYPES}
+    refs = _name_ref_offsets(data, names, width)
+    name_to_idx = {n: i for i, n in enumerate(names)}
+    starts = _stride_chain(refs[name_to_idx[layout["anchor"]]], stride)
+
+    fmt = "<ii" if width == 4 else "<qq"
+    step = 2 * width
+    tdelta = layout["type_field_offset"]
+    time_delta = None
+    for d, _sh, _dist in layout.get("time_field_offsets", [])[:1]:
+        time_delta = d
+
+    rows = []
+    for s in starts:
+        o = s + tdelta
+        kind = None
+        if o + step <= len(data):
+            idx, num = struct.unpack_from(fmt, data, o)
+            if num == 0:
+                kind = type_idx.get(idx)
+        if stop_points_only and kind != "StopPoint":
+            continue
+        if s + offset + 4 > len(data):
+            continue
+        val = struct.unpack_from("<i", data, s + offset)[0]
+        secs = None
+        if time_delta is not None and s + time_delta + 8 <= len(data):
+            (raw,) = struct.unpack_from("<q", data, s + time_delta)
+            if 0 < raw < TICKS_PER_DAY:
+                secs = raw / TICKS_PER_SECOND
+        rows.append({"offset": s, "value": val, "type": kind, "seconds": secs})
+
+    if not rows:
+        return {"error": "no_records_matched", "offset": offset}
+
+    # Collapse consecutive identical values into runs - one run per call, if
+    # this really is a per-call field.
+    runs = []
+    for r in rows:
+        if runs and runs[-1]["value"] == r["value"]:
+            runs[-1]["records"] += 1
+            runs[-1]["last_seconds"] = r["seconds"]
+        else:
+            runs.append({"value": r["value"], "records": 1,
+                         "first_seconds": r["seconds"], "last_seconds": r["seconds"]})
+
+    # Split the run list into services using the same boundary ranking as
+    # the extraction, so the per-service sequences line up with it.
+    groups = [runs]
+    if expected_services and len(runs) > expected_services:
+        seq = [r for r in runs if r["first_seconds"] is not None]
+        transitions = []
+        for i, (a, b) in enumerate(zip(seq, seq[1:])):
+            delta = (b["first_seconds"] or 0) - (a["last_seconds"] or 0)
+            transitions.append(((1, -delta) if delta < 0 else (0, delta), i + 1))
+        transitions.sort(reverse=True)
+        cuts = sorted(i for _s, i in transitions[:expected_services - 1])
+        groups, prev = [], 0
+        for c in cuts:
+            groups.append(seq[prev:c])
+            prev = c
+        groups.append(seq[prev:])
+
+    counts = Counter(r["value"] for r in rows)
+    out_groups = []
+    for g in groups[:services]:
+        out_groups.append({
+            "runs": len(g),
+            "distinct": len(set(r["value"] for r in g)),
+            "sequence": [r["value"] for r in g[:30]],
+            "first": _fmt_hms(g[0]["first_seconds"]) if g and g[0]["first_seconds"] else None,
+            "last": _fmt_hms(g[-1]["last_seconds"]) if g and g[-1]["last_seconds"] else None,
+        })
+
+    return {
+        "path": path,
+        "offset": offset,
+        "records_examined": len(rows),
+        "total_runs": len(runs),
+        "distinct_values": len(counts),
+        "value_frequency": counts.most_common(20),
+        "run_length_median": sorted(r["records"] for r in runs)[len(runs) // 2],
+        "services": out_groups,
+        "verdict": (
+            f"{len(counts)} distinct values over {len(rows)} records, in "
+            f"{len(runs)} runs. Read the per-service sequences below: a "
+            "station identifier visits each value once per service and runs "
+            "in the opposite order on a return working."
         ),
     }

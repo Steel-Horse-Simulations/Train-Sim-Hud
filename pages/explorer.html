@@ -76,6 +76,8 @@
       <label class="small dim" for="pak-calls" style="white-space:nowrap;">
         Station calls per service:</label>
       <input type="text" id="pak-calls" placeholder="e.g. 13" style="max-width:120px;">
+      <label class="small dim" for="pak-offset" style="white-space:nowrap;">Field offset:</label>
+      <input type="text" id="pak-offset" placeholder="e.g. 692" style="max-width:110px;">
     </div>
     <input type="text" id="pak-asset" placeholder="e.g. TS2Prototype/Plugins/DLC/FifeCircle_Route_Gameplay/Content/Timetable/FCE_Timetable_TT.uasset"
                style="width:100%;font-family:var(--mono);font-size:12px;margin-bottom:8px;">
@@ -94,6 +96,7 @@
         <button class="btn primary" onclick="extractTimetable()">Extract timetable</button>
         <button class="btn primary" onclick="serviceField()">Find service field</button>
         <button class="btn primary" onclick="callField()">Find call field</button>
+        <button class="btn primary" onclick="inspectField()">Inspect field</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -371,6 +374,39 @@ async function scanAllPaks() {
   }
 }
 
+async function inspectField() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  const off=Number(document.getElementById('pak-offset').value);
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  if(!off && off!==0){alert('Put a field offset in the box (e.g. 692).');return;}
+  status.textContent=`Reading the values at +${off}…`;
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/inspect_field',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop(), offset:off,
+        expected_services:Number(document.getElementById('pak-services').value)||null})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    status.innerHTML=`<span style="color:var(--status-green);">+${d.offset}: ${d.distinct_values} distinct values`
+      +`, ${d.total_runs} runs</span> <span class="small dim">· ${d.records_examined} records`
+      +` · median run ${d.run_length_median}</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
+        background:rgba(255,255,255,0.04);border-left:3px solid var(--accent);">${esc(d.verdict)}</p>`
+      +`<p class="small" style="margin:6px 0;">Value frequency: <span class="dim">`
+      +(d.value_frequency||[]).map(v=>`${v[0]}&times;${v[1]}`).join(' · ')+`</span></p>`
+      +(d.services||[]).map((g,i)=>`
+        <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+          <div class="small"><strong>service ${i+1}</strong>
+            <span class="dim">${g.runs} runs, ${g.distinct} distinct
+            ${g.first?`· ${esc(g.first)} → ${esc(g.last)}`:''}</span></div>
+          <div class="mono" style="font-size:11px;color:var(--accent-bright);">
+            ${(g.sequence||[]).join('  ')}</div>
+        </div>`).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
 async function callField() {
   const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
   const asset=document.getElementById('pak-asset').value.trim();
@@ -382,6 +418,11 @@ async function callField() {
   try{
     const d=await (await fetch('/api/paks/call_field',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({asset_name:asset.split('/').pop(),
+        // services x calls OVERSTATES the total: not every service calls
+        // everywhere. On Leven it gave 39x13 = 507 against a true 485,
+        // because 2 of the 39 are Glenrothes shuttles with 2 calls. The
+        // tolerance is only 5%, so a 4.5% overshoot can reject a correct
+        // field. Sent as a hint for ranking, with the tolerance widened.
         expected_calls: (svcs&&calls)? svcs*calls : null})})).json();
     lastPakResult=d;
     if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}

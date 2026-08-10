@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.53.0"
+APP_VERSION = "7.54.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1711,6 +1711,39 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/inspect_field", methods=["POST"])
+def paks_inspect_field():
+    """Dumps one field's VALUES per service, so a candidate offset can be
+    checked against the real route.
+    Body: {"asset_name": "...", "offset": 692, "expected_services": 39}
+
+    Statistics can say a field has 14 states; only the value sequence can
+    say whether those states are stations. A station id visits each value
+    once per service and runs in the opposite order on a return working."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    if body.get("offset") is None:
+        return jsonify({"error": "offset required"}), 400
+    exp = body.get("expected_services")
+    return jsonify(pak_tools.inspect_field(
+        path, int(body["offset"]),
+        expected_services=int(exp) if exp else None,
+        stop_points_only=bool(body.get("stop_points_only", True))))
 
 
 @app.route("/api/paks/call_field", methods=["POST"])

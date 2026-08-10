@@ -1240,3 +1240,80 @@ for 485 runs.
 
 Also still worth investigating: the 3-record, on-the-minute service headers
 found in v7.51.1, which remain the best candidate for where a headcode lives.
+
+## +692: 14 distinct values, and 13 stations (v7.54.0)
+
+`find_call_field` on the real layer found no field matching the requested 507
+runs, but the candidate list contains something far more interesting than the
+thing being searched for:
+
+```
+offset   runs  distinct  per-run  medrun  maxrun
+ +692     429     14      12.12     10      63
+ +693     429     14      12.12     10      63
+ +694     429     14      12.12     10      63
+ +695     429     14      12.12     10      63
+```
+
+**14 distinct values across the entire file**, and a Leven-Edinburgh service
+calls at **13 stations**. Random fields do not land on 14. The four
+consecutive offsets are the same int32 read at four byte positions, as
+expected.
+
+12.12 records per run also sits right on the ~10.7 records-per-call ratio
+derived from the game count.
+
+429 runs against 485 calls is explainable rather than contradictory:
+consecutive runs sharing a value merge, and a service ending where the next
+begins would merge across the boundary - 485 minus 38 boundaries is 447, in
+the same region as 429.
+
+Other candidates worth remembering:
+  - **+696-698: 40 runs, 2 distinct** - almost exactly the 39 services.
+  - **+407-410: 15 runs** - the field that was wrongly accepted in v7.51.
+  - **+204: 341 runs, 153 distinct** - too many states for stations.
+
+### A tolerance bug this exposed
+
+`expected_calls` was sent as services x calls = 39 x 13 = **507**, but the
+true total is 37 x 13 + 2 x 2 = **485**, because two of the services are
+Glenrothes shuttles with 2 calls. That 4.5% overshoot against a 5% tolerance
+could reject a correct field on arithmetic alone. Tolerance widened to 15%,
+and the candidate list is now always returned so a near miss can be judged on
+its DISTINCT count - which for a station field is the informative number, not
+the run count.
+
+### `inspect_field` - read the values, do not just count them
+
+`/api/paks/inspect_field`, button **Inspect field**, with a **Field offset**
+box.
+
+Statistics can say a field has 14 states. Only the value sequence can say
+whether those states are STATIONS, and it is decisive because a station
+identifier must:
+
+  - visit ~13 distinct values within one service, not repeat two,
+  - run in the OPPOSITE ORDER on a return working,
+  - show only 2 distinct values on the Glenrothes shuttles.
+
+No coincidence produces all three, and all three are visible by printing the
+sequence.
+
+Validated on a fixture: reads back the planted call ids exactly, 13 runs and
+13 distinct per service, in order.
+
+### Next step
+
+**Inspect field** with offset **692**, Services **39**. Then read the
+sequences:
+
+  - 13 distinct values per service, one run each -> it is the station, and
+    the order gives the station ORDER along the route, which is the missing
+    piece for labelling stops.
+  - Two services showing only 2 distinct values -> those are the Glenrothes
+    shuttles, and that is conclusive.
+  - Reversed order between alternate services -> Edinburgh-bound vs
+    Leven-bound, confirming direction.
+
+Worth also inspecting **696** (40 runs, 2 distinct) - a two-state field
+changing once per service looks like a direction or an up/down flag.
