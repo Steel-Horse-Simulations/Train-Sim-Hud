@@ -992,3 +992,84 @@ Run **Find service field** on the real Leven layer.
     threshold has to be chosen knowing it cannot be exact.
 
 Then **Extract timetable**, which will use whatever it finds.
+
+## Ground truth from the game, and station CALLS (v7.51.0)
+
+Counted in the in-game timetable by the user - this is the yardstick
+everything is now measured against:
+
+  - **39 Leven services.** 37 run Edinburgh <-> Leven, 2 are Glenrothes -
+    Leven.
+  - A Leven -> Edinburgh service calls at **13 stations**, counting both
+    ends.
+  - A Glenrothes - Leven service calls at **2** - the two ends, nothing
+    between.
+
+### A StopPoint record is NOT a station call
+
+`37 x 13 + 2 x 2 = 485` station calls, against **5,198 StopPoint records**.
+That is **10.7 records per call**.
+
+So every "stop count" reported before this was a record count, not a stop
+list. The clock-based run reported ~152 stops per service, which against 13
+real calls is 11.7 records per call - consistent with 10.7, so the extraction
+was internally right all along and only the LABEL was wrong.
+
+`extract_timetable` now collapses records into calls. The records for one
+call sit seconds apart (the median gap between consecutive StopPoints is 8s)
+then jump minutes to the next, so clustering on `call_gap` (default 90s)
+recovers them. The call's arrival is the first time in its cluster and its
+departure the last, which is exactly the arrival/departure pair the domain
+rules call for.
+
+### There is no service field in this file
+
+`find_service_field` on the real layer returned **nothing**, and the run-count
+bands show why: every offset either holds one value for the whole file or
+changes on nearly every record. Nothing in between. Services are not
+identified inside the record.
+
+The tool now reports near-misses and a distribution of run counts instead of
+an empty table, because "nothing found" without showing what IS there gives
+no way to tell a real absence from a threshold set too tight.
+
+It also takes `expected_runs`. Two scoring bugs were fixed along the way,
+both caught by fixtures:
+  - relaxing the near-miss filter let a field that changes on EVERY record
+    score perfectly - its run and distinct counts are equal, so it looks
+    maximally identifier-like while being the opposite. Scoring now includes
+    sparsity: a service field has far fewer runs than records.
+  - `extract_timetable`'s internal search, called without a target, picked
+    that same field and reported 10,150 services out of 10,150 records.
+
+### Segmentation: cut at the strongest boundaries
+
+With no field to key off and no workable threshold - the largest gap between
+consecutive stops in the whole file is 396s, while services start minutes
+apart - the honest approach is to use the known count. Every transition is
+ranked by how strongly it looks like a boundary (a backwards clock outranks
+any forward gap, however large) and the strongest N-1 become the cuts.
+
+Validated on a fixture built to the real shape - 39 services, 37 x 13 calls
+and 2 x 2, ~11 records per call, no service id field:
+
+```
+services      39 / 39
+median calls  13 / 13
+short workings recovered: [2, 2]
+every call carries both an arrival and a departure
+```
+
+The two Glenrothes workings are the sharpest check available: ~20 records
+against ~140 is a 7:1 gap that a correct segmentation cannot miss and a wrong
+one cannot fake.
+
+### Next step
+
+On the Discovery page enter **39** in the new Services box, then **Extract
+timetable**. Expect 39 services, 37 with 13 calls and 2 with 2. If the two
+short workings appear, segmentation is right and the remaining work is
+writing journeys and calls into `timetables.db`.
+
+Station NAMES remain absent from this asset - calls will have times and
+positions but no labels.

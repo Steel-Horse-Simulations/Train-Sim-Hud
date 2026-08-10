@@ -436,3 +436,74 @@ def main_leven(out="/tmp/synth_leven"):
     print(f"built {base}.uexp - {len(truth)} services, {total} records of {stride}b")
     print(f"  type at +{type_at}, time at +{time_at}, decoys at +139 and +233")
     return base, truth, stride, type_at, time_at
+
+
+def build_uexp_fife(path, rng, stride=707):
+    """Models the REAL Leven timetable as counted in the game:
+    39 services - 37 Edinburgh<->Leven calling at 13 stations, and 2
+    Glenrothes-Leven calling at only 2 - with ~11 StopPoint records per
+    station call, and NO service identifier anywhere in the record.
+
+    That last point is the important one. The real file has no field holding
+    a value per service, so segmentation has to come from the clock, and the
+    fixture must not make the problem easier than it is by planting one.
+    """
+    TYPE_AT, TIME_AT, ANCHOR_AT = 270, 200, 0
+    buf = bytearray()
+    truth = []
+    for svc in range(39):
+        short = svc >= 37                      # the two Glenrothes workings
+        calls = 2 if short else 13
+        t = (5 + (svc % 17)) * 3600 + rng.randint(0, 600)
+        svc_records = 0
+        svc_start = t
+        for call in range(calls):
+            # a run of track points between calls
+            for _ in range(rng.randint(6, 14)):
+                t += rng.randint(10, 40)
+                buf += _fife_record(rng, stride, "TrackSectionEntry", t,
+                                    TYPE_AT, TIME_AT, ANCHOR_AT)
+                svc_records += 1
+            # the call itself: ~11 StopPoint records seconds apart
+            for _ in range(rng.randint(9, 13)):
+                t += rng.randint(1, 12)
+                buf += _fife_record(rng, stride, "StopPoint", t,
+                                    TYPE_AT, TIME_AT, ANCHOR_AT)
+                svc_records += 1
+            t += rng.randint(120, 330)          # run to the next station
+        truth.append({"calls": calls, "records": svc_records,
+                      "start": svc_start, "end": t, "short": short})
+    with open(path, "wb") as f:
+        f.write(bytes(buf))
+    return truth, stride, TYPE_AT, TIME_AT
+
+
+def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at):
+    rec = bytearray()
+    while len(rec) < stride:
+        r = rng.random()
+        if r < 0.35:
+            rec += struct.pack("<i", 0)
+        elif r < 0.75:
+            rec += struct.pack("<f", rng.uniform(-4e4, 4e4))
+        else:
+            rec += struct.pack("<i", rng.randint(1 << 20, (1 << 31) - 1))
+    rec = bytearray(rec[:stride])
+    for k, nm in enumerate(("Class", "Package", "Guid", "ServiceDataTracks",
+                            "PropertyReference", "IntProperty")):
+        rec[anchor_at + k * 8:anchor_at + k * 8 + 8] = _fname(nm)
+    rec[type_at:type_at + 8] = _fname(f"ETimetableTrackDataType::{kind}")
+    rec[time_at:time_at + 8] = struct.pack("<q", int(t * TICKS))
+    return bytes(rec)
+
+
+def main_fife(out="/tmp/synth_fife"):
+    os.makedirs(out, exist_ok=True)
+    base = os.path.join(out, "FCE_Timetable_TT_Leven_Branch_Layer_DataTrack")
+    rng = random.Random(39)
+    build_uasset(base + ".uasset")
+    truth, stride, type_at, time_at = build_uexp_fife(base + ".uexp", rng)
+    total = sum(s["records"] for s in truth)
+    print(f"built {base}.uexp - 39 services (37 x 13 calls, 2 x 2), "
+          f"{total} records, NO service id field")
+    return base, truth, stride, type_at, time_at

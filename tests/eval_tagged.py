@@ -417,11 +417,55 @@ def run_service_field():
     return ok
 
 
+def run_fife_shape():
+    """The real Leven timetable, as counted in the game: 39 services - 37
+    calling at 13 stations, 2 Glenrothes workings calling at only 2 - with
+    ~11 StopPoint RECORDS per station call and no service identifier
+    anywhere in the record.
+
+    The record-to-call ratio is the point. 5,198 StopPoint records against
+    485 real calls is 10.7 records per call, so a StopPoint count is not a
+    stop list and must not be reported as one. The two short workings are
+    the sharpest check available: ~20 records against ~140, a 7:1 gap that
+    a correct segmentation cannot miss and a wrong one cannot fake.
+    """
+    print("\n--- real Fife Circle shape: 39 services, 37x13 + 2x2 calls ---")
+    base, truth, stride, type_at, time_at = T.main_fife("/tmp/eval_fife")
+    ok = True
+
+    # There is no service field in this file, and the search must say so
+    # rather than inventing one.
+    f = pak_tools.find_service_field(base + ".uexp", expected_runs=39)
+    print(f"  service field: {f['best']}   (correctly absent)")
+    if f["best"] is not None:
+        print("  FAIL: invented a service field where none exists"); ok = False
+
+    r = pak_tools.extract_timetable(base + ".uexp", expected_services=39)
+    calls = sorted(s["call_count"] for s in r["services"])
+    print(f"  services {r['service_count']} (true 39) via {r['segmented_by']}")
+    print(f"  call counts: {calls[:4]} ... {calls[-3:]}, median {r['median_calls']}")
+    if r["service_count"] != 39:
+        print("  FAIL: service count"); ok = False
+    if r["median_calls"] != 13:
+        print(f"  FAIL: median calls {r['median_calls']} != 13"); ok = False
+    if sorted(c for c in calls if c <= 4) != [2, 2]:
+        print("  FAIL: the two Glenrothes workings were not recovered"); ok = False
+    else:
+        print("  both 2-call Glenrothes workings recovered")
+
+    # every call must carry an arrival and a departure
+    svc = next(s for s in r["services"] if s["call_count"] == 13)
+    if not all(c["arrival"] and c["departure"] for c in svc["calls"]):
+        print("  FAIL: a call is missing arrival or departure"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
                run_template_recovery(), run_fixed_stride(),
                run_anchor_impostor(), run_timetable_extraction(),
-               run_phase_shift_recovery(), run_service_field()]
+               run_phase_shift_recovery(), run_service_field(),
+               run_fife_shape()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

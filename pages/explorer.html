@@ -69,7 +69,12 @@
           values are packed binary and it's a much bigger job. Paste the pak path above, then the
           asset path from the scan results.
         </p>
-        <input type="text" id="pak-asset" placeholder="e.g. TS2Prototype/Plugins/DLC/FifeCircle_Route_Gameplay/Content/Timetable/FCE_Timetable_TT.uasset"
+        <div class="field-row" style="margin-bottom:6px;">
+      <label class="small dim" for="pak-services" style="white-space:nowrap;">
+        Services (from the in-game timetable, optional):</label>
+      <input type="text" id="pak-services" placeholder="e.g. 39" style="max-width:120px;">
+    </div>
+    <input type="text" id="pak-asset" placeholder="e.g. TS2Prototype/Plugins/DLC/FifeCircle_Route_Gameplay/Content/Timetable/FCE_Timetable_TT.uasset"
                style="width:100%;font-family:var(--mono);font-size:12px;margin-bottom:8px;">
         <button class="btn primary" onclick="inspectAsset()">Extract &amp; inspect</button>
         <button class="btn" onclick="clearExtracted()">Clear extracted folder</button>
@@ -370,7 +375,8 @@ async function serviceField() {
   status.style.color='var(--text-dim)'; out.innerHTML='';
   try{
     const d=await (await fetch('/api/paks/service_field',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+      body:JSON.stringify({asset_name:asset.split('/').pop(),
+        expected_runs: Number(document.getElementById('pak-services').value)||null})})).json();
     lastPakResult=d;
     if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
     const b=d.best;
@@ -399,7 +405,8 @@ async function extractTimetable() {
   status.style.color='var(--text-dim)'; out.innerHTML='';
   try{
     const d=await (await fetch('/api/paks/timetable',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+      body:JSON.stringify({asset_name:asset.split('/').pop(),
+        expected_services: Number(document.getElementById('pak-services').value)||null})})).json();
     lastPakResult=d;
     if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
     status.innerHTML=`<span style="color:var(--status-green);">${d.service_count} services, `
@@ -412,11 +419,11 @@ async function extractTimetable() {
       +(d.services||[]).slice(0,25).map(sv=>`
         <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
           <div><span class="mono" style="color:var(--accent-bright);">${esc(sv.first)} → ${esc(sv.last)}</span>
-            <strong>${sv.stop_count} stops</strong>
-            <span class="small dim">of ${sv.track_points} points · ${sv.duration_min} min
-            · ${sv.close_pairs} arr/dep pairs</span></div>
+            <strong>${sv.call_count} station calls</strong>
+            <span class="small dim">from ${sv.stop_count} StopPoint records ·
+            ${sv.track_points} points · ${sv.duration_min} min</span></div>
           <div class="mono" style="font-size:11px;color:var(--text-dim);">
-            ${(sv.stops||[]).slice(0,18).map(x=>esc(x.time)).join('  ')}</div>
+            ${(sv.calls||[]).slice(0,14).map(c=>`${esc(c.arrival)}/${esc(c.departure)}`).join('  ')}</div>
         </div>`).join('');
   }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }

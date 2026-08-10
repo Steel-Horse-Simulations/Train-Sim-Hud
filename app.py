@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.50.0"
+APP_VERSION = "7.51.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1738,7 +1738,9 @@ def paks_service_field():
                 break
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
-    return jsonify(pak_tools.find_service_field(path))
+    exp = body.get("expected_runs")
+    return jsonify(pak_tools.find_service_field(
+        path, expected_runs=int(exp) if exp else None))
 
 
 @app.route("/api/paks/timetable", methods=["POST"])
@@ -1767,8 +1769,13 @@ def paks_timetable():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     brk = body.get("service_break")
+    exp = body.get("expected_services")
+    gap = body.get("call_gap")
     return jsonify(pak_tools.extract_timetable(
-        path, service_break=int(brk) if brk else None))
+        path,
+        service_break=int(brk) if brk else None,
+        expected_services=int(exp) if exp else None,
+        call_gap=int(gap) if gap else 90))
 
 
 @app.route("/api/paks/decode_fixed", methods=["POST"])

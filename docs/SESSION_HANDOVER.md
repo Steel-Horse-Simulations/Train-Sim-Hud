@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.50.0**
+**App version at end of session: 7.51.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,30 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.51.0 - station CALLS, and ground truth from the game
+
+User counted the in-game timetable: 39 Leven services, 37 Edinburgh<->Leven
+calling at 13 stations, 2 Glenrothes-Leven calling at 2. That is 485 calls
+against 5,198 StopPoint records = **10.7 records per call**. So a StopPoint
+is NOT a station call, and every "stop count" reported before this was a
+record count. extract_timetable now clusters records into calls (call_gap,
+default 90s), arrival = first time in the cluster, departure = last.
+
+find_service_field on the real file found NOTHING - services are not
+identified inside the record. It now reports near-misses and run-count bands
+rather than an empty table, and takes expected_runs.
+
+Segmentation therefore uses the KNOWN count: rank every transition by
+boundary strength (backwards clock beats any forward gap) and cut at the
+strongest N-1. New "Services" box on the Discovery page feeds it.
+
+Validated on a fixture built to the real shape: 39/39 services, median 13
+calls, both 2-call Glenrothes workings recovered, every call with an arrival
+and a departure.
+
+**Next: enter 39 in the Services box, Extract timetable.** Two short services
+appearing among 37 long ones is the check.
 
 ## What changed in v7.50.0 - full extraction, and structural segmentation
 

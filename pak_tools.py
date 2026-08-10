@@ -2686,7 +2686,8 @@ def _stride_chain(offsets, stride, min_fraction=0.9):
 
 def extract_timetable(path, stride=None, anchor=None, type_offset=None,
                       time_offset=None, width=4, max_services=200,
-                      service_break=None, service_field_offset=None):
+                      service_break=None, service_field_offset=None,
+                      expected_services=None, call_gap=90):
     """Reads the timetable out of a fixed-stride DataTrack.
 
     Everything this depends on is now confirmed against the real Leven Branch
@@ -2778,16 +2779,46 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
     # answers; a field that holds one value per service does.
     svc_field = None
     if service_field_offset is None:
+        # Told what to look for, when it is known. Without expected_runs the
+        # search returns whatever scores best in the abstract, and on a
+        # fixture with no service field at all that was an offset whose value
+        # changes almost every record - 10,150 "services" out of 10,150
+        # records. A field that changes every record is the opposite of a
+        # service identifier.
         found = find_service_field(path, stride=stride, anchor=layout["anchor"],
-                                   width=width)
+                                   width=width, expected_runs=expected_services)
         best = found.get("best") if isinstance(found, dict) else None
-        if best and best["runs"] >= 2:
+        if best and 2 <= best["runs"] <= max(4, len(starts) // 4):
             svc_field = best["offset"]
     else:
         svc_field = service_field_offset
 
     services, cur = [], []
-    if svc_field is not None:
+    if expected_services and svc_field is None:
+        # The service count is known from the game, but nothing in the record
+        # marks the boundary. So rather than pick a threshold - which cannot
+        # work here, the largest gap between consecutive stops being 396s
+        # while services start minutes apart - rank every transition by how
+        # strongly it looks like a boundary and cut at the strongest N-1.
+        #
+        # A backwards clock is the strongest signal there is, so those rank
+        # above any forward gap however large.
+        seq = [r for r in records if r["seconds"] is not None]
+        transitions = []
+        for i, (a, b) in enumerate(zip(seq, seq[1:])):
+            delta = b["seconds"] - a["seconds"]
+            strength = (1, -delta) if delta < 0 else (0, delta)
+            transitions.append((strength, i + 1))
+        transitions.sort(reverse=True)
+        cuts = sorted(i for _s, i in transitions[:max(0, expected_services - 1)])
+        prev = 0
+        for c in cuts:
+            services.append(seq[prev:c])
+            prev = c
+        services.append(seq[prev:])
+        segmented_by = (f"{expected_services} services requested - cut at the "
+                        f"{len(cuts)} strongest boundaries")
+    elif svc_field is not None:
         def read_id(s):
             o = s + svc_field
             if o + 4 > len(data):
@@ -2826,6 +2857,24 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
         if not svc:
             continue
         stops = [r for r in svc if r["type"] == "StopPoint"]
+        # Collapse StopPoint RECORDS into station CALLS.
+        #
+        # There are ~10.7 StopPoint records per real station call on the
+        # Leven layer - 5,198 records against 485 calls counted in the game
+        # (37 services x 13 stops, plus 2 x 2). So a raw StopPoint count is
+        # not a stop list, and reporting one as if it were would be
+        # misleading. The records for a single call sit seconds apart (the
+        # median gap between consecutive StopPoints is 8s) and then jump
+        # minutes to the next call, so clustering on that gap recovers the
+        # calls. Each call's arrival is the first time in its cluster and its
+        # departure the last, which matches the domain rule that a stop
+        # carries both.
+        calls = []
+        for r in stops:
+            if calls and (r["seconds"] - calls[-1][-1]["seconds"]) <= call_gap:
+                calls[-1].append(r)
+            else:
+                calls.append([r])
         # A stop should carry an arrival and a departure - two records at the
         # same place seconds apart. First stop (departure only), last stop
         # (arrival only) and freight (no arrivals) are CORRECT data, so
@@ -2837,6 +2886,12 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
             "start_offset": svc[0]["offset"],
             "track_points": len(svc),
             "stop_count": len(stops),
+            "call_count": len(calls),
+            "calls": [{
+                "arrival": _fmt_hms(c[0]["seconds"]),
+                "departure": _fmt_hms(c[-1]["seconds"]),
+                "records": len(c),
+            } for c in calls[:30]],
             "first": _fmt_hms(svc[0]["seconds"]),
             "last": _fmt_hms(svc[-1]["seconds"]),
             "duration_min": round((svc[-1]["seconds"] - svc[0]["seconds"]) / 60, 1),
@@ -2864,6 +2919,9 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
         "median_duration_min": durations[len(durations) // 2] if durations else None,
         "median_stops": (sorted(s["stop_count"] for s in out)[len(out) // 2]
                          if out else None),
+        "median_calls": (sorted(s["call_count"] for s in out)[len(out) // 2]
+                         if out else None),
+        "call_gap_seconds": call_gap,
         "services": out,
         "verdict": (
             f"{len(services)} services from {len(starts)} records, "
@@ -2875,7 +2933,7 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
 
 
 def find_service_field(path, stride=None, anchor=None, width=4,
-                       min_runs=4, max_runs=4000):
+                       min_runs=2, max_runs=20000, expected_runs=None):
     """Looks for a field that IDENTIFIES the service, rather than inferring
     service boundaries from the clock.
 
@@ -2937,16 +2995,19 @@ def find_service_field(path, stride=None, anchor=None, width=4,
         if not (min_runs <= runs <= max_runs):
             continue
         distinct = len(set(vals))
-        # A real identifier holds a value for a whole service, so its run
-        # count and its distinct-value count are of the same order. A flag
-        # that flips between two states produces many runs and two values.
-        if distinct < runs * 0.5:
-            continue
         lengths.sort()
+        # Near-misses are KEPT, not filtered out. The first version dropped
+        # anything whose distinct-value count was under half its run count
+        # and returned an empty table on the real file - which says "nothing
+        # found" without saying what WAS there, and leaves no way to tell a
+        # genuine absence from a threshold set too tight. The
+        # distinct/run agreement is reported instead, so the judgement can
+        # be made from the numbers.
         candidates.append({
             "offset": d,
             "runs": runs,
             "distinct": distinct,
+            "id_like": round(min(runs, distinct) / max(runs, distinct), 3),
             "median_run": lengths[len(lengths) // 2],
             "min_run": lengths[0],
             "max_run": lengths[-1],
@@ -2956,19 +3017,46 @@ def find_service_field(path, stride=None, anchor=None, width=4,
     # Prefer the tidiest identifier: runs and distinct values in step, and
     # run lengths that do not vary wildly.
     def score(c):
-        agree = min(c["runs"], c["distinct"]) / max(c["runs"], c["distinct"])
         spread = c["median_run"] / max(1, c["max_run"])
-        return agree * spread
+        # A service field must have FAR fewer runs than there are records.
+        # Without this term a field that changes on every single record
+        # scores perfectly - its run count and distinct count are equal, so
+        # it looks maximally "identifier-like" while being the opposite of
+        # one. That is what happened once the near-miss filter was relaxed.
+        sparsity = 1.0 - (c["runs"] / max(1, len(starts)))
+        return c["id_like"] * spread * sparsity
 
-    candidates.sort(key=score, reverse=True)
+    if expected_runs:
+        # When the true service count is known from the game, look for THAT
+        # rather than for whatever scores best in the abstract. A field with
+        # the right number of runs is worth far more than a tidy-looking one
+        # with the wrong number.
+        candidates.sort(key=lambda c: (abs(c["runs"] - expected_runs),
+                                       -c["id_like"]))
+    else:
+        candidates.sort(key=score, reverse=True)
     best = candidates[0] if candidates else None
+    if expected_runs and best and abs(best["runs"] - expected_runs) > max(2, expected_runs * 0.1):
+        best = None      # nothing close enough to be the service boundary
+
+    # A distribution of run counts across all offsets, so "nothing found" is
+    # accompanied by what the file actually contains.
+    bands = Counter()
+    for c in candidates:
+        r = c["runs"]
+        bands["1" if r < 2 else "2-10" if r < 11 else "11-50" if r < 51
+              else "51-200" if r < 201 else "201-2000" if r < 2001
+              else "2000+"] += 1
     return {
         "path": path,
         "stride": stride,
         "record_count": len(starts),
         "anchor": layout["anchor"],
-        "candidates": candidates[:15],
+        "candidates": candidates[:20],
         "best": best,
+        "expected_runs": expected_runs,
+        "run_count_bands": dict(bands),
+        "offsets_scanned": stride - 4,
         "verdict": (
             f"Best candidate at +{best['offset']}: {best['runs']} runs, "
             f"{best['distinct']} distinct values, median run "
