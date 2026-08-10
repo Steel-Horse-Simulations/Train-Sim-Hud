@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.49.0**
+**App version at end of session: 7.49.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,29 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.49.1 - chain bug: 91 records instead of 12,207
+
+First real extract_timetable run stopped 0.62% into the file - 91 records, 1
+service - while reporting layout_confirmed: true. _stride_chain required
+alignment to a GLOBAL grid; 0.29% of real gaps are not 707, and the first one
+put everything after permanently off-grid.
+
+Now LOCAL: a stray sits less than one stride from the previous genuine start,
+a real start is at least a stride away. The exact-stride position is
+PREFERRED (so the chain re-locks and stays exact) but never required (so a
+bad gap costs one record, not the rest of the file).
+
+Verified exact on a clean fixture AND after injecting a 251-byte phase shift
+mid-file - the real failure reproduced deliberately.
+
+The 91 records did confirm the layout: time at +200 scored 0.9889 rising
+against 0.9444 for the +233 duration decoy and 0.5333 for the +139/+140 pair
+(35 resets - not a clock). 40 StopPoints and 40 TrackSectionEntry, the same
+1:1 seen whole-file at 5198 each.
+
+**Next: re-run Extract timetable.** Expect ~12,207 records, ~5,198 stops,
+service count to compare against extract_time_series' independent 104.
 
 ## What changed in v7.49.0 - RECORD LAYOUT SOLVED, timetable extracted
 

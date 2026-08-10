@@ -341,10 +341,53 @@ def run_timetable_extraction():
     return ok
 
 
+def run_phase_shift_recovery():
+    """A gap that is not a whole stride must cost ONE record, not the file.
+
+    This is the bug that made the real Leven run report 91 records instead of
+    12,207 while still looking confident: the chain required alignment to a
+    global grid, 0.29% of real gaps are not 707, and the first one put
+    everything after it permanently off-grid. Extraction stopped 0.62% into
+    the file.
+    """
+    import shutil
+    print("\n--- record chain survives a phase shift ---")
+    base, truth, stride, type_at, time_at = T.main_leven("/tmp/eval_shift")
+    true_records = sum(s["points"] for s in truth)
+    true_stops = sum(s["stops"] for s in truth)
+    ok = True
+
+    clean = pak_tools.extract_timetable(base + ".uexp")
+    print(f"  clean    records {clean['record_count']}/{true_records}  "
+          f"stops {clean['type_counts'].get('StopPoint')}/{true_stops}")
+    if clean["record_count"] != true_records:
+        print("  FAIL: clean record count"); ok = False
+    if clean["type_counts"].get("StopPoint") != true_stops:
+        print("  FAIL: clean StopPoint count"); ok = False
+
+    raw = bytearray(open(base + ".uexp", "rb").read())
+    cut = len(raw) // 2
+    raw[cut:cut] = b"\x00" * 251          # knock everything after off the grid
+    shifted = "/tmp/eval_shift/shifted"
+    with open(shifted + ".uexp", "wb") as f:
+        f.write(bytes(raw))
+    shutil.copy(base + ".uasset", shifted + ".uasset")
+
+    after = pak_tools.extract_timetable(shifted + ".uexp")
+    print(f"  shifted  records {after['record_count']}/{true_records}  "
+          f"stops {after['type_counts'].get('StopPoint')}/{true_stops}")
+    if after["record_count"] < true_records * 0.95:
+        print("  FAIL: chain did not recover - the whole-file bug is back"); ok = False
+    else:
+        print("  recovered - a bad gap costs one record, not the remainder")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
                run_template_recovery(), run_fixed_stride(),
-               run_anchor_impostor(), run_timetable_extraction()]
+               run_anchor_impostor(), run_timetable_extraction(),
+               run_phase_shift_recovery()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

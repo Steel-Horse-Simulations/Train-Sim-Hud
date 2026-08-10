@@ -2637,29 +2637,50 @@ def decode_fixed_records(path, stride=None, anchor=None, width=4,
 SERVICE_BREAK_SECONDS = 600
 
 
-def _stride_chain(offsets, stride, tolerance=2):
-    """Keeps only the anchor hits that sit on the record grid.
+def _stride_chain(offsets, stride, min_fraction=0.9):
+    """Drops the coincidental anchor hits, keeping the real record starts.
 
-    Even a good anchor picks up a few coincidental matches, and each one
-    inserts a phantom record. That matters more than it sounds: a phantom
-    lands mid-service with an out-of-sequence time, the segmenter reads the
-    decrease as a new service starting, and one clean service is reported as
-    two. On a fixture with 40 services and 161 stray hits it reported 58.
+    A stray hit lands INSIDE a record, so it sits less than one stride from
+    the previous genuine start. A real start is at least a stride away. That
+    single local rule is the whole filter.
 
-    Walking the chain and keeping only hits a whole number of strides from
-    the last accepted one removes them, while still tolerating the genuine
-    larger gaps - 0.3% of the real file's gaps are not 707.
+    It deliberately does NOT require alignment to a global grid. The first
+    version did - it kept only offsets a whole number of strides from the
+    last accepted one - and that failed catastrophically on the real file:
+    0.29% of gaps are not 707, and the FIRST such gap put every subsequent
+    offset permanently off-grid by the remainder. Everything after it was
+    rejected, so 12,207 records became 91 and the extraction stopped 0.62%
+    into the file while still reporting a confident-looking result.
+
+    Being local means a bad gap costs one record, not the rest of the file.
     """
     if not offsets:
         return []
-    kept = [offsets[0]]
-    for off in offsets[1:]:
-        delta = off - kept[-1]
-        if delta <= 0:
+    threshold = stride * min_fraction
+    pool = sorted(set(offsets))
+    index = {o: i for i, o in enumerate(pool)}
+    kept = [pool[0]]
+    i = 1
+    while i < len(pool):
+        want = kept[-1] + stride
+        # Prefer the offset exactly one stride on, when there is one. The
+        # purely local rule occasionally locks onto a stray that happens to
+        # sit just past the threshold, and then reads every field of that
+        # record from the wrong base - which cost 7 of 2048 stops on the
+        # fixture. Looking for the grid position first, but never REQUIRING
+        # it, keeps the recovery from a bad gap while restoring exactness.
+        hit = None
+        for cand in (want, want - 1, want + 1, want - 2, want + 2):
+            if cand in index and cand > kept[-1]:
+                hit = cand
+                break
+        if hit is not None:
+            kept.append(hit)
+            i = index[hit] + 1
             continue
-        n = round(delta / stride)
-        if n >= 1 and abs(delta - n * stride) <= tolerance:
-            kept.append(off)
+        if pool[i] - kept[-1] >= threshold:
+            kept.append(pool[i])
+        i += 1
     return kept
 
 

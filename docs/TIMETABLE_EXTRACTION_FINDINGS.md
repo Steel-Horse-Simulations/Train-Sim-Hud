@@ -882,3 +882,47 @@ Run **Extract timetable** on the real Leven layer. Then:
 Station names are still absent from this asset (`NetworkRibbonLocation` holds
 P2K-style track ribbon IDs, not station names), so stops will have times and
 positions but no labels until the index asset is decoded.
+
+## The chain bug: 91 records instead of 12,207 (fixed v7.49.1)
+
+The first real `extract_timetable` run returned **91 records and 1 service**,
+having stopped **0.62% into the file** - while reporting `layout_confirmed:
+true` and a perfectly plausible-looking service. Everything it did report was
+correct; there was just almost none of it.
+
+`_stride_chain` required each record start to be a whole number of strides
+from the LAST ACCEPTED one. Every gap it kept was an exact multiple of 707
+(707, 1414, 2121, 2828, 3535 - checked). But **0.29% of the real file's gaps
+are not 707**, and the first one put every subsequent offset permanently
+off-grid by the remainder. From there nothing could ever match again.
+
+A global-grid assumption turns one bad gap into a whole-file failure. The
+rule is now LOCAL:
+
+  - a stray anchor hit lands INSIDE a record, so it sits less than one stride
+    from the previous genuine start; a real start is at least a stride away.
+    That single comparison is the filter.
+  - the offset exactly one stride on is PREFERRED when it exists, so the
+    chain re-locks to the grid - purely local matching occasionally latched
+    onto a stray just past the threshold and then read every field of that
+    record from the wrong base, costing 7 of 2048 stops on the fixture.
+    Preferred, never required.
+
+Verified: exact record and StopPoint counts on a clean fixture, and **exact
+again after injecting a 251-byte phase shift halfway through the file** -
+which is the real failure reproduced deliberately. A bad gap now costs one
+record instead of the remainder of the file.
+
+### What the 91 records did confirm
+
+The layout beneath the bug held up. Within those 91 records: stride 707, type
+at +270, time at +200 chosen with a rising score of **0.9889** against 0.9444
+for the `+233` duration decoy and 0.5333 for the `+139`/`+140` pair (which
+also showed 35 resets, i.e. not a clock at all). 40 StopPoints and 40
+TrackSectionEntry in the same 91 records - the 1:1 relationship seen in the
+whole-file counts (5198 each) holds locally too.
+
+### Next step
+
+Re-run **Extract timetable**. Expect ~12,207 records, ~5,198 StopPoints, and
+a service count to compare against `extract_time_series`' independent 104.
