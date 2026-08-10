@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.48.1**
+**App version at end of session: 7.49.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,32 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.49.0 - RECORD LAYOUT SOLVED, timetable extracted
+
+The real Leven layer decoded and CONFIRMED: 12,207 records, stride 707
+(99.71% of gaps), type at +270, 93% typed, and all six whole-file type counts
+reproduced exactly (4/27/36/908/5198/5198).
+
+`extract_timetable()` / `/api/paks/timetable` / **Extract timetable** button
+now produces services with their stop times. The time field is chosen by
+ASCENDING behaviour, not plausibility - five offsets passed "is a tick count",
+including +139/+140 which are the same bytes read one byte apart, and +233
+which is a constant duration. +200 ascends and resets; that is the schedule.
+
+Two things worth remembering:
+  - offsets are relative to the ANCHOR (inside the record), not the record
+    start, so the GAP between type and time is the invariant;
+  - stray anchor hits must be filtered to the stride grid or phantom records
+    split services in two (40 -> 58 on a fixture before `_stride_chain`).
+
+Service segmentation is the ONLY heuristic left (600s gap, adjustable). It
+cannot be exact - real running times reach 5.6 min while services start
+minutes apart. CROSS-CHECK against extract_time_series' independent 104 runs.
+
+**Next: Extract timetable on the real Leven layer.** Near 104 services means
+segmentation is sound and the rest is writing to timetables.db. Station names
+are still missing from this asset entirely.
 
 ## What changed in v7.48.1 - anchor selection fixed (timetable work)
 

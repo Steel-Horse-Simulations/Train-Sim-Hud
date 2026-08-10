@@ -362,3 +362,68 @@ def main_fixed(out="/tmp/synth_fixed"):
     print(f"  type at +{type_at}, time at +{time_at}")
     print(f"  true distribution: {dict(Counter(truth).most_common())}")
     return base, truth, stride, type_at, time_at
+
+
+def build_uexp_leven(path, rng, stride=707, services=40):
+    """Mirrors the CONFIRMED real Leven Branch layout: 707-byte records, the
+    track-data type at +270, the schedule time at +200, and anchor names once
+    per record.
+
+    Also reproduces the traps the real file sets:
+      - decoy tick-sized values at other offsets, including a pair one byte
+        apart, which is what the real file showed at +139/+140 and is the
+        giveaway that a plain "is this a tick count" test is choosing the
+        field rather than any real evidence;
+      - a near-constant decoy that looks like a duration.
+    """
+    TYPE_AT, TIME_AT, ANCHOR_AT, DECOY_AT, DUR_AT = 270, 200, 0, 139, 233
+    weights = [("StopPoint", 42), ("TrackSectionEntry", 42), ("ReversePoint", 8),
+               ("MultiOccupancy", 4), ("GoVia", 3), ("ActionPoint", 1)]
+    pool = [t for t, w in weights for _ in range(w)]
+    buf = bytearray()
+    truth = []
+    for svc in range(services):
+        t = (5 + (svc % 18)) * 3600 + rng.randint(0, 1800)
+        n = rng.randint(90, 150)
+        svc_truth = {"start": t, "stops": 0, "points": n}
+        for i in range(n):
+            rec = bytearray()
+            while len(rec) < stride:
+                r = rng.random()
+                if r < 0.35:
+                    rec += struct.pack("<i", 0)
+                elif r < 0.75:
+                    rec += struct.pack("<f", rng.uniform(-4e4, 4e4))
+                else:
+                    rec += struct.pack("<i", rng.randint(1 << 20, (1 << 31) - 1))
+            rec = bytearray(rec[:stride])
+            for k, nm in enumerate(("Class", "Package", "Guid", "ServiceDataTracks",
+                                    "PropertyReference", "IntProperty")):
+                rec[ANCHOR_AT + k * 8:ANCHOR_AT + k * 8 + 8] = _fname(nm)
+            kind = rng.choice(pool)
+            if kind == "StopPoint":
+                svc_truth["stops"] += 1
+            rec[TYPE_AT:TYPE_AT + 8] = _fname(f"ETimetableTrackDataType::{kind}")
+            t += rng.randint(5, 45)
+            rec[TIME_AT:TIME_AT + 8] = struct.pack("<q", int(t * TICKS))
+            # decoys
+            rec[DECOY_AT:DECOY_AT + 8] = struct.pack("<q", int((4 * 3600 + rng.randint(0, 9)) * TICKS))
+            rec[DUR_AT:DUR_AT + 8] = struct.pack("<q", int(52 * 60 * TICKS))
+            buf += rec
+        svc_truth["end"] = t
+        truth.append(svc_truth)
+    with open(path, "wb") as f:
+        f.write(bytes(buf))
+    return truth, stride, TYPE_AT, TIME_AT
+
+
+def main_leven(out="/tmp/synth_leven"):
+    os.makedirs(out, exist_ok=True)
+    base = os.path.join(out, "FCE_Timetable_TT_Leven_Layer_DataTrack")
+    rng = random.Random(707)
+    build_uasset(base + ".uasset")
+    truth, stride, type_at, time_at = build_uexp_leven(base + ".uexp", rng)
+    total = sum(s["points"] for s in truth)
+    print(f"built {base}.uexp - {len(truth)} services, {total} records of {stride}b")
+    print(f"  type at +{type_at}, time at +{time_at}, decoys at +139 and +233")
+    return base, truth, stride, type_at, time_at

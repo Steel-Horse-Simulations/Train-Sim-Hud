@@ -289,10 +289,62 @@ def run_anchor_impostor():
     return ok
 
 
+def run_timetable_extraction():
+    """End-to-end extraction on a fixture built to the CONFIRMED real layout:
+    707-byte records, type at +270, time at +200, plus the decoys the real
+    file carries - a tick-sized value at +139 with its one-byte-shifted twin
+    at +140, and a near-constant duration at +233.
+
+    The decoys are the point. All of them pass a plain "is this a tick count
+    inside a day" test, so anything choosing the time field on that basis
+    alone picks wrong; only ascending-within-a-service separates them.
+    """
+    print("\n--- timetable extraction (real layout + real decoys) ---")
+    base, truth, stride, type_at, time_at = T.main_leven("/tmp/eval_leven")
+    r = pak_tools.extract_timetable(base + ".uexp")
+    if "error" in r:
+        print("  FAIL:", r["error"]); return False
+    ok = True
+    true_records = sum(s["points"] for s in truth)
+    true_stops = sum(s["stops"] for s in truth)
+    print(f"  records    {r['record_count']} (true {true_records})")
+    print(f"  StopPoints {r['type_counts'].get('StopPoint')} (true {true_stops})")
+    print(f"  services   {r['service_count']} (true {len(truth)})")
+    print(f"  time field +{r['time_field_offset']}, chosen from "
+          f"{[(c['offset'], c['rising']) for c in r['time_field_candidates'][:3]]}")
+
+    if r["stride"] != stride:
+        print(f"  FAIL: stride {r['stride']} != {stride}"); ok = False
+    if r["record_count"] != true_records:
+        print("  FAIL: record count - stray anchor hits not filtered"); ok = False
+    if r["type_counts"].get("StopPoint") != true_stops:
+        print("  FAIL: StopPoint count"); ok = False
+
+    # The chosen time field must be the ascending one, not a decoy. Offsets
+    # are relative to the ANCHOR, which sits inside the record, so compare
+    # the gap between the two fields rather than absolute positions.
+    gap = r["type_field_offset"] - r["time_field_offset"]
+    if gap != (type_at - time_at):
+        print(f"  FAIL: type/time gap {gap} != {type_at - time_at} - a decoy was chosen")
+        ok = False
+    else:
+        print(f"  type/time gap {gap} matches the fixture - real time field chosen")
+    if r["time_field_candidates"][0]["rising"] < 0.9:
+        print("  FAIL: winning field does not ascend"); ok = False
+
+    # Segmentation is a heuristic and known to merge closely-spaced services,
+    # so this is a sanity band, not an equality check.
+    if not (len(truth) * 0.5 <= r["service_count"] <= len(truth) * 1.5):
+        print(f"  FAIL: service count wildly off"); ok = False
+    if not (20 <= (r["median_duration_min"] or 0) <= 180):
+        print(f"  FAIL: implausible median duration {r['median_duration_min']}"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
                run_template_recovery(), run_fixed_stride(),
-               run_anchor_impostor()]
+               run_anchor_impostor(), run_timetable_extraction()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

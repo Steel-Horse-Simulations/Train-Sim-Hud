@@ -2618,3 +2618,198 @@ def decode_fixed_records(path, stride=None, anchor=None, width=4,
               "Treat the template offsets as unproven."
         ),
     }
+
+
+# A gap this large between consecutive track points is treated as a new
+# service rather than a slow section.
+#
+# THIS IS THE LEAST CERTAIN PART OF THE EXTRACTION and it is a heuristic, not
+# a measurement. Everything above it - the 707-byte stride, the type offset,
+# the time field - is confirmed against the real file. Service segmentation
+# is not: real station-to-station running times run to 5.6 minutes (measured
+# on the real Leven layer), while consecutive services can start only minutes
+# apart, so no single threshold separates the two cleanly. On a fixture whose
+# services sit ~10 minutes apart this merged 40 into 26.
+#
+# Cross-check the service count against the INDEPENDENT statistical result
+# from extract_time_series, which found 104 ascending runs on this layer. Two
+# unrelated methods agreeing is worth more than either number alone.
+SERVICE_BREAK_SECONDS = 600
+
+
+def _stride_chain(offsets, stride, tolerance=2):
+    """Keeps only the anchor hits that sit on the record grid.
+
+    Even a good anchor picks up a few coincidental matches, and each one
+    inserts a phantom record. That matters more than it sounds: a phantom
+    lands mid-service with an out-of-sequence time, the segmenter reads the
+    decrease as a new service starting, and one clean service is reported as
+    two. On a fixture with 40 services and 161 stray hits it reported 58.
+
+    Walking the chain and keeping only hits a whole number of strides from
+    the last accepted one removes them, while still tolerating the genuine
+    larger gaps - 0.3% of the real file's gaps are not 707.
+    """
+    if not offsets:
+        return []
+    kept = [offsets[0]]
+    for off in offsets[1:]:
+        delta = off - kept[-1]
+        if delta <= 0:
+            continue
+        n = round(delta / stride)
+        if n >= 1 and abs(delta - n * stride) <= tolerance:
+            kept.append(off)
+    return kept
+
+
+def extract_timetable(path, stride=None, anchor=None, type_offset=None,
+                      time_offset=None, width=4, max_services=200,
+                      service_break=None):
+    """Reads the timetable out of a fixed-stride DataTrack.
+
+    Everything this depends on is now confirmed against the real Leven Branch
+    layer rather than assumed: 12,207 records of 707 bytes (the stride holds
+    for 99.7% of gaps), the track-data type at a fixed offset in each record,
+    and all six type counts reproduced exactly from that offset against a
+    whole-file scan that assumed no structure at all.
+
+    The remaining choice is WHICH field is the schedule time, and it is made
+    on evidence rather than by picking the first plausible one. Several
+    offsets pass "is a tick count inside a day" - some of them are the same
+    bytes read one byte apart, which is a giveaway that a threshold was doing
+    the choosing. The schedule time is the one that ASCENDS from record to
+    record along a service and resets at the start of the next, so candidates
+    are scored on exactly that.
+    """
+    layout = decode_fixed_records(path, stride=stride, anchor=anchor, width=width)
+    if "error" in layout:
+        return layout
+
+    stride = layout["stride"]
+    type_offset = type_offset if type_offset is not None else layout["type_field_offset"]
+    with open(path, "rb") as f:
+        data = f.read()
+    uasset = layout["uasset"]
+    with open(uasset, "rb") as f:
+        names = _read_fname_strings(f.read())
+    type_idx = {i: n.split("::")[-1] for i, n in enumerate(names)
+                if "::" in n and n.split("::")[-1] in _TRACK_DATA_TYPES}
+
+    # Record starts come from the anchor, not from stepping blindly by the
+    # stride - 0.3% of gaps are not 707, and stepping would drift past them.
+    refs = _name_ref_offsets(data, names, width)
+    name_to_idx = {n: i for i, n in enumerate(names)}
+    starts = _stride_chain(refs[name_to_idx[layout["anchor"]]], stride)
+
+    fmt = "<ii" if width == 4 else "<qq"
+    step = 2 * width
+
+    def read_type(s):
+        o = s + type_offset
+        if o + step > len(data):
+            return None
+        idx, num = struct.unpack_from(fmt, data, o)
+        return type_idx.get(idx) if num == 0 else None
+
+    def read_time(s, d):
+        o = s + d
+        if o + 8 > len(data):
+            return None
+        (raw,) = struct.unpack_from("<q", data, o)
+        return raw / TICKS_PER_SECOND if 0 < raw < TICKS_PER_DAY else None
+
+    # Pick the time field by ascending behaviour.
+    candidates = []
+    for d, _share, _distinct in layout["time_field_offsets"][:8]:
+        vals = [read_time(s, d) for s in starts]
+        pairs = [(a, b) for a, b in zip(vals, vals[1:]) if a is not None and b is not None]
+        if not pairs:
+            continue
+        rising = sum(1 for a, b in pairs if b > a) / len(pairs)
+        resets = sum(1 for a, b in pairs if b < a)
+        # Strict > and a distinct-value count, both because a field of
+        # identical values scores a perfect ascending ratio under >= and a
+        # run of zeros then looks like a flawless result.
+        candidates.append({"offset": d, "rising": round(rising, 4),
+                           "resets": resets, "distinct": len(set(v for v in vals if v))})
+    candidates.sort(key=lambda c: (c["rising"], c["distinct"]), reverse=True)
+    if time_offset is None:
+        if not candidates:
+            return {"error": "no_time_field", "layout": layout}
+        time_offset = candidates[0]["offset"]
+
+    # Walk the records in file order.
+    records = []
+    for s in starts:
+        t = read_time(s, time_offset)
+        records.append({"offset": s, "type": read_type(s), "seconds": t})
+
+    # Segment into services. A boundary shows up EITHER as the clock going
+    # backwards or as a large jump forwards - services stored in ascending
+    # start order never go backwards at all, and splitting only on a
+    # decrease merged forty of them into eight on the fixture. Within a
+    # service consecutive track points are seconds apart, so a gap of
+    # minutes is unambiguous.
+    services, cur = [], []
+    for r in records:
+        if r["seconds"] is None:
+            continue
+        if cur:
+            delta = r["seconds"] - cur[-1]["seconds"]
+            if delta < 0 or delta > (service_break or SERVICE_BREAK_SECONDS):
+                services.append(cur)
+                cur = [r]
+                continue
+        cur.append(r)
+    if cur:
+        services.append(cur)
+
+    out = []
+    for svc in services[:max_services]:
+        stops = [r for r in svc if r["type"] == "StopPoint"]
+        # A stop should carry an arrival and a departure - two records at the
+        # same place seconds apart. First stop (departure only), last stop
+        # (arrival only) and freight (no arrivals) are CORRECT data, so
+        # unpaired entries are counted, never dropped.
+        paired = sum(1 for a, b in zip(stops, stops[1:])
+                     if 0 <= b["seconds"] - a["seconds"] <= 180)
+        out.append({
+            "start_offset": svc[0]["offset"],
+            "track_points": len(svc),
+            "stop_count": len(stops),
+            "first": _fmt_hms(svc[0]["seconds"]),
+            "last": _fmt_hms(svc[-1]["seconds"]),
+            "duration_min": round((svc[-1]["seconds"] - svc[0]["seconds"]) / 60, 1),
+            "close_pairs": paired,
+            "stops": [{"time": _fmt_hms(r["seconds"]), "offset": r["offset"]}
+                      for r in stops[:60]],
+        })
+
+    typed = Counter(r["type"] for r in records if r["type"])
+    durations = sorted(s["duration_min"] for s in out)
+    return {
+        "path": path,
+        "stride": stride,
+        "record_count": len(starts),
+        "anchor": layout["anchor"],
+        "type_field_offset": type_offset,
+        "time_field_offset": time_offset,
+        "time_field_candidates": candidates[:6],
+        "layout_confirmed": layout["confirmed"],
+        "type_counts": dict(typed.most_common()),
+        "service_count": len(services),
+        "service_break_seconds": service_break or SERVICE_BREAK_SECONDS,
+        "median_duration_min": durations[len(durations) // 2] if durations else None,
+        "median_stops": (sorted(s["stop_count"] for s in out)[len(out) // 2]
+                         if out else None),
+        "services": out,
+        "verdict": (
+            f"{len(services)} services from {len(starts)} records, "
+            f"{typed.get('StopPoint', 0)} StopPoints. Time read at +{time_offset}, "
+            f"chosen because it ascends within a service and resets between. "
+            f"Service segmentation is a {service_break or SERVICE_BREAK_SECONDS}s "
+            "gap heuristic - cross-check the count against extract_time_series, "
+            "which found 104 runs independently."
+        ),
+    }

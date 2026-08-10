@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.48.1"
+APP_VERSION = "7.49.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1711,6 +1711,36 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/timetable", methods=["POST"])
+def paks_timetable():
+    """Reads the actual timetable out of a DataTrack: services, their track
+    points, and the StopPoint times within each.
+    Body: {"asset_name": "...", "service_break": optional seconds}
+
+    Builds on the confirmed layout - 707-byte records, type and time at fixed
+    offsets, all six type counts reproduced exactly. Service segmentation is
+    the one heuristic part; cross-check its count against /api/paks/services,
+    which finds runs by a completely different method."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    brk = body.get("service_break")
+    return jsonify(pak_tools.extract_timetable(
+        path, service_break=int(brk) if brk else None))
 
 
 @app.route("/api/paks/decode_fixed", methods=["POST"])

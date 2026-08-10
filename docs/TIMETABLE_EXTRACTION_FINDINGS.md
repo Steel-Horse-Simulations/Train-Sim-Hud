@@ -5,10 +5,14 @@ Written up so this doesn't have to be rediscovered.
 
 ## Verdict
 
-The full offline timetable data **is present and readable**. Times are
-recovered, segmented into services, and station stops are now separated from
-the simulated running times around them. What remains is writing them into
-`timetables.db` as journeys and stops.
+**The record layout is SOLVED** (v7.48.1/7.49.0, confirmed against the real
+Leven Branch layer). 12,207 fixed 707-byte records; the track-data type at a
+fixed offset in every record, reproducing all six whole-file type counts
+exactly; the schedule time identified by ascending behaviour. Services and
+stop times are extracted by `/api/paks/timetable`.
+
+What remains: station NAMES (not present in this asset), and writing the
+result into `timetables.db`.
 
 IMPORTANT CAVEAT ON THIS DOCUMENT: everything in sections 1-8 is confirmed
 against a **real TSW6 install**. The StopPoint work at the end has now had ONE
@@ -796,3 +800,85 @@ real Leven layer. Expect anchor `Class`, 12,207 records, stride 707, and a
 type distribution at or below 5198/5198/908/36/27/4. If `confirmed` comes
 back true this time, the record layout is settled and the remaining work is
 reading the time fields and writing journeys into `timetables.db`.
+
+## SOLVED: the record layout, confirmed on the real file (v7.49.0)
+
+`decode_fixed_records` on the real Leven Branch layer, with the anchor bug
+fixed:
+
+```
+anchor           IntProperty
+record_starts    12207
+stride           707        (holds for 99.71% of gaps)
+type offset      +270       93% of records typed
+confirmed        true
+                 decoded            whole-file bound
+ActionPoint            4    /    4
+GoVia                 27    /   27
+MultiOccupancy        36    /   36
+ReversePoint         908    /  908
+StopPoint           5198    / 5198
+TrackSectionEntry   5198    / 5198
+```
+
+Six exact matches, including ActionPoint at 4 where being off by one record
+would show. A wrong stride cannot produce a field present in 93% of records
+AND land on six independent counts.
+
+### Which field is the time
+
+Five offsets passed "is a tick count inside a day". Two of them - `+139` and
+`+140` - are one byte apart, i.e. the SAME bytes read twice, which is the
+giveaway that a threshold was doing the choosing rather than any evidence.
+`+233` sat near-constant at 00:52:05, a duration rather than a clock.
+
+`+200` ascends across consecutive records (05:20:00 -> 05:20:38 over the
+first twelve) and resets between services. `extract_timetable()` therefore
+selects the time field on ASCENDING BEHAVIOUR, not on plausibility, and
+reports the runners-up with their scores so the choice is auditable.
+
+### Where the offsets are measured from
+
+Offsets are relative to the ANCHOR reference, not to the record start, and
+the anchor sits inside the record. On a fixture with the type at +270 and
+time at +200 from the record start, the tool reports +246 and +176 because
+the anchor is 24 bytes in. **The GAP between the two is the invariant** -
+that is what the regression test asserts.
+
+### Stray anchor hits have to be filtered
+
+Even a good anchor collects a few coincidental matches, and each inserts a
+phantom record whose out-of-sequence time makes the segmenter split one
+service into two. On a fixture with 40 services and 161 stray hits it
+reported 58. `_stride_chain()` keeps only hits a whole number of strides from
+the last accepted one, which restored the record count to exact while still
+tolerating the 0.3% of real gaps that are not 707.
+
+### Service segmentation is the one HEURISTIC part
+
+Everything above is measured. This is not. A boundary shows as the clock
+going backwards OR as a large forward jump - services stored in ascending
+start order never go backwards at all, and splitting only on a decrease
+merged 40 fixture services into 8. The current rule is a 600s gap, adjustable
+via `service_break`.
+
+It cannot be made exact by tuning: real station-to-station running times
+reach 5.6 minutes on this very layer, while consecutive services can start
+minutes apart. On a fixture whose services sit ~10 minutes apart it still
+merges 40 into 26.
+
+**Cross-check the service count against `extract_time_series`, which found
+104 ascending runs on this layer by a completely unrelated method.** Two
+independent methods agreeing is worth more than either number alone.
+
+### Next step
+
+Run **Extract timetable** on the real Leven layer. Then:
+  - if the service count lands near 104, segmentation is sound and the
+    remaining work is writing journeys and stops into `timetables.db`;
+  - if it is far off, adjust `service_break` rather than anything upstream -
+    the layout beneath it is confirmed.
+
+Station names are still absent from this asset (`NetworkRibbonLocation` holds
+P2K-style track ribbon IDs, not station names), so stops will have times and
+positions but no labels until the index asset is decoded.
