@@ -1073,3 +1073,52 @@ writing journeys and calls into `timetables.db`.
 
 Station NAMES remain absent from this asset - calls will have times and
 positions but no labels.
+
+## The +407 near-miss, and 3-record service headers (v7.51.1)
+
+Running with 39 in the Services box found a field at **+407 with 37 runs**,
+and because the tolerance was 10% it was accepted and used INSTEAD of the
+known count. The result decomposes cleanly and shows the field is wrong in
+both directions at once:
+
+```
+11 x  3 records, 0 stops, 0 duration     <- fragments
+18 x ~355 records, ~154 stops, 11-13 calls  <- correct single services
+ 5 x ~1070 records, 33-34 calls           <- ~3 services merged each
+ 2 x  short (94 and 48 records)
+```
+
+Each 3-record fragment shares its start time with a full service that follows
+it, so **+407 splits 11 services three records early**, and it **fails to
+split 5 boundaries at all**. 18 + 5x3 + 2 = 35, not 39.
+
+Tolerance is now **exact within 1**. A field that is nearly right about the
+COUNT can be wrong about every BOUNDARY, so closeness is not evidence. With
+39 given and 37 found, it now falls back to cutting at the 38 strongest
+boundaries.
+
+### The 3-record fragments are worth a look
+
+They are not noise. Eleven of them, exactly 3 records each, no StopPoints, no
+duration, each at the exact start time of the service that follows - 06:15,
+06:57, 09:15, 10:01, 12:15, 13:02, 15:17, 16:04, 18:14, 19:05, 21:23, all on
+the minute.
+
+That looks like a per-service HEADER: a few records carrying the service's
+identity and start time rather than a position on the track. If every service
+has one, they are the real service boundary, and finding what distinguishes
+them would settle segmentation without needing the count from the game at
+all. They are also the most likely place for a headcode to live - which would
+give the services names, something this layer otherwise lacks entirely.
+
+Times on the exact minute are the tell: every other time in the file is a
+running time to the second.
+
+### Next step
+
+Re-run with 39 in the Services box - it will now use the known-count cut
+rather than the +407 field. Expect 37 services of ~13 calls and 2 short ones.
+
+Then worth investigating: what is in those 3-record headers? A record
+template anchored on them, compared against a normal track record, should
+show which fields differ.

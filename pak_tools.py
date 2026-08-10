@@ -3036,8 +3036,17 @@ def find_service_field(path, stride=None, anchor=None, width=4,
     else:
         candidates.sort(key=score, reverse=True)
     best = candidates[0] if candidates else None
-    if expected_runs and best and abs(best["runs"] - expected_runs) > max(2, expected_runs * 0.1):
-        best = None      # nothing close enough to be the service boundary
+    if expected_runs and best and abs(best["runs"] - expected_runs) > 1:
+        # EXACT, near enough. A 10% tolerance was tried and is far too loose:
+        # on the real Leven layer, with 39 services known from the game, it
+        # accepted a field at +407 with 37 runs and used it in preference to
+        # the known count. That field was wrong in both directions at once -
+        # it split 11 services three records early, leaving 3-record
+        # fragments carrying no stops, AND failed to split 5 boundaries at
+        # all, producing blocks of ~1,070 points where a service is ~355.
+        # A field that is nearly right about the COUNT can still be wrong
+        # about every boundary, so closeness is not evidence.
+        best = None
 
     # A distribution of run counts across all offsets, so "nothing found" is
     # accompanied by what the file actually contains.

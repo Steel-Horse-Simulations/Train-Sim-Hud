@@ -460,12 +460,42 @@ def run_fife_shape():
     return ok
 
 
+def run_near_miss_rejection():
+    """A field with NEARLY the right number of runs must be rejected, not
+    used.
+
+    On the real Leven layer, with 39 services known from the game, a 10%
+    tolerance accepted a field at +407 with 37 runs and preferred it to the
+    known count. That field was wrong in both directions at once: it split 11
+    services three records early - leaving 3-record fragments with no stops -
+    and failed to split 5 boundaries at all, giving blocks of ~1,070 points
+    where a service is ~355. Being close on the COUNT says nothing about the
+    BOUNDARIES.
+    """
+    print("\n--- a nearly-right service field must be rejected ---")
+    base, truth, _s, _t, _tm = T.main_leven("/tmp/eval_near")
+    ok = True
+
+    exact = pak_tools.extract_timetable(base + ".uexp", expected_services=40)
+    print(f"  told 40, field has 40: {exact['service_count']} via {exact['segmented_by']}")
+    if "service id" not in exact["segmented_by"] or exact["service_count"] != 40:
+        print("  FAIL: an exactly-matching field should be used"); ok = False
+
+    near = pak_tools.extract_timetable(base + ".uexp", expected_services=45)
+    print(f"  told 45, field has 40: {near['service_count']} via {near['segmented_by']}")
+    if "service id" in near["segmented_by"]:
+        print("  FAIL: used a field whose run count does not match"); ok = False
+    if near["service_count"] != 45:
+        print("  FAIL: did not fall back to the known count"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
                run_template_recovery(), run_fixed_stride(),
                run_anchor_impostor(), run_timetable_extraction(),
                run_phase_shift_recovery(), run_service_field(),
-               run_fife_shape()]
+               run_fife_shape(), run_near_miss_rejection()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

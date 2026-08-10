@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.51.0**
+**App version at end of session: 7.51.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,20 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.51.1 - reject near-miss service fields
+
+With 39 entered, a field at +407 with 37 runs was accepted (10% tolerance) and
+used instead of the known count. It was wrong in both directions: split 11
+services 3 records early (leaving 3-record fragments) and failed to split 5
+boundaries at all, giving blocks of ~1070 points where a service is ~355.
+18 + 5x3 + 2 = 35, not 39. Tolerance is now exact-within-1.
+
+DISCOVERY worth following up: those 11 fragments are exactly 3 records, no
+stops, no duration, each at the exact start time of the service that follows,
+all ON THE MINUTE while every other time in the file is to the second. That
+looks like a per-service HEADER - and the most likely home for a headcode,
+which would give services names this layer otherwise lacks.
 
 ## What changed in v7.51.0 - station CALLS, and ground truth from the game
 
