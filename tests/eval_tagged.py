@@ -383,11 +383,45 @@ def run_phase_shift_recovery():
     return ok
 
 
+def run_service_field():
+    """Segmentation must be STRUCTURAL where a service identifier exists.
+
+    The clock cannot settle it on the real file: the largest gap between
+    consecutive stops is 396s, so a 600s threshold never fires, and the
+    answer swings between 36 services (clock) and 104 (statistical). A field
+    holding one value per service decides it. The fixture also plants a
+    two-value flag that must NOT be mistaken for an identifier.
+    """
+    print("\n--- structural service segmentation ---")
+    base, truth, stride, type_at, time_at = T.main_leven("/tmp/eval_svc")
+    ok = True
+    f = pak_tools.find_service_field(base + ".uexp")
+    if "error" in f or not f.get("best"):
+        print("  FAIL: no service field found"); return False
+    b = f["best"]
+    print(f"  field at +{b['offset']}: {b['runs']} runs, {b['distinct']} distinct "
+          f"(true services {len(truth)})")
+    if b["runs"] != len(truth):
+        print("  FAIL: run count != service count"); ok = False
+    if b["distinct"] != len(truth):
+        print("  FAIL: distinct values != service count"); ok = False
+
+    r = pak_tools.extract_timetable(base + ".uexp")
+    print(f"  extract: {r['service_count']} services via {r['segmented_by']}")
+    if r["service_count"] != len(truth):
+        print("  FAIL: extraction did not use it"); ok = False
+    if "service id" not in r["segmented_by"]:
+        print("  FAIL: fell back to the clock despite a field being present"); ok = False
+    if r["type_counts"].get("StopPoint") != sum(s["stops"] for s in truth):
+        print("  FAIL: StopPoint count changed"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
                run_template_recovery(), run_fixed_stride(),
                run_anchor_impostor(), run_timetable_extraction(),
-               run_phase_shift_recovery()]
+               run_phase_shift_recovery(), run_service_field()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.49.1**
+**App version at end of session: 7.50.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,26 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.50.0 - full extraction, and structural segmentation
+
+Real Leven layer: 12,207 records, stride 707, type +270, time +200, and ALL
+six type counts exact (5198/5198/908/36/27/4). Layout and fields are settled.
+
+Open question: the clock heuristic says 36 services of ~152 stops; the earlier
+statistical method said 104. The clock CANNOT arbitrate - the largest gap
+between consecutive stops in the whole file is 396s, so the 600s threshold
+never fires, and lowering it hits real 6.6-minute running gaps.
+
+`find_service_field()` / `/api/paks/service_field` / **Find service field**
+scans every offset for a value that holds in runs. Runs = services. Scored on
+runs and distinct values AGREEING, which rejects alternating flags. Validated:
+40 runs / 40 distinct against 40 true services on a fixture, where the clock
+gave 26. extract_timetable uses it when found and reports `segmented_by`.
+
+**Next: Find service field on the real layer.** ~104 runs vindicates the
+statistical result; ~36 vindicates the clock; nothing found means the clock is
+genuinely all there is.
 
 ## What changed in v7.49.1 - chain bug: 91 records instead of 12,207
 

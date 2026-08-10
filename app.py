@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.49.1"
+APP_VERSION = "7.50.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1711,6 +1711,34 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/service_field", methods=["POST"])
+def paks_service_field():
+    """Looks for a field that identifies the service, so segmentation is
+    structural rather than a guess at a time gap.
+    Body: {"asset_name": "..."}
+
+    On the real Leven layer the clock cannot settle this: the largest gap
+    between consecutive stops is 396s, so a 600s threshold never fires, and
+    the answer swings between 36 and 104 services depending on which method
+    is asked. A field holding one value per service answers it outright."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    return jsonify(pak_tools.find_service_field(path))
 
 
 @app.route("/api/paks/timetable", methods=["POST"])

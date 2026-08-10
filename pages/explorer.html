@@ -84,6 +84,7 @@
         <button class="btn primary" onclick="recordTemplate()">Recover record template</button>
         <button class="btn primary" onclick="decodeFixed()">Decode fixed records</button>
         <button class="btn primary" onclick="extractTimetable()">Extract timetable</button>
+        <button class="btn primary" onclick="serviceField()">Find service field</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -359,6 +360,35 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function serviceField() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Looking for a field that holds one value per service…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/service_field',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop()})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    const b=d.best;
+    status.innerHTML=b?`<span style="color:var(--status-green);">+${b.offset}: ${b.runs} runs, `
+      +`${b.distinct} distinct</span> <span class="small dim">· ${d.record_count} records `
+      +`· median run ${b.median_run}</span>`
+      :`<span style="color:var(--status-amber);">no service field found</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
+        background:rgba(255,255,255,0.04);border-left:3px solid var(--accent);">${esc(d.verdict)}</p>`
+      +`<div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);
+         border-radius:5px;max-height:320px;overflow:auto;">
+         <div class="dim">offset   runs  distinct  medrun  minrun  maxrun</div>`
+      +(d.candidates||[]).map(c=>`<div>+${String(c.offset).padEnd(6)} ${String(c.runs).padStart(5)}
+         ${String(c.distinct).padStart(9)} ${String(c.median_run).padStart(7)}
+         ${String(c.min_run).padStart(7)} ${String(c.max_run).padStart(7)}</div>`).join('')
+      +`</div>`;
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }
 
 async function extractTimetable() {

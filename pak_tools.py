@@ -2686,7 +2686,7 @@ def _stride_chain(offsets, stride, min_fraction=0.9):
 
 def extract_timetable(path, stride=None, anchor=None, type_offset=None,
                       time_offset=None, width=4, max_services=200,
-                      service_break=None):
+                      service_break=None, service_field_offset=None):
     """Reads the timetable out of a fixed-stride DataTrack.
 
     Everything this depends on is now confirmed against the real Leven Branch
@@ -2766,28 +2766,65 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
         t = read_time(s, time_offset)
         records.append({"offset": s, "type": read_type(s), "seconds": t})
 
-    # Segment into services. A boundary shows up EITHER as the clock going
-    # backwards or as a large jump forwards - services stored in ascending
-    # start order never go backwards at all, and splitting only on a
-    # decrease merged forty of them into eight on the fixture. Within a
-    # service consecutive track points are seconds apart, so a gap of
-    # minutes is unambiguous.
+    # Segment into services. A SERVICE ID FIELD is used when one can be
+    # found, because it is structural: it says where a service ends rather
+    # than inferring it. The clock is the fallback only.
+    #
+    # This matters because the clock cannot settle it. On the real Leven
+    # layer the largest gap between consecutive stops is 396 seconds, so a
+    # 600s threshold never fires and every split came from the clock going
+    # backwards - 36 services of ~152 stops, against 104 runs from the
+    # earlier statistical method. No threshold distinguishes those two
+    # answers; a field that holds one value per service does.
+    svc_field = None
+    if service_field_offset is None:
+        found = find_service_field(path, stride=stride, anchor=layout["anchor"],
+                                   width=width)
+        best = found.get("best") if isinstance(found, dict) else None
+        if best and best["runs"] >= 2:
+            svc_field = best["offset"]
+    else:
+        svc_field = service_field_offset
+
     services, cur = [], []
-    for r in records:
-        if r["seconds"] is None:
-            continue
-        if cur:
-            delta = r["seconds"] - cur[-1]["seconds"]
-            if delta < 0 or delta > (service_break or SERVICE_BREAK_SECONDS):
+    if svc_field is not None:
+        def read_id(s):
+            o = s + svc_field
+            if o + 4 > len(data):
+                return None
+            return struct.unpack_from("<i", data, o)[0]
+        last = object()
+        for s_off, r in zip(starts, records):
+            sid = read_id(s_off)
+            r["service_id"] = sid
+            if cur and sid != last:
                 services.append(cur)
-                cur = [r]
+                cur = []
+            cur.append(r)
+            last = sid
+        if cur:
+            services.append(cur)
+        segmented_by = f"service id field at +{svc_field}"
+    else:
+        for r in records:
+            if r["seconds"] is None:
                 continue
-        cur.append(r)
-    if cur:
-        services.append(cur)
+            if cur:
+                delta = r["seconds"] - cur[-1]["seconds"]
+                if delta < 0 or delta > (service_break or SERVICE_BREAK_SECONDS):
+                    services.append(cur)
+                    cur = [r]
+                    continue
+            cur.append(r)
+        if cur:
+            services.append(cur)
+        segmented_by = f"clock heuristic ({service_break or SERVICE_BREAK_SECONDS}s gap)"
 
     out = []
     for svc in services[:max_services]:
+        svc = [r for r in svc if r["seconds"] is not None]
+        if not svc:
+            continue
         stops = [r for r in svc if r["type"] == "StopPoint"]
         # A stop should carry an arrival and a departure - two records at the
         # same place seconds apart. First stop (departure only), last stop
@@ -2796,6 +2833,7 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
         paired = sum(1 for a, b in zip(stops, stops[1:])
                      if 0 <= b["seconds"] - a["seconds"] <= 180)
         out.append({
+            "service_id": svc[0].get("service_id"),
             "start_offset": svc[0]["offset"],
             "track_points": len(svc),
             "stop_count": len(stops),
@@ -2821,6 +2859,8 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
         "type_counts": dict(typed.most_common()),
         "service_count": len(services),
         "service_break_seconds": service_break or SERVICE_BREAK_SECONDS,
+        "segmented_by": segmented_by,
+        "service_field_offset": svc_field,
         "median_duration_min": durations[len(durations) // 2] if durations else None,
         "median_stops": (sorted(s["stop_count"] for s in out)[len(out) // 2]
                          if out else None),
@@ -2829,8 +2869,115 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
             f"{len(services)} services from {len(starts)} records, "
             f"{typed.get('StopPoint', 0)} StopPoints. Time read at +{time_offset}, "
             f"chosen because it ascends within a service and resets between. "
-            f"Service segmentation is a {service_break or SERVICE_BREAK_SECONDS}s "
-            "gap heuristic - cross-check the count against extract_time_series, "
-            "which found 104 runs independently."
+            f"Segmented by {segmented_by}."
+        ),
+    }
+
+
+def find_service_field(path, stride=None, anchor=None, width=4,
+                       min_runs=4, max_runs=4000):
+    """Looks for a field that IDENTIFIES the service, rather than inferring
+    service boundaries from the clock.
+
+    Time-gap segmentation cannot settle this and should not be tuned until
+    it agrees with something. On the real Leven layer the largest gap between
+    consecutive stops is 396 seconds, so a 600s threshold never fires at all
+    and every split came from the clock going backwards - giving 36 services
+    of ~152 stops each, against 104 runs found by the earlier statistical
+    method. One of those two numbers is wrong and no amount of threshold
+    tuning distinguishes them.
+
+    A service ID does. It is constant for every record of one service and
+    changes at the boundary, so scanning each offset in the record for a
+    value that holds in runs answers the question directly: the number of
+    runs IS the number of services.
+
+    Reported with the run count, the distinct-value count and the run length
+    spread, because the giveaway for a real ID is that runs and distinct
+    values roughly agree - a field that alternates between two values gives
+    thousands of runs and two distinct values, and is not an identifier.
+    """
+    layout = decode_fixed_records(path, stride=stride, anchor=anchor, width=width)
+    if "error" in layout:
+        return layout
+    stride = layout["stride"]
+    with open(path, "rb") as f:
+        data = f.read()
+    with open(layout["uasset"], "rb") as f:
+        names = _read_fname_strings(f.read())
+    refs = _name_ref_offsets(data, names, width)
+    name_to_idx = {n: i for i, n in enumerate(names)}
+    starts = _stride_chain(refs[name_to_idx[layout["anchor"]]], stride)
+    if len(starts) < 32:
+        return {"error": "too_few_records", "records": len(starts)}
+
+    candidates = []
+    for d in range(0, stride - 4):
+        vals = []
+        ok = True
+        for s in starts:
+            o = s + d
+            if o + 4 > len(data):
+                ok = False
+                break
+            vals.append(struct.unpack_from("<i", data, o)[0])
+        if not ok:
+            continue
+        runs = 1
+        lengths = []
+        cur = 1
+        for a, b in zip(vals, vals[1:]):
+            if a == b:
+                cur += 1
+            else:
+                runs += 1
+                lengths.append(cur)
+                cur = 1
+        lengths.append(cur)
+        if not (min_runs <= runs <= max_runs):
+            continue
+        distinct = len(set(vals))
+        # A real identifier holds a value for a whole service, so its run
+        # count and its distinct-value count are of the same order. A flag
+        # that flips between two states produces many runs and two values.
+        if distinct < runs * 0.5:
+            continue
+        lengths.sort()
+        candidates.append({
+            "offset": d,
+            "runs": runs,
+            "distinct": distinct,
+            "median_run": lengths[len(lengths) // 2],
+            "min_run": lengths[0],
+            "max_run": lengths[-1],
+            "ascending": sum(1 for a, b in zip(vals, vals[1:]) if b > a),
+        })
+
+    # Prefer the tidiest identifier: runs and distinct values in step, and
+    # run lengths that do not vary wildly.
+    def score(c):
+        agree = min(c["runs"], c["distinct"]) / max(c["runs"], c["distinct"])
+        spread = c["median_run"] / max(1, c["max_run"])
+        return agree * spread
+
+    candidates.sort(key=score, reverse=True)
+    best = candidates[0] if candidates else None
+    return {
+        "path": path,
+        "stride": stride,
+        "record_count": len(starts),
+        "anchor": layout["anchor"],
+        "candidates": candidates[:15],
+        "best": best,
+        "verdict": (
+            f"Best candidate at +{best['offset']}: {best['runs']} runs, "
+            f"{best['distinct']} distinct values, median run "
+            f"{best['median_run']} records. If that run count matches a "
+            "plausible service count, this field IS the service boundary and "
+            "the clock heuristic can be retired."
+            if best else
+            "No field holds a value in service-length runs. Services may not "
+            "be identified inside the record at all, in which case the clock "
+            "is the only available signal."
         ),
     }

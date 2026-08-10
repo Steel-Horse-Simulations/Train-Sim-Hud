@@ -926,3 +926,69 @@ whole-file counts (5198 each) holds locally too.
 
 Re-run **Extract timetable**. Expect ~12,207 records, ~5,198 StopPoints, and
 a service count to compare against `extract_time_series`' independent 104.
+
+## Full extraction on the real file, and the segmentation question (v7.50.0)
+
+`extract_timetable` on the real Leven Branch layer, chain bug fixed:
+
+```
+records      12207        stride 707      layout_confirmed true
+type at      +270         time at +200
+StopPoint 5198 · TrackSectionEntry 5198 · ReversePoint 908
+MultiOccupancy 36 · GoVia 27 · ActionPoint 4
+```
+
+Every count exact against the whole-file bound. **The record layout and the
+type and time fields are settled.**
+
+The time field won on evidence, on the full file this time: `+200` scored
+0.9414 rising with 32 resets, against 0.8955 for the `+233` duration and
+0.4315 for `+139` - which showed **5,491 resets**, so it is not a clock at
+all. The one-byte-shifted twins (`+140`, `+234`) track their partners
+exactly, as they must.
+
+### Services: 36 or 104?
+
+The clock heuristic gave **36 services of ~152 stops each, 66-70 minutes**.
+The earlier statistical `extract_time_series` gave **104 runs**. Both cannot
+be right.
+
+The clock cannot arbitrate, and this is measurable rather than a matter of
+opinion: **the largest gap between any two consecutive stops in the whole
+file is 396 seconds.** The 600s threshold therefore never fires - all 36
+splits came from the clock going backwards. Lowering it does not help
+either, since real running gaps reach 6.6 minutes and consecutive services
+can start closer together than that. No threshold separates them.
+
+### `find_service_field()` - ask the record, not the clock
+
+A service identifier is constant for every record of one service and changes
+at the boundary, so scanning each offset for a value that holds in runs
+answers the question outright: **the number of runs IS the number of
+services.**
+
+Candidates are scored on runs and distinct values AGREEING. That test is
+what rejects the obvious impostor: a flag alternating between two states
+produces thousands of runs and two distinct values, and is not an
+identifier. The fixture plants exactly such a flag to keep the test honest.
+
+Validated on a fixture with a known ID: found at the right offset with **40
+runs and 40 distinct values against 40 true services**, the alternating flag
+rejected, and `extract_timetable` then segmented to exactly 40 - where the
+clock heuristic on the same file gave 26.
+
+`extract_timetable` now uses the field when one is found and reports which
+method it used in `segmented_by`; the clock remains the fallback only.
+
+### Next step
+
+Run **Find service field** on the real Leven layer.
+  - A candidate with runs ~104 confirms the statistical result and the clock
+    was merging services roughly 3:1.
+  - A candidate with runs ~36 confirms the clock and means the statistical
+    method was over-segmenting.
+  - No candidate at all means services are not identified inside the record,
+    and the clock is genuinely the only signal available - in which case the
+    threshold has to be chosen knowing it cannot be exact.
+
+Then **Extract timetable**, which will use whatever it finds.

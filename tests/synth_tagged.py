@@ -377,6 +377,7 @@ def build_uexp_leven(path, rng, stride=707, services=40):
       - a near-constant decoy that looks like a duration.
     """
     TYPE_AT, TIME_AT, ANCHOR_AT, DECOY_AT, DUR_AT = 270, 200, 0, 139, 233
+    SERVICE_AT, FLAG_AT = 420, 460
     weights = [("StopPoint", 42), ("TrackSectionEntry", 42), ("ReversePoint", 8),
                ("MultiOccupancy", 4), ("GoVia", 3), ("ActionPoint", 1)]
     pool = [t for t, w in weights for _ in range(w)]
@@ -406,6 +407,14 @@ def build_uexp_leven(path, rng, stride=707, services=40):
             rec[TYPE_AT:TYPE_AT + 8] = _fname(f"ETimetableTrackDataType::{kind}")
             t += rng.randint(5, 45)
             rec[TIME_AT:TIME_AT + 8] = struct.pack("<q", int(t * TICKS))
+            # A service identifier: constant for every record of one service,
+            # changing at the boundary. This is what find_service_field has
+            # to locate, and it is the structural answer to segmentation that
+            # a time-gap threshold cannot give.
+            rec[SERVICE_AT:SERVICE_AT + 4] = struct.pack("<i", 4000 + svc)
+            # A decoy that flips between two values - many runs, two distinct
+            # values - which an identifier search must NOT mistake for an ID.
+            rec[FLAG_AT:FLAG_AT + 4] = struct.pack("<i", i % 2)
             # decoys
             rec[DECOY_AT:DECOY_AT + 8] = struct.pack("<q", int((4 * 3600 + rng.randint(0, 9)) * TICKS))
             rec[DUR_AT:DUR_AT + 8] = struct.pack("<q", int(52 * 60 * TICKS))
