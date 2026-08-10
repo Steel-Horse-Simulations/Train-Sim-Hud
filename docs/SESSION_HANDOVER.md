@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.52.0**
+**App version at end of session: 7.53.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,30 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.53.0 - time clustering does NOT give station calls
+
+The tuned run reported median 13 calls at a 65s gap. It was FITTED. The
+plateau check caught it: median 13 occurs at exactly ONE of 77 gap values,
+and the curve is a smooth continuum 45->1 with no flat step. The fixture,
+built with real separation, has a 64-value plateau. A continuum means the
+times carry no grouping, so the number came from the threshold.
+
+Had call_gap_curve not been reported, "median 13" would have looked like a
+triumph. Check the PLATEAU, never the answer.
+
+Rules out: StopPoint records are not tight groups of ~11 per call separated
+by running time. The 10.7 ratio is real arithmetic but not a layout.
+
+`find_call_field()` / `/api/paks/call_field` / **Find call field** applies the
+service-field approach over StopPoint records only, targeting 485 runs
+(37x13 + 2x2). Validated both ways: finds a planted call id (485 runs, 485
+distinct, 11 per run), refuses a count that is not there.
+
+**Next: Find call field with 39/13 entered.** If nothing, try
+RibbonLocation/NetworkRibbonLocation values as the grouping - a call is a
+position on the network. Also still open: the 3-record on-the-minute service
+headers from v7.51.1, best candidate for a headcode.
 
 ## What changed in v7.52.0 - call-gap tuning, fragment floor
 

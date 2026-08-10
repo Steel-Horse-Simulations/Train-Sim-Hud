@@ -1181,3 +1181,62 @@ calls, both 2-call Glenrothes workings recovered, no fragments.
 Re-run with **39** services and **13** calls. Expect 37 services of 13 calls
 and 2 of 2, and a broad `call_gap_curve` plateau. If the plateau is narrow,
 the call count is being forced rather than found and should not be trusted.
+
+## Time clustering does NOT recover station calls (v7.53.0)
+
+The tuning run reported a median of 13 calls at a 65s gap - the right answer.
+**It was fitted, not found**, and the plateau check said so:
+
+```
+gap:  20  25  30  35  40  45  50  55  60  65  70  75  80  85  90 ...
+med:  45  40  34  31  28  22  18  17  15  13  12  12  12  12  11 ...
+```
+
+Median 13 occurs at exactly ONE gap value out of 77. A real cluster
+structure produces a PLATEAU, because a whole range of thresholds separates
+the same groups - the fixture, built with genuinely separated calls, has 64
+consecutive gap values all giving 13. The real curve is a smooth continuum
+from 45 down to 1 with no flat step anywhere near 13.
+
+**A continuum means the times carry no grouping to find.** Whatever number
+came out was chosen by the threshold. Had the curve not been reported, a
+median of exactly 13 would have looked like a triumph.
+
+This is why `call_gap_curve` is returned and why the plateau, not the
+answer, is the thing to check.
+
+### What this rules out
+
+StopPoint records are not ~11 tightly-grouped records per station call
+separated by minutes of running time. Their times are spread more evenly
+than that. So the ~10.7 records-per-call ratio is real arithmetic but not a
+description of the layout.
+
+### `find_call_field` - ask the records instead
+
+`/api/paks/call_field`, button **Find call field**. Same approach that
+settled the service question, applied over the StopPoint records only: a
+field holding one value per call changes once per call, so its run count
+across those records IS the number of station calls. The target is known -
+37 x 13 + 2 x 2 = **485**.
+
+Validated both ways on the fixture: with a call id planted it finds it at
+the right offset with **485 runs, 485 distinct, 11 records per run**; asked
+for a count that is not there, it returns nothing rather than the closest
+thing.
+
+### Next step
+
+Run **Find call field** with 39 services and 13 calls entered - it will look
+for 485 runs.
+
+  - A hit means station calls are delimited in the record and the timetable
+    is essentially done.
+  - Nothing found means calls are not marked in these records at all. The
+    next place to look is `RibbonLocation` / `NetworkRibbonLocation`, since a
+    station call is a position on the network and those fields hold the P2K
+    track ribbon ids - the values themselves may group the records even if no
+    integer field does.
+
+Also still worth investigating: the 3-record, on-the-minute service headers
+found in v7.51.1, which remain the best candidate for where a headcode lives.

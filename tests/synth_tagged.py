@@ -464,11 +464,14 @@ def build_uexp_fife(path, rng, stride=707):
                 buf += _fife_record(rng, stride, "TrackSectionEntry", t,
                                     TYPE_AT, TIME_AT, ANCHOR_AT)
                 svc_records += 1
-            # the call itself: ~11 StopPoint records seconds apart
+            # the call itself: ~11 StopPoint records seconds apart, all
+            # carrying the same call id at CALL_AT - the structural grouping
+            # that time clustering cannot provide on the real file
+            call_id = 7000 + svc * 20 + call
             for _ in range(rng.randint(9, 13)):
                 t += rng.randint(1, 12)
                 buf += _fife_record(rng, stride, "StopPoint", t,
-                                    TYPE_AT, TIME_AT, ANCHOR_AT)
+                                    TYPE_AT, TIME_AT, ANCHOR_AT, call_id)
                 svc_records += 1
             t += rng.randint(120, 330)          # run to the next station
         truth.append({"calls": calls, "records": svc_records,
@@ -478,7 +481,10 @@ def build_uexp_fife(path, rng, stride=707):
     return truth, stride, TYPE_AT, TIME_AT
 
 
-def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at):
+CALL_AT = 480
+
+
+def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None):
     rec = bytearray()
     while len(rec) < stride:
         r = rng.random()
@@ -494,6 +500,8 @@ def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at):
         rec[anchor_at + k * 8:anchor_at + k * 8 + 8] = _fname(nm)
     rec[type_at:type_at + 8] = _fname(f"ETimetableTrackDataType::{kind}")
     rec[time_at:time_at + 8] = struct.pack("<q", int(t * TICKS))
+    if call_id is not None:
+        rec[CALL_AT:CALL_AT + 4] = struct.pack("<i", call_id)
     return bytes(rec)
 
 

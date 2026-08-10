@@ -527,6 +527,37 @@ def run_call_gap_tuning():
     return ok
 
 
+def run_call_field():
+    """A station-call identifier must be found when present and refused when
+    absent.
+
+    This exists because time clustering does NOT work on the real file. The
+    tuning curve there slides smoothly from 45 calls to 1 with no flat step,
+    and a continuum means the times carry no grouping - the 13 it produced
+    was set by the threshold, not discovered. The plateau check caught that,
+    which is the whole reason the curve is returned.
+    """
+    print("\n--- station call identifier ---")
+    expected = 37 * 13 + 2 * 2          # 485, from the in-game timetable
+    base, truth, _s, _t, _tm = T.main_fife("/tmp/eval_callf")
+    ok = True
+    r = pak_tools.find_call_field(base + ".uexp", expected_calls=expected)
+    b = r.get("best")
+    print(f"  with a call field planted: {b['offset'] if b else None} -> "
+          f"{b['runs'] if b else '-'} runs (expected {expected})")
+    if not b or b["runs"] != expected:
+        print("  FAIL: did not find the planted call field"); ok = False
+    elif b["distinct"] != expected:
+        print("  FAIL: runs and distinct values disagree"); ok = False
+
+    # and it must not invent one when the grouping is absent
+    r2 = pak_tools.find_call_field(base + ".uexp", expected_calls=expected * 3)
+    print(f"  asked for {expected * 3}: {r2.get('best')}")
+    if r2.get("best") is not None:
+        print("  FAIL: invented a field for a count that is not there"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
@@ -534,6 +565,6 @@ if __name__ == "__main__":
                run_anchor_impostor(), run_timetable_extraction(),
                run_phase_shift_recovery(), run_service_field(),
                run_fife_shape(), run_near_miss_rejection(),
-               run_call_gap_tuning()]
+               run_call_gap_tuning(), run_call_field()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

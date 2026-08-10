@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.52.0"
+APP_VERSION = "7.53.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1711,6 +1711,35 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/call_field", methods=["POST"])
+def paks_call_field():
+    """Looks for a field that identifies the STATION CALL.
+    Body: {"asset_name": "...", "expected_calls": 485}
+
+    Clustering StopPoint records on time does not work on the real file -
+    the tuning curve is a smooth continuum with no plateau, so any call
+    count read off it was set by the threshold rather than found. This asks
+    the records instead."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    exp = body.get("expected_calls")
+    return jsonify(pak_tools.find_call_field(
+        path, expected_calls=int(exp) if exp else None))
 
 
 @app.route("/api/paks/service_field", methods=["POST"])

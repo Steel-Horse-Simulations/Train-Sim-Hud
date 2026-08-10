@@ -3143,3 +3143,119 @@ def find_service_field(path, stride=None, anchor=None, width=4,
             "is the only available signal."
         ),
     }
+
+
+def find_call_field(path, expected_calls=None, stride=None, anchor=None,
+                    width=4, max_offsets=25):
+    """Looks for a field that identifies the STATION CALL, the way
+    find_service_field looks for the service.
+
+    Needed because clustering StopPoint records on the time gap does not
+    work on the real file. The tuning curve there slides smoothly from 45
+    calls at a 20s gap down to 1 at 325s with no flat step anywhere - and a
+    real cluster structure produces a plateau, because there is a range of
+    thresholds that all separate the same groups. A continuum means the
+    times carry no grouping to find, so any call count read off it was
+    chosen by the threshold rather than discovered. On a fixture built with
+    genuinely separated calls the same curve has a 64-value plateau, which
+    is what the difference looks like.
+
+    So the grouping has to come from a field instead. Scanned over the
+    StopPoint records ONLY: a field holding one value per call changes once
+    per call, so its run count across those records is the total number of
+    station calls in the file.
+
+    On the real Leven layer that target is known: 37 services x 13 calls
+    plus 2 x 2 = 485.
+    """
+    layout = decode_fixed_records(path, stride=stride, anchor=anchor, width=width)
+    if "error" in layout:
+        return layout
+    stride = layout["stride"]
+    with open(path, "rb") as f:
+        data = f.read()
+    with open(layout["uasset"], "rb") as f:
+        names = _read_fname_strings(f.read())
+    type_idx = {i: n.split("::")[-1] for i, n in enumerate(names)
+                if "::" in n and n.split("::")[-1] in _TRACK_DATA_TYPES}
+    refs = _name_ref_offsets(data, names, width)
+    name_to_idx = {n: i for i, n in enumerate(names)}
+    starts = _stride_chain(refs[name_to_idx[layout["anchor"]]], stride)
+
+    fmt = "<ii" if width == 4 else "<qq"
+    step = 2 * width
+    tdelta = layout["type_field_offset"]
+
+    stops = []
+    for s in starts:
+        o = s + tdelta
+        if o + step > len(data):
+            continue
+        idx, num = struct.unpack_from(fmt, data, o)
+        if num == 0 and type_idx.get(idx) == "StopPoint":
+            stops.append(s)
+    if len(stops) < 32:
+        return {"error": "too_few_stop_records", "stop_records": len(stops)}
+
+    candidates = []
+    for d in range(0, stride - 4):
+        vals = []
+        ok = True
+        for s in stops:
+            o = s + d
+            if o + 4 > len(data):
+                ok = False
+                break
+            vals.append(struct.unpack_from("<i", data, o)[0])
+        if not ok:
+            continue
+        runs = 1
+        lengths, cur = [], 1
+        for a, b in zip(vals, vals[1:]):
+            if a == b:
+                cur += 1
+            else:
+                runs += 1
+                lengths.append(cur)
+                cur = 1
+        lengths.append(cur)
+        if runs < 2 or runs > len(stops) * 0.9:
+            continue
+        lengths.sort()
+        candidates.append({
+            "offset": d,
+            "runs": runs,
+            "distinct": len(set(vals)),
+            "median_run": lengths[len(lengths) // 2],
+            "min_run": lengths[0],
+            "max_run": lengths[-1],
+            "records_per_run": round(len(stops) / runs, 2),
+        })
+
+    if expected_calls:
+        candidates.sort(key=lambda c: abs(c["runs"] - expected_calls))
+    else:
+        candidates.sort(key=lambda c: abs(c["records_per_run"] - 10.7))
+    best = candidates[0] if candidates else None
+    if expected_calls and best and abs(best["runs"] - expected_calls) > max(2, expected_calls * 0.05):
+        best = None
+
+    return {
+        "path": path,
+        "stop_records": len(stops),
+        "expected_calls": expected_calls,
+        "candidates": candidates[:max_offsets],
+        "best": best,
+        "verdict": (
+            f"Field at +{best['offset']} changes {best['runs']} times across "
+            f"{len(stops)} StopPoint records - {best['records_per_run']} "
+            "records per run. If that matches the calls counted in the game, "
+            "it IS the station call boundary."
+            if best else
+            f"No field groups the {len(stops)} StopPoint records into "
+            f"{expected_calls or 'call-sized'} runs. Station calls may not be "
+            "delimited inside these records at all - the grouping may live in "
+            "the RibbonLocation values, or one call may simply BE one record "
+            "with the ~10.7 ratio meaning something else entirely."
+        ),
+    }
