@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.51.1"
+APP_VERSION = "7.52.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1771,10 +1771,12 @@ def paks_timetable():
     brk = body.get("service_break")
     exp = body.get("expected_services")
     gap = body.get("call_gap")
+    exp_calls = body.get("expected_calls")
     return jsonify(pak_tools.extract_timetable(
         path,
         service_break=int(brk) if brk else None,
         expected_services=int(exp) if exp else None,
+        expected_calls=int(exp_calls) if exp_calls else None,
         call_gap=int(gap) if gap else 90))
 
 

@@ -2684,10 +2684,54 @@ def _stride_chain(offsets, stride, min_fraction=0.9):
     return kept
 
 
+def _cluster_calls(stops, call_gap):
+    """Groups StopPoint records into station calls on the time gap between
+    them."""
+    calls = []
+    for r in stops:
+        if calls and (r["seconds"] - calls[-1][-1]["seconds"]) <= call_gap:
+            calls[-1].append(r)
+        else:
+            calls.append([r])
+    return calls
+
+
+def _tune_call_gap(services_records, expected_calls, lo=20, hi=400, step=5):
+    """Chooses the clustering gap that reproduces a KNOWN call count.
+
+    The gap cannot be picked from first principles: records within one call
+    sit ~8s apart and the run to the next station is 2-6 minutes, but some
+    station pairs are much closer than others, so any fixed value
+    under-splits somewhere. With the true count known from the game - 13 for
+    a Leven-Edinburgh service - the gap can be chosen by measurement instead.
+
+    Returns (best gap, [(gap, median calls)]) so the choice is auditable and
+    its stability visible: a value sitting on a plateau is trustworthy, one
+    at a sharp spike is not.
+    """
+    curve = []
+    best, best_err = call_gap_default, None
+    for gap in range(lo, hi + 1, step):
+        medians = []
+        for stops in services_records:
+            medians.append(len(_cluster_calls(stops, gap)))
+        medians.sort()
+        med = medians[len(medians) // 2] if medians else 0
+        curve.append((gap, med))
+        err = abs(med - expected_calls)
+        if best_err is None or err < best_err:
+            best, best_err = gap, err
+    return best, curve
+
+
+call_gap_default = 90
+
+
 def extract_timetable(path, stride=None, anchor=None, type_offset=None,
                       time_offset=None, width=4, max_services=200,
                       service_break=None, service_field_offset=None,
-                      expected_services=None, call_gap=90):
+                      expected_services=None, call_gap=90,
+                      expected_calls=None):
     """Reads the timetable out of a fixed-stride DataTrack.
 
     Everything this depends on is now confirmed against the real Leven Branch
@@ -2810,7 +2854,21 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
             strength = (1, -delta) if delta < 0 else (0, delta)
             transitions.append((strength, i + 1))
         transitions.sort(reverse=True)
-        cuts = sorted(i for _s, i in transitions[:max(0, expected_services - 1)])
+        # Reject a cut that would leave a segment too small to be a service.
+        # Without this the ranking spent 3 of its 38 cuts on fragments - one
+        # of 35 records and two of ~50 - and correspondingly failed to split
+        # 3 real boundaries elsewhere. A Leven service is ~355 records, so a
+        # 30-record floor excludes nothing genuine.
+        min_records = max(8, (len(seq) // max(1, expected_services)) // 8)
+        cuts = []
+        for _strength, i in transitions:
+            if len(cuts) >= expected_services - 1:
+                break
+            bounds = sorted(cuts + [0, i, len(seq)])
+            if min(b - a for a, b in zip(bounds, bounds[1:])) < min_records:
+                continue
+            cuts.append(i)
+        cuts.sort()
         prev = 0
         for c in cuts:
             services.append(seq[prev:c])
@@ -2851,6 +2909,17 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
             services.append(cur)
         segmented_by = f"clock heuristic ({service_break or SERVICE_BREAK_SECONDS}s gap)"
 
+    if expected_calls:
+        stop_sets = []
+        for svc in services:
+            st = [r for r in svc if r["type"] == "StopPoint" and r["seconds"] is not None]
+            if len(st) > 20:            # ignore fragments when tuning
+                stop_sets.append(st)
+        if stop_sets:
+            call_gap, call_gap_curve = _tune_call_gap(stop_sets, expected_calls)
+    else:
+        call_gap_curve = None
+
     out = []
     for svc in services[:max_services]:
         svc = [r for r in svc if r["seconds"] is not None]
@@ -2869,12 +2938,7 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
         # calls. Each call's arrival is the first time in its cluster and its
         # departure the last, which matches the domain rule that a stop
         # carries both.
-        calls = []
-        for r in stops:
-            if calls and (r["seconds"] - calls[-1][-1]["seconds"]) <= call_gap:
-                calls[-1].append(r)
-            else:
-                calls.append([r])
+        calls = _cluster_calls(stops, call_gap)
         # A stop should carry an arrival and a departure - two records at the
         # same place seconds apart. First stop (departure only), last stop
         # (arrival only) and freight (no arrivals) are CORRECT data, so
@@ -2922,6 +2986,7 @@ def extract_timetable(path, stride=None, anchor=None, type_offset=None,
         "median_calls": (sorted(s["call_count"] for s in out)[len(out) // 2]
                          if out else None),
         "call_gap_seconds": call_gap,
+        "call_gap_curve": call_gap_curve,
         "services": out,
         "verdict": (
             f"{len(services)} services from {len(starts)} records, "

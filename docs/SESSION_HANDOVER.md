@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.51.1**
+**App version at end of session: 7.52.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,27 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.52.0 - call-gap tuning, fragment floor
+
+record_template independently corroborates the time field: it places the
+"Time" property NAME at +175, and 175 + 8 + 8 + 8 + 1 = 200, exactly Unreal's
+FPropertyTag header and exactly the time VALUE offset found statistically.
+Two unrelated methods, same byte.
+
+Known-count cut with 39 gives the right shape (11-14 calls). Two fixes:
+  - FRAGMENTS: 3 of 38 cuts went on 35-50 record segments while 3 real
+    boundaries were missed. Cuts leaving a segment below a floor are now
+    rejected and the next strongest taken.
+  - CALLS: fixed 90s gap gave median 11 vs the 13 counted in game.
+    `expected_calls` now sweeps the gap and picks the value reproducing the
+    known count, returning `call_gap_curve` so the choice is auditable -
+    a broad plateau (64 values on the fixture) means found, a spike means
+    fitted.
+
+New "Station calls per service" box next to Services on Discovery.
+
+**Next: re-run with 39 services / 13 calls.** Check the plateau is broad.
 
 ## What changed in v7.51.1 - reject near-miss service fields
 

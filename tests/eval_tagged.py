@@ -490,12 +490,50 @@ def run_near_miss_rejection():
     return ok
 
 
+def run_call_gap_tuning():
+    """The call clustering gap is TUNED to a known call count, not guessed.
+
+    It cannot be picked from first principles: records within one call sit
+    ~8s apart and the run to the next station is 2-6 minutes, but some
+    station pairs are far closer than others, so any fixed value
+    under-splits somewhere. The real run with a fixed 90s gave a median of
+    11 calls against the 13 counted in the game.
+
+    Also checks the minimum-service-size rule: without it the boundary
+    ranking spent 3 of its 38 cuts on fragments of 35-50 records, and
+    correspondingly missed 3 real boundaries.
+    """
+    print("\n--- call gap tuned to a known call count ---")
+    base, truth, _s, _t, _tm = T.main_fife("/tmp/eval_tune")
+    ok = True
+    r = pak_tools.extract_timetable(base + ".uexp", expected_services=39,
+                                    expected_calls=13)
+    calls = sorted(s["call_count"] for s in r["services"])
+    print(f"  chosen gap {r['call_gap_seconds']}s, median calls {r['median_calls']} (true 13)")
+    print(f"  call counts {calls[:4]} ... {calls[-3:]}")
+    if r["median_calls"] != 13:
+        print("  FAIL: tuning did not reach the known call count"); ok = False
+    if sorted(c for c in calls if c <= 4) != [2, 2]:
+        print("  FAIL: the two short workings were lost"); ok = False
+    if min(s["track_points"] for s in r["services"]) < 20:
+        print("  FAIL: a fragment survived the minimum-size rule"); ok = False
+
+    # The chosen gap must sit on a plateau, not a spike - a spike would mean
+    # the answer was fitted rather than found.
+    band = [g for g, m in (r.get("call_gap_curve") or []) if m == 13]
+    print(f"  gaps giving median 13: {len(band)} values")
+    if len(band) < 4:
+        print("  FAIL: the answer is a sharp spike, not a stable plateau"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
                run_template_recovery(), run_fixed_stride(),
                run_anchor_impostor(), run_timetable_extraction(),
                run_phase_shift_recovery(), run_service_field(),
-               run_fife_shape(), run_near_miss_rejection()]
+               run_fife_shape(), run_near_miss_rejection(),
+               run_call_gap_tuning()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

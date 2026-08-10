@@ -73,6 +73,9 @@
       <label class="small dim" for="pak-services" style="white-space:nowrap;">
         Services (from the in-game timetable, optional):</label>
       <input type="text" id="pak-services" placeholder="e.g. 39" style="max-width:120px;">
+      <label class="small dim" for="pak-calls" style="white-space:nowrap;">
+        Station calls per service:</label>
+      <input type="text" id="pak-calls" placeholder="e.g. 13" style="max-width:120px;">
     </div>
     <input type="text" id="pak-asset" placeholder="e.g. TS2Prototype/Plugins/DLC/FifeCircle_Route_Gameplay/Content/Timetable/FCE_Timetable_TT.uasset"
                style="width:100%;font-family:var(--mono);font-size:12px;margin-bottom:8px;">
@@ -406,13 +409,14 @@ async function extractTimetable() {
   try{
     const d=await (await fetch('/api/paks/timetable',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({asset_name:asset.split('/').pop(),
-        expected_services: Number(document.getElementById('pak-services').value)||null})})).json();
+        expected_services: Number(document.getElementById('pak-services').value)||null,
+        expected_calls: Number(document.getElementById('pak-calls').value)||null})})).json();
     lastPakResult=d;
     if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
     status.innerHTML=`<span style="color:var(--status-green);">${d.service_count} services, `
-      +`${(d.type_counts||{}).StopPoint||0} stop points</span>`
+      +`median ${d.median_calls} station calls</span>`
       +` <span class="small dim">· ${d.record_count} records · stride ${d.stride}`
-      +` · time at +${d.time_field_offset} · median ${d.median_duration_min} min</span>`;
+      +` · call gap ${d.call_gap_seconds}s · median ${d.median_duration_min} min</span>`;
     status.style.color='';
     out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
         background:rgba(255,255,255,0.04);border-left:3px solid var(--accent);">${esc(d.verdict)}</p>`

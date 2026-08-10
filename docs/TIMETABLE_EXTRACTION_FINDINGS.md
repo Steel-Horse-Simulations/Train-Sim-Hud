@@ -1122,3 +1122,62 @@ rather than the +407 field. Expect 37 services of ~13 calls and 2 short ones.
 Then worth investigating: what is in those 3-record headers? A record
 template anchored on them, compared against a normal track record, should
 show which fields differ.
+
+## The record template corroborates the time field (v7.52.0)
+
+`record_template` on the real layer, anchored on `IntProperty`, gives 57
+fields at 100% share. The one that matters:
+
+```
++167  DataType
++175  Time          <- the property NAME
+...
++200                <- the time VALUE, found independently and statistically
+```
+
+`175 + 8 (Name) + 8 (Type) + 8 (Size + ArrayIndex) + 1 (HasPropertyGuid) =
+200`. Exactly Unreal's FPropertyTag header.
+
+Two completely unrelated methods - a repetition scan that knows nothing about
+Unreal, and an ascending-value test over candidate offsets - land on the same
+byte. That is the strongest confirmation the time field has had.
+
+The template also shows the record is not flat: `RibbonLocation` /
+`SignalRef` / `EnumProperty` / `GoViaIndex` repeats as a block at +49, +426,
++532, +597, and `NetworkRibbonLocation` at +143, +662, +699. Those look like
+arrays of sub-structures, which is consistent with ~10.7 StopPoint records
+per station call.
+
+## Segmentation with the known counts
+
+With **39** entered and the near-miss field correctly rejected, the
+known-count cut gives 39 services with 11-14 calls - the right shape. Two
+faults remained, both now fixed and both measurable rather than matters of
+taste:
+
+**Fragments.** Three of the 38 cuts were spent on segments of 35-50 records,
+and three real boundaries were missed as a result. A service is ~355 records,
+so a cut that leaves a segment under a floor is now rejected and the next
+strongest taken instead.
+
+**Under-counted calls.** A fixed 90s clustering gap gave a median of 11 calls
+against the 13 counted in the game. The gap cannot be chosen from first
+principles - records within one call sit ~8s apart while runs between
+stations are 2-6 minutes, but some station pairs are much closer than others,
+so any fixed value under-splits somewhere.
+
+`expected_calls` now TUNES it: the gap is swept and the value reproducing the
+known call count is chosen. Critically the result reports `call_gap_curve`,
+so the choice is auditable - on the fixture, 64 different gap values all give
+a median of 13, a broad plateau rather than a spike. **A plateau means the
+answer was found; a spike would mean it was fitted.** That distinction is the
+whole reason the curve is returned.
+
+Validated on a fixture built to the real shape: 39/39 services, median 13
+calls, both 2-call Glenrothes workings recovered, no fragments.
+
+### Next step
+
+Re-run with **39** services and **13** calls. Expect 37 services of 13 calls
+and 2 of 2, and a broad `call_gap_curve` plateau. If the plateau is narrow,
+the call count is being forced rather than found and should not be trusted.
