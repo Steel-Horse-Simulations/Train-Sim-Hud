@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.54.0"
+APP_VERSION = "7.55.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1743,6 +1743,7 @@ def paks_inspect_field():
     return jsonify(pak_tools.inspect_field(
         path, int(body["offset"]),
         expected_services=int(exp) if exp else None,
+        field_width=(body.get("field_width") or "i32"),
         stop_points_only=bool(body.get("stop_points_only", True))))
 
 

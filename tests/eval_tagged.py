@@ -558,6 +558,38 @@ def run_call_field():
     return ok
 
 
+def run_byte_field():
+    """Single-byte fields must be found AS BYTES.
+
+    Scanning int32 only was a real blind spot. On the real Leven layer the
+    field at +695 is one byte taking the values 0,1,2,3,4,7,9,12,13,18,21,
+    23,24,255 - but read as an int32 it appeared at four offsets with values
+    like 16777216 and 402653184, every one a multiple of 2^24, and was never
+    recognisable for what it was.
+    """
+    print("\n--- byte-width fields ---")
+    base, truth, _s, _t, _tm = T.main_fife("/tmp/eval_byte")
+    ok = True
+    r = pak_tools.find_call_field(base + ".uexp")
+    widths = {c["width"] for c in r["candidates"]}
+    print(f"  widths scanned: {sorted(widths)}")
+    if "u8" not in widths:
+        print("  FAIL: byte fields not scanned"); ok = False
+
+    # read the planted byte field directly and check the values are small
+    ins = pak_tools.inspect_field(base + ".uexp", 480, field_width="u8",
+                                  expected_services=39)
+    vals = [v for v, _n in ins["value_frequency"]]
+    print(f"  byte field values: {sorted(vals)[:8]}... max {max(vals)}")
+    if max(vals) > 255:
+        print("  FAIL: byte read did not stay in range"); ok = False
+    if any(v % (1 << 24) == 0 and v for v in vals):
+        print("  FAIL: values look like shifted int32 reads"); ok = False
+    else:
+        print("  values are plain small integers, not 2^24 multiples")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
@@ -565,6 +597,6 @@ if __name__ == "__main__":
                run_anchor_impostor(), run_timetable_extraction(),
                run_phase_shift_recovery(), run_service_field(),
                run_fife_shape(), run_near_miss_rejection(),
-               run_call_gap_tuning(), run_call_field()]
+               run_call_gap_tuning(), run_call_field(), run_byte_field()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

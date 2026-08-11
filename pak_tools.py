@@ -3145,6 +3145,31 @@ def find_service_field(path, stride=None, anchor=None, width=4,
     }
 
 
+FIELD_WIDTHS = (
+    ("u8", 1, "<B"),
+    ("u16", 2, "<H"),
+    ("i32", 4, "<i"),
+)
+
+
+def _read_field(data, off, kind):
+    """Reads a field of a given width.
+
+    Scanning int32 ONLY was a real blind spot. A single-byte field shows up
+    as four consecutive "different" offsets whose values are all multiples
+    of 2^24 - which is exactly what +692..+695 on the real Leven layer turned
+    out to be: one byte at +695 taking the values 0,1,2,3,4,7,9,12,13,18,21,
+    23,24,255, reported as 0, 16777216, 33554432 ... and never recognisable
+    for what it was.
+    """
+    for name, size, fmt in FIELD_WIDTHS:
+        if name == kind:
+            if off + size > len(data):
+                return None
+            return struct.unpack_from(fmt, data, off)[0]
+    return None
+
+
 def find_call_field(path, expected_calls=None, stride=None, anchor=None,
                     width=4, max_offsets=25):
     """Looks for a field that identifies the STATION CALL, the way
@@ -3198,15 +3223,16 @@ def find_call_field(path, expected_calls=None, stride=None, anchor=None,
         return {"error": "too_few_stop_records", "stop_records": len(stops)}
 
     candidates = []
-    for d in range(0, stride - 4):
+    for kind, size, fmt in FIELD_WIDTHS:
+      for d in range(0, stride - size):
         vals = []
         ok = True
         for s in stops:
             o = s + d
-            if o + 4 > len(data):
+            if o + size > len(data):
                 ok = False
                 break
-            vals.append(struct.unpack_from("<i", data, o)[0])
+            vals.append(struct.unpack_from(fmt, data, o)[0])
         if not ok:
             continue
         runs = 1
@@ -3222,10 +3248,23 @@ def find_call_field(path, expected_calls=None, stride=None, anchor=None,
         if runs < 2 or runs > len(stops) * 0.9:
             continue
         lengths.sort()
+        # The same underlying field turns up at several widths and shifts -
+        # a byte at +695 also reads as an int32 at +692..+695. Keep ONE, and
+        # keep the reading with the most distinct values, since that is the
+        # one showing the field's real range rather than a truncation of it.
+        dup = next((c for c in candidates
+                    if c["runs"] == runs and abs(c["offset"] - d) <= 3), None)
+        if dup is not None:
+            if len(set(vals)) > dup["distinct"]:
+                candidates.remove(dup)
+            else:
+                continue
         candidates.append({
             "offset": d,
+            "width": kind,
             "runs": runs,
             "distinct": len(set(vals)),
+            "values": sorted(set(vals))[:20] if len(set(vals)) <= 20 else None,
             "median_run": lengths[len(lengths) // 2],
             "min_run": lengths[0],
             "max_run": lengths[-1],
@@ -3233,7 +3272,13 @@ def find_call_field(path, expected_calls=None, stride=None, anchor=None,
         })
 
     if expected_calls:
-        candidates.sort(key=lambda c: abs(c["runs"] - expected_calls))
+        # Among fields that change the right number of times, prefer the one
+        # with the MOST distinct values. A per-call identifier has one value
+        # per call; a field that merely changes once per call - a platform
+        # number, say - has far fewer. Both are real findings, but only the
+        # first identifies the call.
+        candidates.sort(key=lambda c: (abs(c["runs"] - expected_calls),
+                                       -c["distinct"]))
     else:
         candidates.sort(key=lambda c: abs(c["records_per_run"] - 10.7))
     best = candidates[0] if candidates else None
@@ -3268,7 +3313,8 @@ def find_call_field(path, expected_calls=None, stride=None, anchor=None,
 
 
 def inspect_field(path, offset, stride=None, anchor=None, width=4,
-                  stop_points_only=True, services=6, expected_services=None):
+                  stop_points_only=True, services=6, expected_services=None,
+                  field_width="i32"):
     """Dumps one field's actual VALUES, per service, so a candidate can be
     checked against the real route rather than judged on statistics.
 
@@ -3318,9 +3364,9 @@ def inspect_field(path, offset, stride=None, anchor=None, width=4,
                 kind = type_idx.get(idx)
         if stop_points_only and kind != "StopPoint":
             continue
-        if s + offset + 4 > len(data):
+        val = _read_field(data, s + offset, field_width)
+        if val is None:
             continue
-        val = struct.unpack_from("<i", data, s + offset)[0]
         secs = None
         if time_delta is not None and s + time_delta + 8 <= len(data):
             (raw,) = struct.unpack_from("<q", data, s + time_delta)
@@ -3344,20 +3390,43 @@ def inspect_field(path, offset, stride=None, anchor=None, width=4,
 
     # Split the run list into services using the same boundary ranking as
     # the extraction, so the per-service sequences line up with it.
+    # Segment on the RECORDS, exactly as extract_timetable does, then map
+    # the runs into those services. Cutting the RUN list instead produced
+    # services with overlapping times and wildly uneven run counts - it was
+    # not the same segmentation the timetable uses, so the sequences could
+    # not be compared against it.
     groups = [runs]
-    if expected_services and len(runs) > expected_services:
-        seq = [r for r in runs if r["first_seconds"] is not None]
+    if expected_services and len(rows) > expected_services:
+        seq = [r for r in rows if r["seconds"] is not None]
         transitions = []
         for i, (a, b) in enumerate(zip(seq, seq[1:])):
-            delta = (b["first_seconds"] or 0) - (a["last_seconds"] or 0)
+            delta = b["seconds"] - a["seconds"]
             transitions.append(((1, -delta) if delta < 0 else (0, delta), i + 1))
         transitions.sort(reverse=True)
-        cuts = sorted(i for _s, i in transitions[:expected_services - 1])
+        min_records = max(4, len(seq) // max(1, expected_services) // 8)
+        cuts = []
+        for _strength, i in transitions:
+            if len(cuts) >= expected_services - 1:
+                break
+            bounds = sorted(cuts + [0, i, len(seq)])
+            if min(b - a for a, b in zip(bounds, bounds[1:])) < min_records:
+                continue
+            cuts.append(i)
+        cuts.sort()
         groups, prev = [], 0
-        for c in cuts:
-            groups.append(seq[prev:c])
+        for c in cuts + [len(seq)]:
+            chunk = seq[prev:c]
             prev = c
-        groups.append(seq[prev:])
+            collapsed = []
+            for r in chunk:
+                if collapsed and collapsed[-1]["value"] == r["value"]:
+                    collapsed[-1]["records"] += 1
+                    collapsed[-1]["last_seconds"] = r["seconds"]
+                else:
+                    collapsed.append({"value": r["value"], "records": 1,
+                                      "first_seconds": r["seconds"],
+                                      "last_seconds": r["seconds"]})
+            groups.append(collapsed)
 
     counts = Counter(r["value"] for r in rows)
     out_groups = []
@@ -3373,6 +3442,7 @@ def inspect_field(path, offset, stride=None, anchor=None, width=4,
     return {
         "path": path,
         "offset": offset,
+        "field_width": field_width,
         "records_examined": len(rows),
         "total_runs": len(runs),
         "distinct_values": len(counts),

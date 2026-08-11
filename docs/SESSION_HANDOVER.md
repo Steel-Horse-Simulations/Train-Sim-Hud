@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.54.0**
+**App version at end of session: 7.55.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,30 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.55.0 - int32-only scanning was a blind spot
+
++692's 14 values are all multiples of 2^24. Divided out: 0,1,2,3,4,7,9,12,13,
+18,21,23,24,255. It is a single BYTE at +695 caught in the top byte of an
+int32 - which is also why +692..+695 all reported identical runs/distinct.
+
+EVERY field scan read int32 only, so byte fields were invisible or reported
+as four meaningless offsets. Scans now cover u8/u16/i32, de-duplicate a field
+found at several widths, and keep the reading with the most distinct values.
+New width dropdown on Inspect field.
+
+The byte is NOT a station id: 0 appears 55% of the time and 1 another 19%,
+and sequences alternate 0,1,0,1. Values 0-24 with 255 sentinel look like
+PLATFORM NUMBERS (Waverley runs to 20; observed set includes 18,21,23,24).
+
+Also fixed: inspect_field segmented the RUN list not the record list, giving
+services with overlapping times that could not be compared against the
+timetable. Now segments records exactly as extract_timetable does.
+
+**Next: re-run Find call field** - with byte/16-bit widths this is a genuinely
+new search. Then Inspect field on any candidate with ~13 distinct values.
+Also inspect +695 as a byte (platform?) and +696 (40 runs, 2 distinct -
+direction?).
 
 ## What changed in v7.54.0 - +692 has 14 distinct values; 13 stations
 

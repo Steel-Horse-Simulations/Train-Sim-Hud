@@ -1317,3 +1317,61 @@ sequences:
 
 Worth also inspecting **696** (40 runs, 2 distinct) - a two-state field
 changing once per service looks like a direction or an up/down flag.
+
+## +692 is a BYTE at +695 - and int32-only scanning was a blind spot (v7.55.0)
+
+`inspect_field` on +692 returned 14 values, every one an exact multiple of
+2^24:
+
+```
+0  16777216  33554432  50331648  67108864  117440512  150994944
+201326592  218103808  301989888  352321536  385875968  402653184  -16777216
+```
+
+Divide by 2^24 and they are: **0, 1, 2, 3, 4, 7, 9, 12, 13, 18, 21, 23, 24,
+255**.
+
+So this is a **single byte at +695**, read as an int32 that happened to catch
+it in the top byte. That also explains why +692, +693, +694 and +695 all
+reported identical run and distinct counts - the same byte at four shifts.
+
+**Every field scan in this tool read int32 only.** Any byte field in the
+record was therefore either invisible or reported as four offsets of
+meaningless magnitudes. The scans now cover u8, u16 and i32, de-duplicate the
+same field found at several widths, and keep the reading with the most
+distinct values - the one showing the field's real range rather than a
+truncation of it.
+
+### What the byte is, and is not
+
+Not a station identifier. The value frequencies rule it out: 0 appears 2,854
+times of 5,198 (55%) and 1 appears 964 (19%). A station id visited once per
+call would be roughly even across its values. The per-service sequences also
+alternate 0,1,0,1 rather than progressing.
+
+Values 0-24 with 255 as a sentinel look more like a **platform number**, and
+that fits the route: Edinburgh Waverley platforms run to 20, and the observed
+set includes 18, 21, 23, 24. 0 would be "no platform".
+
+### A second bug this exposed
+
+`inspect_field` was segmenting the RUN list rather than the record list, so
+its services had overlapping times and wildly uneven run counts - it was not
+the same segmentation the timetable uses, so the sequences could not be
+compared against it. It now segments the records exactly as
+`extract_timetable` does, including the minimum-size rule.
+
+### Next step
+
+The station identity is still missing, and the search for it should now be
+repeated with byte and 16-bit widths included - that is a genuinely new
+search, not a repeat, because those widths were never scanned before.
+
+Run **Find call field** again with 39 and 13 entered. Then **Inspect field**
+on any candidate whose distinct count is near 13, selecting the right width
+in the new dropdown. A station field should show ~13 distinct values spread
+evenly, progressing through a service rather than alternating, and reversing
+on return workings.
+
+Also worth inspecting **+695 as a byte** to confirm the platform reading, and
+**+696-698 (40 runs, 2 distinct)** which looks like a direction flag.

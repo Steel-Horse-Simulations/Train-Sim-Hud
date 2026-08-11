@@ -77,7 +77,12 @@
         Station calls per service:</label>
       <input type="text" id="pak-calls" placeholder="e.g. 13" style="max-width:120px;">
       <label class="small dim" for="pak-offset" style="white-space:nowrap;">Field offset:</label>
-      <input type="text" id="pak-offset" placeholder="e.g. 692" style="max-width:110px;">
+      <input type="text" id="pak-offset" placeholder="e.g. 695" style="max-width:110px;">
+      <select id="pak-width" style="max-width:110px;">
+        <option value="i32">int32</option>
+        <option value="u8">byte</option>
+        <option value="u16">uint16</option>
+      </select>
     </div>
     <input type="text" id="pak-asset" placeholder="e.g. TS2Prototype/Plugins/DLC/FifeCircle_Route_Gameplay/Content/Timetable/FCE_Timetable_TT.uasset"
                style="width:100%;font-family:var(--mono);font-size:12px;margin-bottom:8px;">
@@ -385,10 +390,11 @@ async function inspectField() {
   try{
     const d=await (await fetch('/api/paks/inspect_field',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({asset_name:asset.split('/').pop(), offset:off,
+        field_width:document.getElementById('pak-width').value,
         expected_services:Number(document.getElementById('pak-services').value)||null})})).json();
     lastPakResult=d;
     if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
-    status.innerHTML=`<span style="color:var(--status-green);">+${d.offset}: ${d.distinct_values} distinct values`
+    status.innerHTML=`<span style="color:var(--status-green);">+${d.offset} (${esc(d.field_width)}): ${d.distinct_values} distinct values`
       +`, ${d.total_runs} runs</span> <span class="small dim">· ${d.records_examined} records`
       +` · median run ${d.run_length_median}</span>`;
     status.style.color='';
@@ -436,10 +442,11 @@ async function callField() {
         background:rgba(255,255,255,0.04);border-left:3px solid var(--accent);">${esc(d.verdict)}</p>`
       +`<div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);
          border-radius:5px;max-height:320px;overflow:auto;">
-         <div class="dim">offset   runs  distinct  per-run  medrun  maxrun</div>`
-      +(d.candidates||[]).map(c=>`<div>+${String(c.offset).padEnd(6)} ${String(c.runs).padStart(5)}
-         ${String(c.distinct).padStart(9)} ${String(c.records_per_run).padStart(8)}
-         ${String(c.median_run).padStart(7)} ${String(c.max_run).padStart(7)}</div>`).join('')
+         <div class="dim">offset  width  runs  distinct  per-run  medrun  maxrun</div>`
+      +(d.candidates||[]).map(c=>`<div>+${String(c.offset).padEnd(6)} ${String(c.width||'i32').padEnd(5)}
+         ${String(c.runs).padStart(5)} ${String(c.distinct).padStart(9)}
+         ${String(c.records_per_run).padStart(8)} ${String(c.median_run).padStart(7)}
+         ${String(c.max_run).padStart(7)}</div>`).join('')
       +`</div>`;
   }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }

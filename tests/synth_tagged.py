@@ -482,6 +482,7 @@ def build_uexp_fife(path, rng, stride=707):
 
 
 CALL_AT = 480
+BYTE_AT = 520
 
 
 def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None):
@@ -502,6 +503,10 @@ def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None
     rec[time_at:time_at + 8] = struct.pack("<q", int(t * TICKS))
     if call_id is not None:
         rec[CALL_AT:CALL_AT + 4] = struct.pack("<i", call_id)
+        # A single-BYTE field, like the one at +695 on the real layer. Scanned
+        # as int32 it appears at four offsets with values that are multiples
+        # of 2^24 and is unrecognisable; scanned as a byte it reads plainly.
+        rec[BYTE_AT] = (call_id % 24) + 1
     return bytes(rec)
 
 
