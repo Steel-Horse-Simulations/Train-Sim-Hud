@@ -1375,3 +1375,70 @@ on return workings.
 
 Also worth inspecting **+695 as a byte** to confirm the platform reading, and
 **+696-698 (40 runs, 2 distinct)** which looks like a direction flag.
+
+## +695 is a PLATFORM number, not a station (v7.56.0)
+
+Three captures at different widths settle it:
+
+```
++695 as u8 : 14 values - 0,1,2,3,4,7,9,12,13,18,21,23,24 and 255
++696 as u8 : 2 values - 0 (5167) and 255 (31)
++696 as u16: 2 values - 0 (5167) and 65535 (31)
+```
+
+255 appears 31 times at +695 AND 31 times at +696; 65535 - two FF bytes -
+appears 31 times as a u16; and the original int32 scan showed -1 exactly 31
+times. So bytes 695-698 are all FF in the same 31 records: **the field is an
+int32 at +695 using -1 as a "none" sentinel**, and its real values are
+0,1,2,3,4,7,9,12,13,18,21,23,24 - exactly **13** of them.
+
+Thirteen values, and a Leven-Edinburgh service calls at thirteen stations.
+Every count-based test says "station".
+
+**It is not.** The distribution:
+
+```
+value   0: 2854 records (55%)      even share would be 8%
+value   1:  964 (19%)
+value   2:  447 (9%)
+value   9:  304 (6%)
+```
+
+A train calls at each station on its route once, so a station field has to be
+roughly EVEN. This one is dominated by 0 and 1. Values 0-24 with -1 for
+"none", skewed heavily to the low numbers, is a **platform number** - and
+Edinburgh Waverley's platforms run past 20, which is where 18, 21, 23 and 24
+come from.
+
+### The lesson, and `find_station_field`
+
+Run counts and distinct counts have now pointed at the wrong field twice
+(+407 for services, +695 for stations). Both times the count matched and the
+BEHAVIOUR did not.
+
+`/api/paks/station_field`, button **Find station field**, scores on
+normalised Shannon entropy over the StopPoint records instead: 1.0 means
+every value equally common, 0 means one dominates. A station field over 13
+stations sits near 1.0; the +695 platform field would score about 0.5.
+Sentinels (-1, 255, 65535) are excluded before scoring, since "none" would
+otherwise drag the evenness down.
+
+The fixture now plants BOTH an even 13-value station index and a skewed
+13-value platform decoy, so the test fails unless the tool can tell them
+apart. It picks the station field at evenness 0.9999 with a top share of
+0.081, and ranks the decoy below it.
+
+Also fixed: `inspect_field` reported `"last": null` on every real capture,
+because the final run often carries no time. It now walks back to the last
+run that has one.
+
+### Next step
+
+Run **Find station field**. If a field comes back with ~13 evenly spread
+values, that is the station index, and the per-service sequence from
+**Inspect field** will give the station ORDER - which is what stop labelling
+needs.
+
+If nothing scores above 0.85, station identity is probably not an integer in
+these records at all, and the next candidates are the `RibbonLocation` /
+`NetworkRibbonLocation` FName values, which name track positions directly.

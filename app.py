@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.55.0"
+APP_VERSION = "7.56.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1711,6 +1711,37 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/station_field", methods=["POST"])
+def paks_station_field():
+    """Looks for the STATION identifier, scored on how evenly a field's
+    values are distributed.
+    Body: {"asset_name": "...", "expected_stations": 13}
+
+    Run counts and distinct counts have both pointed at the wrong field: the
+    byte at +695 has exactly 13 non-sentinel values, matching the 13 stations
+    on a Leven-Edinburgh service, but 0 takes 55% of records where an even
+    share would be 8%. A train calls at each station on its route once, so a
+    station field has to be roughly even. The skewed one is a platform
+    number."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    exp = body.get("expected_stations") or 13
+    return jsonify(pak_tools.find_station_field(path, expected_stations=int(exp)))
 
 
 @app.route("/api/paks/inspect_field", methods=["POST"])

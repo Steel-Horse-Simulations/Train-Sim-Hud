@@ -590,6 +590,40 @@ def run_byte_field():
     return ok
 
 
+def run_station_field():
+    """The station field must be found by EVENNESS, and the platform-shaped
+    decoy rejected.
+
+    This is the exact trap the real file set: the byte at +695 has 13
+    non-sentinel values and a Leven-Edinburgh service calls at 13 stations,
+    so every count-based test says "station". But 0 takes 55% of records
+    where an even share would be 8%. The fixture plants both - an even
+    13-value station index and a skewed 13-value platform decoy - so the
+    test fails if the tool cannot tell them apart.
+    """
+    print("\n--- station field found by evenness, not by count ---")
+    base, truth, _s, _t, _tm = T.main_fife("/tmp/eval_stn")
+    r = pak_tools.find_station_field(base + ".uexp", expected_stations=13)
+    ok = True
+    b = r.get("best")
+    if not b:
+        print("  FAIL: found nothing"); return False
+    print(f"  best +{b['offset']} ({b['width']}): {b['distinct']} values, "
+          f"evenness {b['evenness']}, top share {b['top_share']}")
+    if b["distinct"] != 13:
+        print("  FAIL: wrong value count"); ok = False
+    if b["evenness"] < 0.9:
+        print("  FAIL: winner is not evenly distributed"); ok = False
+    if b["top_share"] > 0.2:
+        print("  FAIL: winner is dominated by one value - that is a platform"); ok = False
+
+    # the skewed decoy must rank below the real field
+    decoys = [c for c in r["candidates"] if c["top_share"] > 0.45]
+    if decoys:
+        print(f"  skewed decoy ranked at evenness {decoys[0]['evenness']} - below")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
@@ -597,6 +631,7 @@ if __name__ == "__main__":
                run_anchor_impostor(), run_timetable_extraction(),
                run_phase_shift_recovery(), run_service_field(),
                run_fife_shape(), run_near_miss_rejection(),
-               run_call_gap_tuning(), run_call_field(), run_byte_field()]
+               run_call_gap_tuning(), run_call_field(), run_byte_field(),
+               run_station_field()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

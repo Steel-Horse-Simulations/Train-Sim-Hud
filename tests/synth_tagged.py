@@ -483,6 +483,8 @@ def build_uexp_fife(path, rng, stride=707):
 
 CALL_AT = 480
 BYTE_AT = 520
+STATION_AT = 540
+PLATFORM_AT = 560
 
 
 def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None):
@@ -507,6 +509,14 @@ def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None
         # as int32 it appears at four offsets with values that are multiples
         # of 2^24 and is unrecognisable; scanned as a byte it reads plainly.
         rec[BYTE_AT] = (call_id % 24) + 1
+        # A STATION index: even across 13 values, one per call - the thing
+        # the evenness search must find.
+        rec[STATION_AT] = call_id % 13
+        # A PLATFORM-shaped decoy: 13 values but wildly skewed, 0 taking
+        # over half. This is what +695 on the real file looks like, and a
+        # run-count or distinct-count search cannot tell it from a station.
+        rec[PLATFORM_AT] = 0 if rng.random() < 0.55 else rng.choice(
+            [1, 1, 1, 2, 2, 3, 4, 7, 9, 12, 13, 18, 21, 24])
     return bytes(rec)
 
 

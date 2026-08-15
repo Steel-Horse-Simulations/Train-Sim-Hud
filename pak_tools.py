@@ -3435,8 +3435,13 @@ def inspect_field(path, offset, stride=None, anchor=None, width=4,
             "runs": len(g),
             "distinct": len(set(r["value"] for r in g)),
             "sequence": [r["value"] for r in g[:30]],
-            "first": _fmt_hms(g[0]["first_seconds"]) if g and g[0]["first_seconds"] else None,
-            "last": _fmt_hms(g[-1]["last_seconds"]) if g and g[-1]["last_seconds"] else None,
+            # Walk back to the last run that actually carries a time. The
+            # final run often has none, which showed as "last": null on every
+            # real capture and made the services look truncated.
+            "first": next((_fmt_hms(r["first_seconds"]) for r in g
+                           if r["first_seconds"] is not None), None),
+            "last": next((_fmt_hms(r["last_seconds"]) for r in reversed(g)
+                          if r["last_seconds"] is not None), None),
         })
 
     return {
@@ -3454,5 +3459,124 @@ def inspect_field(path, offset, stride=None, anchor=None, width=4,
             f"{len(runs)} runs. Read the per-service sequences below: a "
             "station identifier visits each value once per service and runs "
             "in the opposite order on a return working."
+        ),
+    }
+
+
+def find_station_field(path, expected_stations=13, stride=None, anchor=None,
+                       width=4, top=25):
+    """Looks for the STATION identifier, scored on how EVENLY a field's
+    values are distributed rather than on how often it changes.
+
+    Run counts have now twice pointed at the wrong field. The byte at +695
+    has exactly 13 non-sentinel values, and a Leven-Edinburgh service calls
+    at 13 stations - a tempting match. But 0 accounts for 55% of records and
+    1 for another 19%, where an even share across 13 values would be 8%
+    each. A train calls at each station on its route once, so a station
+    field MUST be roughly even; a lopsided one is something else. (0-24 with
+    -1 as a sentinel, heavily skewed to 0 and 1, reads as a platform
+    number - Waverley's platforms run past 20.)
+
+    So the score here is evenness, measured as normalised Shannon entropy:
+    1.0 means every value equally common, 0 means one value dominates. A
+    station field over 13 stations should sit near 1.0; the platform field
+    scores about 0.5.
+
+    Applied to StopPoint records only, since those are the ones that
+    represent a call at a station.
+    """
+    layout = decode_fixed_records(path, stride=stride, anchor=anchor, width=width)
+    if "error" in layout:
+        return layout
+    stride = layout["stride"]
+    with open(path, "rb") as f:
+        data = f.read()
+    with open(layout["uasset"], "rb") as f:
+        names = _read_fname_strings(f.read())
+    type_idx = {i: n.split("::")[-1] for i, n in enumerate(names)
+                if "::" in n and n.split("::")[-1] in _TRACK_DATA_TYPES}
+    refs = _name_ref_offsets(data, names, width)
+    starts = _stride_chain(refs[{n: i for i, n in enumerate(names)}[layout["anchor"]]],
+                           stride)
+    fmt = "<ii" if width == 4 else "<qq"
+    step = 2 * width
+    tdelta = layout["type_field_offset"]
+    stops = []
+    for s in starts:
+        o = s + tdelta
+        if o + step > len(data):
+            continue
+        idx, num = struct.unpack_from(fmt, data, o)
+        if num == 0 and type_idx.get(idx) == "StopPoint":
+            stops.append(s)
+    if len(stops) < 32:
+        return {"error": "too_few_stop_records", "stop_records": len(stops)}
+
+    import math
+    results = []
+    for kind, size, sfmt in FIELD_WIDTHS:
+        for d in range(0, stride - size):
+            vals = []
+            ok = True
+            for s in stops:
+                o = s + d
+                if o + size > len(data):
+                    ok = False
+                    break
+                vals.append(struct.unpack_from(sfmt, data, o)[0])
+            if not ok:
+                continue
+            counts = Counter(vals)
+            # Sentinels are excluded before scoring: -1 / 255 / 65535 mean
+            # "none" and would otherwise drag the evenness down.
+            for sentinel in (-1, 255, 65535, 4294967295):
+                counts.pop(sentinel, None)
+            n = len(counts)
+            if not (2 <= n <= 60) or sum(counts.values()) < len(stops) * 0.3:
+                continue
+            total = sum(counts.values())
+            entropy = -sum((c / total) * math.log(c / total) for c in counts.values())
+            evenness = entropy / math.log(n) if n > 1 else 0.0
+            results.append({
+                "offset": d, "width": kind, "distinct": n,
+                "evenness": round(evenness, 4),
+                "top_share": round(max(counts.values()) / total, 3),
+                "values": sorted(counts)[:20],
+                "frequency": counts.most_common(6),
+                "distance_from_expected": abs(n - expected_stations),
+            })
+
+    # Evenness first, then closeness to the expected station count.
+    results.sort(key=lambda r: (-r["evenness"], r["distance_from_expected"]))
+    dedup, seen = [], set()
+    for r in results:
+        key = (r["distinct"], r["evenness"])
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append(r)
+
+    best = None
+    for r in dedup:
+        if r["evenness"] >= 0.85 and abs(r["distinct"] - expected_stations) <= 4:
+            best = r
+            break
+
+    return {
+        "path": path,
+        "stop_records": len(stops),
+        "expected_stations": expected_stations,
+        "candidates": dedup[:top],
+        "best": best,
+        "verdict": (
+            f"Field at +{best['offset']} ({best['width']}): {best['distinct']} "
+            f"values, evenness {best['evenness']} - close to uniform, which is "
+            "what a station field looks like when every service calls at every "
+            "station."
+            if best else
+            "No field has both a station-like value count and an even "
+            "distribution. Station identity may not be an integer in these "
+            "records - the next candidates are the RibbonLocation FName "
+            "values, which name track positions directly."
         ),
     }

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.55.0**
+**App version at end of session: 7.56.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,34 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.56.0 - +695 is a PLATFORM number
+
+Three width captures settle it: 255 appears 31x at +695 and 31x at +696,
+65535 appears 31x as u16, int32 showed -1 31x. Bytes 695-698 are all FF in
+the same 31 records, so it is an int32 at +695 with -1 as a "none" sentinel.
+Real values: 0,1,2,3,4,7,9,12,13,18,21,23,24 - exactly 13, matching the 13
+stations on a Leven-Edinburgh run.
+
+NOT a station. 0 takes 55% of records, 1 takes 19%, where an even share is
+8%. A train calls at each station once, so a station field must be even.
+0-24 skewed low with -1 for none = PLATFORM (Waverley runs past 20, hence
+18/21/23/24).
+
+Count-based searches have now picked the wrong field twice (+407 services,
++695 stations) - count matched, behaviour did not.
+
+`find_station_field()` / `/api/paks/station_field` / **Find station field**
+scores normalised Shannon entropy over StopPoint records. Station ~1.0,
+platform ~0.5. Sentinels excluded. Fixture plants BOTH an even station index
+and a skewed platform decoy; tool picks station at 0.9999 / top share 0.081.
+
+Fixed: inspect_field reported "last": null on every capture (final run has no
+time); now walks back to the last run that has one.
+
+**Next: Find station field.** >0.85 evenness with ~13 values = the station
+index, and Inspect field then gives station ORDER. Nothing above 0.85 means
+station identity is not an integer - try RibbonLocation FName values.
 
 ## What changed in v7.55.0 - int32-only scanning was a blind spot
 

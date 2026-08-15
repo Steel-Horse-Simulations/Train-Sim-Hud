@@ -102,6 +102,7 @@
         <button class="btn primary" onclick="serviceField()">Find service field</button>
         <button class="btn primary" onclick="callField()">Find call field</button>
         <button class="btn primary" onclick="inspectField()">Inspect field</button>
+        <button class="btn primary" onclick="stationField()">Find station field</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -377,6 +378,36 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function stationField() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Scoring fields on how evenly their values are spread…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/station_field',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop(),
+        expected_stations:Number(document.getElementById('pak-calls').value)||13})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    const b=d.best;
+    status.innerHTML=b?`<span style="color:var(--status-green);">+${b.offset} (${esc(b.width)}): `
+      +`${b.distinct} values, evenness ${b.evenness}</span>`
+      :`<span style="color:var(--status-amber);">no station-shaped field</span>`;
+    status.innerHTML+=` <span class="small dim">· ${d.stop_records} StopPoint records</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
+        background:rgba(255,255,255,0.04);border-left:3px solid var(--accent);">${esc(d.verdict)}</p>`
+      +`<div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);
+         border-radius:5px;max-height:340px;overflow:auto;">
+         <div class="dim">offset  width  distinct  evenness  topshare  values</div>`
+      +(d.candidates||[]).map(c=>`<div>+${String(c.offset).padEnd(6)} ${String(c.width).padEnd(5)}
+         ${String(c.distinct).padStart(8)} ${String(c.evenness).padStart(9)}
+         ${String(c.top_share).padStart(9)}  <span class="dim">${(c.values||[]).join(',')}</span></div>`).join('')
+      +`</div>`;
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }
 
 async function inspectField() {
