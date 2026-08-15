@@ -395,7 +395,7 @@ async function extractStations() {
     if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
     const ok=(d.place_count||0)>0;
     status.innerHTML=`<span style="color:var(--status-${ok?'green':'amber'});">`
-      +`${d.place_count} places, ${d.headcode_count} headcodes</span>`
+      +`${d.place_count} stations, ${d.headcode_count} headcodes</span>`
       +` <span class="small dim">· ${d.names_read} names read`
       +(d.saved?` · saved ${d.saved.stations_saved} stations, ${d.saved.headcodes_saved} headcodes`:'')
       +`</span>`;
@@ -409,6 +409,8 @@ async function extractStations() {
           <span style="color:var(--accent-bright);">${esc(place)}</span>
           <span class="dim">${plats.length?'platforms '+plats.map(esc).join(', '):''}</span></div>`).join('')
         +`</div>
+        <p class="small dim" style="margin-top:8px;">Track features kept separately:
+          ${d.infrastructure_count||0} — ${(d.infrastructure||[]).slice(0,10).map(esc).join(' · ')}</p>
         <p class="small dim" style="margin-top:8px;">Headcodes:
           ${(d.headcodes||[]).slice(0,40).map(esc).join(' ')}${(d.headcodes||[]).length>40?' …':''}</p>`
        :`<p class="small dim">Names found: ${(d.other_sample||[]).slice(0,25).map(esc).join(' · ')}</p>`);

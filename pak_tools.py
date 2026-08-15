@@ -3773,14 +3773,34 @@ def read_station_names(path):
     machinery = re.compile(
         r"(Property$|^E[A-Z]|::|^/|^Default__|^Package$|^Class$|^Guid$|"
         r"DataTrack|Timetable|Serialize|^None$|^BP_|^RVM_|^SM_|^MI_|^T_|"
-        r"Reference$|Index$|Location$|^Time$|^Timespan$|Direction)")
+        r"Reference$|Index$|Location$|^Time$|^Timespan$|Direction|"
+        # CamelCase with no spaces is an engine identifier, never a place:
+        # JunctionID, JunctionStateOverride, TargetPlatformFlags and
+        # YardManager all came through as "stations" on the real asset.
+        r"^[A-Z][a-z]+(?:[A-Z][a-z]*)+$|"
+        r"ID$|Flags?$|Manager$|Override(s)?$|State$)")
 
-    headcodes, stations, other = [], [], []
+    # Track features and operators are named like places but are not
+    # stations. All of these appeared in the real Fife Circle asset:
+    # "Portal - Slateford Up", "Up Fife Line", "Dalmeny Down Passenger Loop",
+    # "Eastfield Through Siding", "Avanti West Coast", "Rivet Railtours".
+    not_a_station = re.compile(
+        r"(^Portal\b|\bPassenger Loop$|\bPassing Loop$|\bSiding(s)?$|"
+        r"\bLine$|\bCurve\b|\bTunnel\b|^Up \w+|^Down \w+|"
+        r"\bDepot\b|\bYard$|Railtours?$|"
+        r"^(Avanti|LNER|ScotRail|CrossCountry|TransPennine|Caledonian)\b)", re.I)
+
+    headcodes, stations, infrastructure, other = [], [], [], []
     for n in names:
         if headcode.match(n):
             headcodes.append(n)
         elif machinery.search(n) or len(n) < 3:
             other.append(n)
+        elif not_a_station.search(n):
+            # Kept and reported separately rather than discarded: loops,
+            # sidings, portals and depots are real track features, and
+            # useful for matching a stop's position later.
+            infrastructure.append(n)
         elif _STATION_HINTS.search(n) or (" " in n and n[0].isupper()):
             stations.append(n)
         else:
@@ -3788,21 +3808,39 @@ def read_station_names(path):
 
     # Split a trailing platform designator off the station name, so
     # "Aberdour Platform 1" and "Aberdour Platform 2" collapse to one place.
-    plat = re.compile(r"^(.*?)\s+(?:Platform\s+)?([0-9]{1,2}[a-zA-Z]?)$")
+    # A platform designator is a number with an optional single letter -
+    # "1", "12", "1a", "11b" - all of which the real Waverley entries use.
+    plat = re.compile(r"^(.*?)\s+(?:Platform\s+)?([0-9]{1,2}[a-z]?)$", re.I)
     places = {}
     for s in stations:
         m = plat.match(s)
+        base = m.group(1).strip() if (m and m.group(1)) else s.strip()
+        # Re-test AFTER the platform number is split off. "Eastfield Through
+        # Siding 5" and "East Coast Main Line 1" only reveal themselves as
+        # track features once the trailing number is gone, so classifying
+        # before the split let them through as stations.
+        if not_a_station.search(base):
+            infrastructure.append(s)
+            continue
         if m and m.group(1):
-            places.setdefault(m.group(1).strip(), []).append(m.group(2))
+            places.setdefault(base, []).append(m.group(2))
         else:
-            places.setdefault(s.strip(), [])
+            places.setdefault(base, [])
+
+    # Platforms sort naturally: 1, 1a, 2, 2a, 10a, 11b - not as strings,
+    # where "10a" lands before "2".
+    def plat_key(p):
+        m = re.match(r"^(\d+)([a-z]?)$", p, re.I)
+        return (int(m.group(1)), m.group(2).lower()) if m else (999, p)
 
     return {
         "path": path,
         "names_read": len(names),
+        "infrastructure": sorted(set(infrastructure)),
+        "infrastructure_count": len(set(infrastructure)),
         "station_entries": sorted(stations),
         "station_count": len(stations),
-        "places": {k: sorted(v) for k, v in sorted(places.items())},
+        "places": {k: sorted(set(v), key=plat_key) for k, v in sorted(places.items())},
         "place_count": len(places),
         "headcodes": sorted(set(headcodes)),
         "headcode_count": len(set(headcodes)),

@@ -1631,3 +1631,54 @@ Expect ~88 station entries and 208 headcodes, per section 5. If the counts
 come back near those, the names are banked and the remaining work is joining
 them to the extracted stop times - for which the most promising key is
 Distance, since both the records and the live API carry it.
+
+## STATION NAMES EXTRACTED FROM THE GAME (v7.58.1)
+
+`FCE_Timetable_TT.uasset`, out of
+`TS2Prototype-WindowsNoEditor-FifeCircle.pak`:
+
+```
+2,329 names read -> 61 stations, 40 track features, 416 headcodes
+```
+
+Real ones. `Leven 1/2`, `Cameron Bridge 1/2`, `Glenrothes with Thornton 1/2`,
+`Kirkcaldy 1/2`, `Haymarket 0-4`, and **Edinburgh Waverly** (DTG's own
+spelling, alongside a separate `Edinburgh Waverley`) with 18 platforms:
+1a, 1b, 2a, 2b, 5, 6, 8, 9, 10a, 11a, 11b, 12, 13, 14, 15, 16, 17, 18.
+
+Headcodes are the real thing too - `1E01`, `1R03`, `1B61`, each with an
+`_End` variant, 416 in total against the 208 section 5 recorded.
+
+Stored in `route_stations` and `route_headcodes` in `timetables.db`.
+
+### Three classification faults the first real run exposed
+
+The first pass returned **102 "places"**, and the extra 41 were wrong in
+three distinct ways:
+
+  - **engine identifiers** - `JunctionID`, `JunctionStateOverride`,
+    `TargetPlatformFlags`, `YardManager`. Now rejected by shape: CamelCase
+    with no spaces is an identifier, never a British place name.
+  - **track features** - eleven `Portal - ...` entries, `Up Fife Line`,
+    `Dalmeny Down Passenger Loop`, `Eastfield Through Siding`,
+    `Haymarket Depot Siding`, plus the operators `Avanti West Coast` and
+    `Rivet Railtours`. These are real and worth keeping, so they are
+    reported separately as `infrastructure` rather than discarded - a stop's
+    position may well need them later.
+  - **classification order** - `Eastfield Through Siding 5` and `East Coast
+    Main Line 1` only reveal themselves once the trailing number is split
+    off, so the test now runs AFTER the platform split, not before.
+
+Platforms also sorted as strings, putting `10a` before `2a`. They now sort
+numerically with the letter as a tiebreak, which matters because Waverley's
+`1a/1b/2a/2b` are distinct platforms rather than variants.
+
+A regression test built from the REAL observed names locks all of this in.
+
+### Next step
+
+The names are on disk. What remains is joining them to the extracted stop
+times, and the likely key is **Distance**: the stop records carry it, and
+the live API's `DriverAid.TrackData` gives `stationName` with
+`distanceToStationCM`. One drive along the Leven branch would produce the
+mapping, after which the join is data rather than inference.

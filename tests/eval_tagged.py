@@ -728,6 +728,48 @@ def run_station_names():
     return ok
 
 
+def run_real_index_names():
+    """Classification against names OBSERVED in the real Fife Circle asset.
+
+    The first real run returned 102 "places" including JunctionID,
+    YardManager, TargetPlatformFlags, eleven "Portal - ..." entries, several
+    Passenger Loops and Sidings, and the operator Avanti West Coast. It also
+    sorted Waverley's platforms as strings, putting 10a before 2a.
+
+    Every one of those is planted here.
+    """
+    print("\n--- real Fife Circle name classification ---")
+    base, stations, infra, codes = T.main_real_index("/tmp/eval_realidx")
+    r = pak_tools.read_station_names(base + ".uasset")
+    ok = True
+    print(f"  places {r['place_count']} (true {len(stations)}), "
+          f"infrastructure {r['infrastructure_count']}, "
+          f"headcodes {r['headcode_count']} (true {len(codes)})")
+
+    for junk in ("JunctionID", "YardManager", "TargetPlatformFlags",
+                 "JunctionStateOverride"):
+        if junk in r["places"]:
+            print(f"  FAIL: '{junk}' classified as a station"); ok = False
+    for p in r["places"]:
+        if p.startswith("Portal") or p.endswith("Line") or "Loop" in p \
+                or "Siding" in p or p == "Avanti West Coast":
+            print(f"  FAIL: track feature '{p}' classified as a station"); ok = False
+    for want in ("Leven", "Edinburgh Waverly", "Glenrothes with Thornton"):
+        if want not in r["places"]:
+            print(f"  FAIL: lost real station '{want}'"); ok = False
+    if r["place_count"] != len(stations):
+        print(f"  FAIL: expected {len(stations)} places"); ok = False
+
+    # Waverley's platforms must sort numerically, not as strings
+    w = r["places"].get("Edinburgh Waverly", [])
+    print(f"  Waverley platforms: {w}")
+    if w and w.index("2a") > w.index("10a"):
+        print("  FAIL: platforms sorted as strings - 10a before 2a"); ok = False
+    else:
+        print("  platforms sort numerically")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
@@ -736,6 +778,7 @@ if __name__ == "__main__":
                run_phase_shift_recovery(), run_service_field(),
                run_fife_shape(), run_near_miss_rejection(),
                run_call_gap_tuning(), run_call_field(), run_byte_field(),
-               run_station_field(), run_name_fields(), run_station_names()]
+               run_station_field(), run_name_fields(), run_station_names(),
+               run_real_index_names()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

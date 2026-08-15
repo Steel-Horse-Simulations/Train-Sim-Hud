@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.58.0**
+**App version at end of session: 7.58.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,30 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.58.1 - REAL STATION NAMES EXTRACTED
+
+FCE_Timetable_TT.uasset -> 2,329 names -> **61 stations, 40 track features,
+416 headcodes**, saved to route_stations / route_headcodes.
+
+Real: Leven 1/2, Cameron Bridge 1/2, Glenrothes with Thornton 1/2, Kirkcaldy,
+Haymarket 0-4, Edinburgh Waverly (DTG's spelling) with 18 platforms including
+1a/1b/2a/2b/10a/11b. Headcodes 1E01, 1R03, 1B61 with _End variants.
+
+First pass returned 102 "places" - 41 wrong, in three ways, all now fixed and
+locked in by a regression test built from the REAL names:
+  - engine identifiers (JunctionID, YardManager) - rejected by CamelCase shape
+  - track features (Portal - ..., Up Fife Line, Passenger Loop, Siding, Depot,
+    operators like Avanti West Coast) - kept SEPARATELY as `infrastructure`,
+    not discarded, since a stop's position may need them
+  - classification ran BEFORE the platform split, so "Eastfield Through
+    Siding 5" got through; it now runs after
+  - platforms sorted as strings (10a before 2a); now numeric with letter
+    tiebreak, which matters as Waverley's 1a/1b/2a/2b are distinct platforms
+
+**Next: join names to stop times.** Likely key is Distance - the stop records
+carry it and the live API's DriverAid.TrackData gives stationName with
+distanceToStationCM. One drive along the branch produces the mapping.
 
 ## What changed in v7.58.0 - station names read from the game files, and stored
 

@@ -579,3 +579,50 @@ def main_index(out="/tmp/synth_index"):
     print(f"built {base}.uasset - {len(stations)} places, {len(entries)} platform "
           f"entries, {len(set(codes))} headcodes, no .uexp")
     return base, stations, entries, sorted(set(codes))
+
+
+def main_real_index(out="/tmp/synth_real_index"):
+    """An index asset built from names OBSERVED in the real Fife Circle
+    asset, including every kind that was misclassified first time round.
+
+    Written from the real output rather than invented, so it is a genuine
+    regression test: engine identifiers (JunctionID, YardManager), track
+    features (Portal - Slateford Up, Up Fife Line, Dalmeny Down Passenger
+    Loop, Eastfield Through Siding 5), operators (Avanti West Coast), and
+    Waverley's lettered platforms which sort wrongly as strings.
+    """
+    os.makedirs(out, exist_ok=True)
+    base = os.path.join(out, "FCE_Timetable_TT")
+    stations = {
+        "Leven": ["1", "2"], "Cameron Bridge": ["1", "2"],
+        "Glenrothes with Thornton": ["1", "2"], "Kirkcaldy": ["1", "2"],
+        "Haymarket": ["0", "1", "2", "3", "4"],
+        "Edinburgh Waverly": ["1a", "1b", "2a", "2b", "5", "9", "10a", "11b", "18"],
+        "London Kings Cross": [], "Bristol Temple Meads": [],
+    }
+    infrastructure = [
+        "Portal - Slateford Up", "Portal - Musselburgh Down", "Up Fife Line",
+        "Down Winchburgh Line", "Dalmeny Down Passenger Loop",
+        "Eastfield Through Siding 5", "East Coast Main Line 1",
+        "Haymarket Depot Siding 6", "Inverkeithing Curve Line 1",
+        "Haymarket Tunnel Line 1", "Avanti West Coast", "Rivet Railtours",
+    ]
+    machinery = ["JunctionID", "JunctionStateOverride", "JunctionStateOverrides",
+                 "TargetPlatformFlags", "YardManager", "EnumProperty",
+                 "ETimetableTrackDataType::StopPoint", "None", "Package"]
+    codes = []
+    for pre in ("1E", "1R", "2K"):
+        for i in range(1, 30):
+            codes += [f"{pre}{i:02d}", f"{pre}{i:02d}_End"]
+    entries = []
+    for st, plats in stations.items():
+        entries += [f"{st} {p}" for p in plats] or [st]
+
+    buf = bytearray()
+    for n in machinery + entries + infrastructure + codes:
+        buf += _pstr(n)
+    with open(base + ".uasset", "wb") as f:
+        f.write(bytes(buf))
+    print(f"built {base}.uasset - {len(stations)} places, "
+          f"{len(infrastructure)} track features, {len(set(codes))} headcodes")
+    return base, stations, infrastructure, sorted(set(codes))
