@@ -1806,3 +1806,49 @@ stop but not yet resolved to lat/long. The reference implementation computes
 it "from ribbon geometry + route origin via UTM", so the geometry has to come
 from the route definition asset. That would put every stop on the map without
 driving.
+
+## IT WORKS ON THE REAL FILE (v7.60.1)
+
+`FCE_Timetable_TT.uasset` - 2,328 names, one export, **21.3 MB of payload**:
+
+```
+500 services, 2,083 named stops, 42 distinct stations
+```
+
+A real Fife Circle working, in correct geographic order with plausible
+4-6 minute intervals:
+
+```
+P1L30_1   20:33 Kirkcaldy · 20:39 Kinghorn · 20:44 Burntisland
+          20:49 Aberdour · 20:53 Dalgety Bay · 20:57 Inverkeithing
+          21:01 North Queensferry · 21:05 Dalmeny · 21:10 Edinburgh Gateway
+          21:14 South Gyle · 21:19 Haymarket · 21:23 Edinburgh Waverly
+```
+
+Station frequencies match a real timetable too: Haymarket 253, Edinburgh
+Waverly 142, Linlithgow 140, Polmont 140 - the busy through stations at the
+top, branch stations at the bottom.
+
+### Three faults the real run exposed
+
+**Explicit and simulated times were being MIXED.** 20 stops showed dwells
+like `05:57 -> 17:55` at Markinch. The code took
+`arrival_ticks or sim_arrival_ticks` and `completion_ticks or
+sim_completion_ticks` INDEPENDENTLY, so a service with an explicit arrival
+and only a simulated completion paired two values describing different
+things. Now one source or the other supplies the pair.
+
+**No headcodes at all** - 0 of 500. The asset carries no HeadCode property;
+the code is embedded in the service name (`1L86_B`, `P1L86`, `1L27_1`).
+`derive_headcode()` extracts it, and the regex must NOT use `\b`: an
+underscore is a word character, so `\b` never matches between `P` and `1`,
+and every real name failed. It anchors on surrounding digits instead.
+
+**The 500-service cap was silently truncating.** It reported 500 as though
+that were the answer. Raised to 5,000, and `truncated` is now returned so a
+cap is visible rather than assumed.
+
+### Next
+
+Ribbon GUID + offset -> lat/long, which needs the route definition asset's
+geometry. That would place every stop on the map without driving.

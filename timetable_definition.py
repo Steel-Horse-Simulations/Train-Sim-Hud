@@ -158,6 +158,25 @@ def _parse_instruction_until_none(r, limit):
     return ins
 
 
+# No \b anchors: an underscore is a word character, so \b never matches
+# between "P" and "1" in "P1L86", and every real service name failed.
+# Anchor on the surrounding DIGITS instead, so a letter prefix or an
+# _B / _1 suffix does not block the match.
+HEADCODE_RE = re.compile(r"(?<![0-9])(\d[A-Z]\d{2})(?![0-9])")
+
+
+def derive_headcode(name):
+    """Pulls the British headcode out of a service name.
+
+    The real asset does not carry a HeadCode property - service names look
+    like `1L86_B`, `P1L86`, `1L27_1`, where the code is embedded with a
+    prefix or suffix. All 500 services parsed had headcode None until this,
+    which would have left the HUD with nothing to label a service by.
+    """
+    m = HEADCODE_RE.search(name or "")
+    return m.group(1) if m else None
+
+
 def _build_stops(instructions):
     """Turns instructions into the stop list a passenger would recognise.
 
@@ -170,8 +189,17 @@ def _build_stops(instructions):
         label = ins.get("station") or ins.get("display_name") or ""
         if not label:
             continue
-        arrival = ins["arrival_ticks"] or ins["sim_arrival_ticks"]
-        departure = ins["completion_ticks"] or ins["sim_completion_ticks"]
+        # Explicit times win; simulated ones are the fallback AI services
+        # carry. They must NOT be mixed: on the real file, taking an
+        # explicit ArrivalTime with a simulated CompletionTime produced
+        # dwells like 05:57 -> 17:55, because the two describe different
+        # things. Use one source or the other for the pair.
+        if ins["arrival_ticks"] or ins["completion_ticks"]:
+            arrival = ins["arrival_ticks"]
+            departure = ins["completion_ticks"]
+        else:
+            arrival = ins["sim_arrival_ticks"]
+            departure = ins["sim_completion_ticks"]
         place, stype, snum = split_location(label)
         stops.append({
             "station": place,
@@ -250,7 +278,10 @@ def _walk_top_level(r, limit):
     return services
 
 
-def parse_timetable_definition(path, max_services=500):
+def parse_timetable_definition(path, max_services=5000):
+    """max_services is a guard against a runaway parse, not a page size. The
+    first real run hit a 500 cap silently, reporting 500 services as though
+    that were the answer."""
     """Reads a RouteTimetableDefinition into services with named stops."""
     if not os.path.isfile(path):
         return {"error": "file_not_found", "path": path}
@@ -279,7 +310,7 @@ def parse_timetable_definition(path, max_services=500):
         times = [s["arrival"] or s["departure"] for s in calls if (s["arrival"] or s["departure"])]
         out.append({
             "name": svc["name"],
-            "headcode": svc["headcode"],
+            "headcode": svc["headcode"] or derive_headcode(svc["name"]),
             "operator": svc["operator"],
             "formation": svc["formation"],
             "is_player_drivable": svc["is_player_drivable"],
@@ -292,6 +323,7 @@ def parse_timetable_definition(path, max_services=500):
 
     named = sum(1 for s in out for st in s["stops"] if st["station"])
     return {
+        "truncated": len(services) >= max_services,
         "path": path,
         "package": pkg.summary(),
         "service_count": len(out),

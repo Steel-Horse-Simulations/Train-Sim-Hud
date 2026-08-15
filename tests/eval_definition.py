@@ -91,6 +91,30 @@ def run():
         if seq != sorted(seq):
             print(f"  FAIL: {svc['headcode']} times not ascending"); ok = False
 
+    # headcodes must survive real-world name shapes: an underscore is a
+    # word character, so a \\b-anchored regex matched none of 1L86_B, P1L86
+    # or 1L27_1 - every service on the real file.
+    for name, want in (("1L86_B", "1L86"), ("P1L86", "1L86"),
+                       ("1L27_1", "1L27"), ("SVC_2K05", "2K05"),
+                       ("nonsense", None)):
+        got = td.derive_headcode(name)
+        if got != want:
+            print(f"  FAIL: headcode {name} -> {got}, expected {want}"); ok = False
+    print("  headcodes derived from real-world name shapes")
+
+    # A stop must never mix an explicit time with a simulated one: on the
+    # real file that produced dwells like 05:57 -> 17:55.
+    for svc in r["services"]:
+        for st in svc["stops"]:
+            if st["arrival"] and st["departure"]:
+                a = [int(x) for x in st["arrival"].split(":")]
+                dp = [int(x) for x in st["departure"].split(":")]
+                dwell = (dp[0] - a[0]) * 3600 + (dp[1] - a[1]) * 60 + (dp[2] - a[2])
+                if not (0 <= dwell <= 3600):
+                    print(f"  FAIL: implausible dwell {st['arrival']}->{st['departure']} "
+                          f"at {st['station']}"); ok = False
+    print("  no implausible dwells")
+
     print("  " + ("PASS" if ok else "FAIL"))
     return ok
 

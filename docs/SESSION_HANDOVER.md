@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.60.0**
+**App version at end of session: 7.60.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,26 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.60.1 - the parser works on the REAL file
+
+FCE_Timetable_TT.uasset: 2,328 names, 21.3 MB payload -> **500 services,
+2,083 named stops, 42 stations**, in correct geographic order with plausible
+intervals (Kirkcaldy > Kinghorn > Burntisland > Aberdour > ... > Waverly).
+
+Three faults the real run exposed, all fixed:
+  - explicit and simulated times were mixed INDEPENDENTLY, pairing an
+    explicit arrival with a simulated completion -> dwells like 05:57->17:55.
+    Now one source supplies both halves of a pair.
+  - 0 headcodes of 500: the asset has no HeadCode property, the code is in
+    the service name (1L86_B, P1L86). derive_headcode() extracts it - and the
+    regex must NOT use \b, since an underscore is a word character and every
+    real name failed.
+  - the 500 cap silently truncated and reported 500 as the answer. Now 5,000
+    with a `truncated` flag.
+
+**Next: ribbon GUID + offset -> lat/long** from the route definition asset's
+geometry, putting every stop on the map without driving.
 
 ## What changed in v7.60.0 - THE TIMETABLE PARSER
 
