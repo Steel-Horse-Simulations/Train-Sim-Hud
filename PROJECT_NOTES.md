@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.48.0
+## Current version: 7.60.0
 
 ## Shipped features (working, tested against real data)
 
@@ -1433,3 +1433,69 @@ Verified end to end: seed, back up, DELETE every table, restore, compare.
 Row counts identical across all tables, 0 skipped, 0 errors. The button was
 then clicked in a real browser and the two files confirmed on disk (6 KB JSON
 + 96 KB .db).
+
+
+## SHIPPED in v7.59.0 - download fixed, timetable banked, drive recorder
+
+### 1. Known Trains download - two real bugs
+
+**The page navigated away.** After writing the backup, the code created an
+anchor to `/api/known_trains/export` and clicked it. In pywebview that does
+not download - the WEBVIEW ITSELF navigates to the JSON, replacing the page.
+Removed. The result now appears IN the page with the file paths, plus an
+**Open backups folder** button (`/api/known_trains/reveal_backups`), which is
+what "download" actually means in a desktop app.
+
+**Restore imported nothing and said it worked.** `uploadData` posted to
+`/api/known_trains/restore`, which read only `body["classes"]` - but the
+backup file produced by `/api/known_trains/backup` is `{"tables": {...}}`.
+Restoring a real backup therefore did NOTHING while reporting success, which
+is the worst possible failure for a restore. `/restore` now accepts both
+shapes, routes full backups through `import_everything()` (parents before
+children), refuses an unrecognised file with a 400, and reports the actual
+row counts instead of "restored successfully".
+
+### 2. The extracted timetable is banked to SQLite
+
+`extracted_services` and `extracted_calls` in `timetables.db`. **Extract
+timetable** saves automatically; `/api/timetable/extracted` reads it back.
+The Leven extraction is 39 services and 485 calls.
+
+Re-extraction REPLACES that asset's previous rows rather than merging: this
+is derived data, and a better parser should supersede the old result, not
+leave a mix of two parser versions with no way to tell them apart.
+`station_name` exists but is NULL, so labelling later is an UPDATE rather
+than a schema change.
+
+### 3. Drive recorder - the bridge to station names
+
+`drive_recorder.py`, `/api/drive/record|status|match`, **Record drive** and
+**Match driven names** on Discovery.
+
+Two halves are now on disk and cannot be joined: extracted times with no
+names, and 61 extracted names with no positions. The live API bridges them -
+`DriverAid.TrackData` gives `stationName` with `distanceToStationCM` - so one
+run along the route produces the mapping.
+
+It reuses the app's own `/api/journey` reader rather than opening its own
+connection, so recording shares the single upstream lock and cannot
+reintroduce the connection drops v7.44.0 fixed.
+
+**Closest approach compares ABSOLUTE distance.** The value goes negative once
+a station is behind the train, so a plain `<` kept the point furthest PAST
+each station - the first test showed closest approaches of -1800m and
+recorded the train's position there rather than at the station. Now within
+150m on the simulated run. The same fix was needed in the SQLite upsert.
+
+`match_sightings_to_stations()` reports matches rather than applying them:
+the index asset holds BOTH "Edinburgh Waverley" and DTG's "Edinburgh
+Waverly", so the leftovers need a person's eye.
+
+### A false failure worth recording
+
+`tests/eval_pipeline.py` first reported the restore importing zero rows. The
+APP was correct - each module sets `DB_PATH` absolutely from its own
+`__file__`, so the test's `os.chdir` made it write to a relative `data/`
+while the app read the real one. The harness now redirects `DB_PATH` after
+import. Worth remembering: a test that changes directory does not redirect
+these modules.

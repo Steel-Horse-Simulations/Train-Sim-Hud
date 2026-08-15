@@ -1682,3 +1682,127 @@ times, and the likely key is **Distance**: the stop records carry it, and
 the live API's `DriverAid.TrackData` gives `stationName` with
 `distanceToStationCM`. One drive along the Leven branch would produce the
 mapping, after which the join is data rather than inference.
+
+## THE JOIN IS IN THE INDEX ASSET - I was reading the wrong file (v7.60.0)
+
+The user pointed out that the other app knows stop locations for routes never
+driven, so the data must be in the files. It is. Its source is public
+(github.com/hcfairbanks/tsw_projects) and reading it settles every open
+question at once.
+
+**Station names are not in the DataTrack layers at all - and they are not
+supposed to be.** All four negative searches were correct; they were just
+aimed at the wrong asset. The other app never parses the DataTrack layers for
+this. It parses the **`RouteTimetableDefinition`** - `FCE_Timetable_TT.uasset`,
+the INDEX asset - which is the file I read as a flat bag of strings to get the
+88 station names, without ever looking at its structure.
+
+### Where a stop's station name actually comes from
+
+Each service holds an array of INSTRUCTIONS, and each instruction carries:
+
+```
+InstructionType          EnumProperty      GoTo / Couple / Uncouple / LoadUnload
+Destination              StructProperty    -> RouteLocationName
+  Name                     NameProperty    <- THE STATION NAME
+  Location                 StructProperty  <- NetworkRibbonLocation (guid + f32)
+DestinationDisplayName   TextProperty      human-readable fallback
+ArrivalTime              StructProperty    Timespan, 100ns ticks
+CompletionTime           StructProperty    Timespan  (= departure)
+SimulatedArrivalTime     StructProperty    Timespan  (AI services)
+SimulatedCompletionTime  StructProperty    Timespan
+bIsStopping              BoolProperty      <- whether this is a CALL
+WaitingTime              StructProperty    Timespan
+FormationName            NameProperty
+```
+
+So name, arrival, departure and "is this a stop" are all on the SAME record.
+There was never a join to find - the association I spent four searches
+hunting for does not exist because it does not need to.
+
+A location label like `Boston South Station Track 02` splits on
+` Platform ` / ` Siding ` / ` Track ` / ` Line `, longest match first, into
+(station, structure type, structure number). That is exactly the platform
+splitting already implemented in `read_station_names()`, which is a good sign
+the name shapes were read correctly.
+
+### Coordinates without driving
+
+`NetworkRibbonLocation` is a GUID plus a float offset along that ribbon. The
+other app computes lat/lng downstream "from ribbon geometry + route origin
+via UTM", zero when the ribbon is not anchored. So positions come from the
+files too - no internet, no GPS, no drive. The recorder becomes a
+verification tool rather than the only source.
+
+### What this means for the work already done
+
+Not wasted, but aimed at the wrong asset:
+  - the 707-byte stride, the type field, the time field and the service
+    segmentation are all real and all confirmed - but they describe the
+    DataTrack layer, which carries the simulated running profile;
+  - the SCHEDULE - what a passenger would recognise as the timetable - is in
+    the index asset, keyed by instruction, and is far simpler to read;
+  - `read_station_names()` already reads that file's name table correctly.
+
+### Next step
+
+Write a proper `RouteTimetableDefinition` parser: walk Services ->
+Instructions, and take `Destination.Name`, `ArrivalTime`, `CompletionTime`
+and `bIsStopping` from each. That yields named stops with times for every
+service on a route, with no driving and no inference.
+
+The tagged-property reader written in v7.39.0 (`_read_tag`, `_walk_record`)
+is the right foundation - and it is now clear WHY it found no tag chains in
+the DataTrack layer: that layer is not tagged. The index asset is.
+
+## The parser (v7.60.0)
+
+`uasset.py` - a real Unreal package reader: header, name map, export table,
+sibling `.uexp`. Everything before this scanned for length-prefixed strings
+and inferred structure statistically, which is why four searches failed.
+
+`timetable_definition.py` - walks Services -> Instructions and takes
+`Destination.Name`, `ArrivalTime`, `CompletionTime`, `bIsStopping` from each.
+`/api/paks/timetable_definition`, button **Read timetable (named stops)**.
+
+Results are stored in the SAME `extracted_services` / `extracted_calls`
+tables, with `station_name` and `platform` now filled - that column was added
+empty in v7.59.0 for exactly this.
+
+### Validated against a package written from the format
+
+`tests/synth_ttdef.py` writes a genuine `.uasset` + `.uexp` - real header,
+name map, export table, FPropertyTag streams - from the FORMAT rather than
+from the parser, so agreement is evidence rather than circularity.
+
+Every domain rule is planted, because each is a case where a naive parser
+produces plausible-looking wrong output:
+
+```
+4 services, 23 named stops
+1E01  Leven plat 1   dep 05:21:30, no arrival     <- first stop
+      Edinburgh Waverley  arr only                <- last stop
+1R03  6 stops of 8 stations                       <- two passed, not called
+6S42  departures only, no arrivals                <- freight
+2K05  read from SimulatedArrival/Completion       <- AI service
+```
+
+A single time is CORRECT data on a first stop, a last stop or a freight
+working. Nothing is dropped for having one.
+
+### What is superseded
+
+The DataTrack work - 707-byte stride, type field at +270, time field at
++200, service segmentation - is all real and all confirmed, but it describes
+the simulated running profile, not the schedule. The definition asset gives
+what a passenger would recognise, with names, in far less code. The DataTrack
+tools stay for anyone wanting the running profile; they are no longer the
+route to a timetable.
+
+### Still to do
+
+`NetworkRibbonLocation` (a ribbon GUID plus a float offset) is captured per
+stop but not yet resolved to lat/long. The reference implementation computes
+it "from ribbon geometry + route origin via UTM", so the geometry has to come
+from the route definition asset. That would put every stop on the map without
+driving.

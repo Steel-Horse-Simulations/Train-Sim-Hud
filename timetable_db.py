@@ -398,3 +398,302 @@ def list_route_stations(route_key=None):
                 "headcodes": [r[0] for r in codes]}
     finally:
         conn.close()
+
+
+def init_extracted_tables():
+    """Tables for timetables read out of the game's pak files.
+
+    Separate from journeys/journey_stops, and from route_stations, for the
+    same reason as before: this is what the GAME says a route runs, derived
+    from the paks. It is not a record of anything driven, and a re-extraction
+    must never be able to disturb driven data.
+    """
+    conn = _connect()
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS extracted_services (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                route_key TEXT NOT NULL,
+                source_asset TEXT NOT NULL,
+                service_index INTEGER NOT NULL,
+                start_offset INTEGER,
+                first_time TEXT,
+                last_time TEXT,
+                duration_min REAL,
+                track_points INTEGER,
+                stop_records INTEGER,
+                call_count INTEGER,
+                headcode TEXT,
+                imported_at TEXT NOT NULL,
+                UNIQUE(route_key, source_asset, service_index)
+            );
+
+            CREATE TABLE IF NOT EXISTS extracted_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_id INTEGER NOT NULL
+                    REFERENCES extracted_services(id) ON DELETE CASCADE,
+                call_order INTEGER NOT NULL,
+                arrival TEXT,
+                departure TEXT,
+                records INTEGER,
+                platform TEXT,
+                station_id INTEGER REFERENCES route_stations(id),
+                station_name TEXT,
+                UNIQUE(service_id, call_order)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_extracted_calls_service
+                ON extracted_calls(service_id);
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_extracted_timetable(route_key, source_asset, services):
+    """Stores the services and calls produced by pak_tools.extract_timetable.
+
+    Replaces this asset's previous extraction rather than merging. The
+    extraction is derived data - re-running it with a better parser should
+    supersede the old result, not accumulate alongside it, and merging would
+    leave a mix of two parser versions with no way to tell which rows came
+    from which.
+
+    station_name is left NULL: the DataTrack layers carry no station
+    identity, which four separate searches confirmed. The column exists so
+    labelling later is an UPDATE rather than a schema change.
+    """
+    init_station_tables()
+    init_extracted_tables()
+    conn = _connect()
+    now = datetime.now().isoformat(timespec="seconds")
+    try:
+        old = [r[0] for r in conn.execute(
+            "SELECT id FROM extracted_services WHERE route_key=? AND source_asset=?",
+            (route_key, source_asset))]
+        if old:
+            conn.executemany("DELETE FROM extracted_calls WHERE service_id=?",
+                             [(i,) for i in old])
+            conn.execute(
+                "DELETE FROM extracted_services WHERE route_key=? AND source_asset=?",
+                (route_key, source_asset))
+
+        n_services = n_calls = 0
+        for i, svc in enumerate(services or []):
+            cur = conn.execute(
+                "INSERT INTO extracted_services (route_key, source_asset, "
+                "service_index, start_offset, first_time, last_time, duration_min, "
+                "track_points, stop_records, call_count, imported_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (route_key, source_asset, i, svc.get("start_offset"),
+                 svc.get("first"), svc.get("last"), svc.get("duration_min"),
+                 svc.get("track_points"), svc.get("stop_count"),
+                 svc.get("call_count"), now))
+            sid = cur.lastrowid
+            n_services += 1
+            for k, call in enumerate(svc.get("calls") or []):
+                conn.execute(
+                    "INSERT INTO extracted_calls (service_id, call_order, "
+                    "arrival, departure, records) VALUES (?,?,?,?,?)",
+                    (sid, k, call.get("arrival"), call.get("departure"),
+                     call.get("records")))
+                n_calls += 1
+        conn.commit()
+        return {"route_key": route_key, "source_asset": source_asset,
+                "services_saved": n_services, "calls_saved": n_calls,
+                "replaced": len(old)}
+    finally:
+        conn.close()
+
+
+def list_extracted_timetable(route_key=None, with_calls=True, limit=200):
+    init_extracted_tables()
+    conn = _connect()
+    try:
+        if route_key:
+            rows = conn.execute(
+                "SELECT * FROM extracted_services WHERE route_key=? "
+                "ORDER BY first_time LIMIT ?", (route_key, limit)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM extracted_services ORDER BY route_key, first_time "
+                "LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            svc = dict(r)
+            if with_calls:
+                svc["calls"] = [dict(c) for c in conn.execute(
+                    "SELECT * FROM extracted_calls WHERE service_id=? "
+                    "ORDER BY call_order", (r["id"],))]
+            out.append(svc)
+        return {"services": out, "service_count": len(out)}
+    finally:
+        conn.close()
+
+
+def save_drive_sightings(route_key, sightings, service_names=None):
+    """Stores station sightings captured while driving.
+
+    These are OBSERVATIONS, kept apart from both the pak-derived catalogue
+    and driven journeys. A sighting carries times_seen and a closest
+    approach, so a poor capture can be judged and re-run rather than
+    silently degrading the mapping - which matters because this is the
+    bridge between the extracted times and the extracted names, and a wrong
+    bridge would mislabel a whole timetable.
+    """
+    conn = _connect()
+    now = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS drive_sightings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                route_key TEXT NOT NULL,
+                station_name TEXT NOT NULL,
+                times_seen INTEGER,
+                closest_distance_m REAL,
+                first_seen_distance_m REAL,
+                platform_length REAL,
+                latitude REAL,
+                longitude REAL,
+                service_names TEXT,
+                recorded_at TEXT NOT NULL,
+                UNIQUE(route_key, station_name)
+            );
+        """)
+        svc = ", ".join(sorted(service_names or []))
+        saved = 0
+        for s in sightings or []:
+            name = (s.get("station_name") or "").strip()
+            if not name:
+                continue
+            conn.execute(
+                "INSERT INTO drive_sightings (route_key, station_name, times_seen, "
+                "closest_distance_m, first_seen_distance_m, platform_length, "
+                "latitude, longitude, service_names, recorded_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(route_key, station_name) DO UPDATE SET "
+                "times_seen = COALESCE(drive_sightings.times_seen,0) + excluded.times_seen, "
+                # Smallest MAGNITUDE wins - the value is negative once the
+                # station is behind the train, so a plain MIN would keep the
+                # reading furthest past it.
+                "closest_distance_m = CASE WHEN ABS(COALESCE(excluded.closest_distance_m, 9e9)) "
+                "     < ABS(COALESCE(drive_sightings.closest_distance_m, 9e9)) "
+                "     THEN excluded.closest_distance_m ELSE drive_sightings.closest_distance_m END, "
+                "latitude = COALESCE(excluded.latitude, drive_sightings.latitude), "
+                "longitude = COALESCE(excluded.longitude, drive_sightings.longitude), "
+                "service_names = excluded.service_names, "
+                "recorded_at = excluded.recorded_at",
+                (route_key, name, s.get("times_seen"), s.get("closest_distance_m"),
+                 s.get("first_seen_distance_m"), s.get("platform_length"),
+                 s.get("latitude"), s.get("longitude"), svc, now))
+            saved += 1
+        conn.commit()
+        return {"route_key": route_key, "sightings_saved": saved}
+    finally:
+        conn.close()
+
+
+def match_sightings_to_stations(route_key):
+    """Matches driven station names against the names read from the paks.
+
+    Reported rather than applied. The two sources spell things differently -
+    the index asset contains BOTH "Edinburgh Waverley" and DTG's own
+    "Edinburgh Waverly", and the live API may use either - so the safe thing
+    is to show what lines up and what does not, and let a person judge the
+    leftovers.
+    """
+    init_station_tables()
+    conn = _connect()
+    try:
+        try:
+            seen = [dict(r) for r in conn.execute(
+                "SELECT * FROM drive_sightings WHERE route_key=?", (route_key,))]
+        except sqlite3.OperationalError:
+            return {"error": "no_sightings_recorded", "route_key": route_key}
+        cat = [dict(r) for r in conn.execute("SELECT * FROM route_stations")]
+
+        def norm(s):
+            return "".join(c for c in (s or "").lower() if c.isalnum())
+
+        by_norm = {}
+        for c in cat:
+            by_norm.setdefault(norm(c["place"]), []).append(c)
+
+        matched, unmatched = [], []
+        for s in seen:
+            key = norm(s["station_name"])
+            hit = by_norm.get(key)
+            if not hit:
+                # A driven name often carries a platform: "Leven 1".
+                for cand_key, rows in by_norm.items():
+                    if key.startswith(cand_key) and len(cand_key) > 4:
+                        hit = rows
+                        break
+            if hit:
+                matched.append({"driven": s["station_name"],
+                                "place": hit[0]["place"],
+                                "platforms": sorted({r["platform"] for r in hit if r["platform"]}),
+                                "closest_distance_m": s.get("closest_distance_m")})
+            else:
+                unmatched.append(s["station_name"])
+        return {
+            "route_key": route_key,
+            "matched": sorted(matched, key=lambda m: m["place"]),
+            "matched_count": len(matched),
+            "unmatched_driven": sorted(unmatched),
+            "catalogue_places": len({c["place"] for c in cat}),
+        }
+    finally:
+        conn.close()
+
+
+def save_definition_timetable(route_key, source_asset, services):
+    """Stores services and NAMED stops parsed from a RouteTimetableDefinition.
+
+    Uses the same extracted_services / extracted_calls tables as the
+    DataTrack extraction, with station_name now filled in - that column was
+    added empty for exactly this. Replaces this asset's previous rows rather
+    than merging: two parsers over the same route would otherwise leave a
+    mix with no way to tell which rows came from which.
+    """
+    init_station_tables()
+    init_extracted_tables()
+    conn = _connect()
+    now = datetime.now().isoformat(timespec="seconds")
+    try:
+        old = [r[0] for r in conn.execute(
+            "SELECT id FROM extracted_services WHERE route_key=? AND source_asset=?",
+            (route_key, source_asset))]
+        if old:
+            conn.executemany("DELETE FROM extracted_calls WHERE service_id=?",
+                             [(i,) for i in old])
+            conn.execute(
+                "DELETE FROM extracted_services WHERE route_key=? AND source_asset=?",
+                (route_key, source_asset))
+
+        n_services = n_calls = 0
+        for i, svc in enumerate(services or []):
+            stops = svc.get("stops") or []
+            cur = conn.execute(
+                "INSERT INTO extracted_services (route_key, source_asset, "
+                "service_index, first_time, last_time, call_count, headcode, "
+                "imported_at) VALUES (?,?,?,?,?,?,?,?)",
+                (route_key, source_asset, i, svc.get("first_time"),
+                 svc.get("last_time"), len(stops),
+                 svc.get("headcode") or svc.get("name"), now))
+            sid = cur.lastrowid
+            n_services += 1
+            for k, st in enumerate(stops):
+                conn.execute(
+                    "INSERT INTO extracted_calls (service_id, call_order, "
+                    "arrival, departure, platform, station_name) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (sid, k, st.get("arrival"), st.get("departure"),
+                     st.get("platform"), st.get("station")))
+                n_calls += 1
+        conn.commit()
+        return {"route_key": route_key, "source_asset": source_asset,
+                "services_saved": n_services, "calls_saved": n_calls,
+                "replaced": len(old)}
+    finally:
+        conn.close()

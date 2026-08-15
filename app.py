@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 from collections import deque
@@ -43,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.58.1"
+APP_VERSION = "7.60.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1179,6 +1180,7 @@ timetable_db.init_db()
 
 import train_classes_db
 import tsw_subscriptions
+import drive_recorder
 train_classes_db.init_db()
 _dedup_count = train_classes_db.dedup_train_classes()
 if _dedup_count:
@@ -1713,6 +1715,48 @@ def paks_services():
     return jsonify(pak_tools.extract_time_series(path))
 
 
+@app.route("/api/paks/timetable_definition", methods=["POST"])
+def paks_timetable_definition():
+    """Parses a RouteTimetableDefinition into services with NAMED stops.
+    Body: {"asset_name": "FCE_Timetable_TT.uasset", "route_key": "FifeCircle",
+            "save": true}
+
+    This is the real timetable. Every earlier search looked in the DataTrack
+    layers and came back negative four times over, because station identity
+    is not there: the schedule lives in the index asset, where each
+    instruction carries its own Destination.Name, ArrivalTime,
+    CompletionTime and bIsStopping. No join to reconstruct, and no driving
+    needed."""
+    import timetable_definition
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.basename(name).lower()
+        if not want.endswith(".uasset"):
+            want += ".uasset"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+
+    result = timetable_definition.parse_timetable_definition(path)
+    if "error" in result:
+        return jsonify(result), 400
+
+    if body.get("save") and result.get("named_stops"):
+        route_key = (body.get("route_key")
+                     or os.path.splitext(os.path.basename(path))[0])
+        result["saved"] = timetable_db.save_definition_timetable(
+            route_key, os.path.basename(path), result.get("services") or [])
+    return jsonify(result)
+
+
 @app.route("/api/paks/stations", methods=["POST"])
 def paks_stations():
     """Reads station names and headcodes out of a timetable INDEX asset and
@@ -1753,6 +1797,65 @@ def paks_stations():
             source_asset=os.path.basename(path))
         result["saved"] = saved
     return jsonify(result)
+
+
+DRIVE_RECORDER = None
+
+
+def _recorder():
+    global DRIVE_RECORDER
+    if DRIVE_RECORDER is None:
+        DRIVE_RECORDER = drive_recorder.DriveRecorder(
+            journey_fn=lambda: journey_live().get_json(),
+            log=lambda msg: log_call(msg, 0.0, "recorder"))
+    return DRIVE_RECORDER
+
+
+@app.route("/api/drive/record", methods=["POST"])
+def drive_record():
+    """Starts or stops recording station sightings while driving.
+    Body: {"action": "start"|"stop", "route_key": "FifeCircle"}
+
+    This is the bridge between the two halves already on disk: extracted
+    times with no names, and extracted names with no positions. The live API
+    reports stationName with distanceToStationCM, so one run along the route
+    supplies the mapping."""
+    body = request.get_json(force=True, silent=True) or {}
+    action = (body.get("action") or "start").lower()
+    rec = _recorder()
+    if action == "stop":
+        state = rec.stop()
+        if state.get("sightings"):
+            state["saved"] = timetable_db.save_drive_sightings(
+                state.get("route_key") or "unknown", state["sightings"],
+                state.get("service_names"))
+        return jsonify(state)
+    return jsonify(rec.start(body.get("route_key") or "unknown"))
+
+
+@app.route("/api/drive/status", methods=["GET"])
+def drive_status():
+    """What the recorder has seen so far."""
+    return jsonify(_recorder().status())
+
+
+@app.route("/api/drive/match", methods=["GET"])
+def drive_match():
+    """Which driven station names line up with the names read from the paks.
+
+    Reported, never applied automatically: the index asset holds BOTH
+    "Edinburgh Waverley" and DTG's own "Edinburgh Waverly", so the leftovers
+    need a person's eye."""
+    return jsonify(timetable_db.match_sightings_to_stations(
+        request.args.get("route_key") or "unknown"))
+
+
+@app.route("/api/timetable/extracted", methods=["GET"])
+def timetable_extracted():
+    """Services and calls extracted from the game files and stored here."""
+    return jsonify(timetable_db.list_extracted_timetable(
+        request.args.get("route_key"),
+        with_calls=request.args.get("calls", "1") != "0"))
 
 
 @app.route("/api/timetable/stations", methods=["GET"])
@@ -1944,12 +2047,22 @@ def paks_timetable():
     exp = body.get("expected_services")
     gap = body.get("call_gap")
     exp_calls = body.get("expected_calls")
-    return jsonify(pak_tools.extract_timetable(
+    result = pak_tools.extract_timetable(
         path,
         service_break=int(brk) if brk else None,
         expected_services=int(exp) if exp else None,
         expected_calls=int(exp_calls) if exp_calls else None,
-        call_gap=int(gap) if gap else 90))
+        call_gap=int(gap) if gap else 90)
+
+    # Save on request. The extraction is the expensive part and until now it
+    # existed only as endpoint output - if the app folder were lost, every
+    # bit of it would have to be re-derived.
+    if body.get("save") and "error" not in result:
+        route_key = (body.get("route_key")
+                     or os.path.splitext(os.path.basename(path))[0])
+        result["saved"] = timetable_db.save_extracted_timetable(
+            route_key, os.path.basename(path), result.get("services") or [])
+    return jsonify(result)
 
 
 @app.route("/api/paks/decode_fixed", methods=["POST"])
@@ -3160,6 +3273,28 @@ def known_trains_backup():
     })
 
 
+@app.route("/api/known_trains/reveal_backups", methods=["POST"])
+def known_trains_reveal_backups():
+    """Opens the backups folder in the system file manager.
+
+    Worth having because the desktop app cannot download: the backup is a
+    file on disk, and being told a long path in an alert box is not the same
+    as being able to see the file. On Windows this is what "download"
+    effectively means here."""
+    folder = os.path.join(APP_DIR, "backups")
+    os.makedirs(folder, exist_ok=True)
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(folder)              # noqa: S606 - Windows only
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", folder])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+        return jsonify({"ok": True, "folder": folder})
+    except Exception as e:
+        return jsonify({"ok": False, "folder": folder, "error": str(e)})
+
+
 @app.route("/api/known_trains/import", methods=["POST"])
 def known_trains_import():
     """Restores a backup. Merges by default; ?replace=1 overwrites."""
@@ -3251,32 +3386,60 @@ def known_trains_get(train_class_id):
 
 @app.route("/api/known_trains/restore", methods=["POST"])
 def known_trains_restore():
-    """Restore known trains data from a backup JSON."""
-    try:
-        body = request.get_json(force=True, silent=True) or {}
-        classes = body.get("classes", [])
-        restored = 0
-        for tc in classes:
-            if not tc.get("source_name"):
-                continue
-            # Try to update existing by source_name, or insert new
-            existing = train_classes_db.get_train_class_by_source_name(tc["source_name"])
-            fields = {k: v for k, v in tc.items() if k not in ("id", "source_id", "times_seen", "imported_at")}
-            if existing:
-                train_classes_db.update_train_class(existing["id"], fields)
-            else:
-                train_classes_db.record_live_sighting(
-                    {"source_name": tc["source_name"], "max_speed_ms": None},
-                    clean_name=tc.get("display_name") or tc["source_name"]
-                )
-                new_tc = train_classes_db.get_train_class_by_source_name(tc["source_name"])
-                if new_tc:
-                    train_classes_db.update_train_class(new_tc["id"], fields)
+    """Restores a backup.
+
+    Accepts BOTH shapes, because the two have been mismatched: this endpoint
+    read only body["classes"], while the backup file produced by
+    /api/known_trains/backup is {"tables": {...}}. Restoring a real
+    backup therefore imported NOTHING and still reported success - the worst
+    possible failure for a restore, since it looks like it worked.
+
+    A full backup goes through import_everything(), which inserts parents
+    before children; the old flat {"classes": [...]} form is still handled
+    for anything saved by an older build.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    replace = request.args.get("replace") in ("1", "true", "yes")
+
+    if isinstance(body.get("tables"), dict):
+        try:
+            result = train_classes_db.import_everything(body, replace=replace)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"ok": True, "format": "full_backup",
+                        "replace": replace, **result})
+
+    classes = body.get("classes")
+    if not isinstance(classes, list):
+        return jsonify({
+            "error": "unrecognised_backup",
+            "detail": "Expected a full backup with a 'tables' object, or the "
+                      "older {'classes': [...]} form. Nothing was changed.",
+        }), 400
+
+    restored = skipped = 0
+    for tc in classes:
+        name = tc.get("source_name")
+        if not name:
+            skipped += 1
+            continue
+        existing = train_classes_db.get_train_class_by_source_name(name)
+        fields = {k: v for k, v in tc.items()
+                  if k not in ("id", "source_id", "times_seen", "imported_at")}
+        if existing:
+            train_classes_db.update_train_class(existing["id"], fields)
             restored += 1
-        return jsonify({"ok": True, "restored": restored})
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        else:
+            train_classes_db.record_live_sighting(
+                name, clean_name=tc.get("display_name") or name)
+            fresh = train_classes_db.get_train_class_by_source_name(name)
+            if fresh:
+                train_classes_db.update_train_class(fresh["id"], fields)
+                restored += 1
+            else:
+                skipped += 1
+    return jsonify({"ok": True, "format": "legacy_classes",
+                    "restored": restored, "skipped": skipped})
 
 
 @app.route("/api/known_trains/wipe_all", methods=["POST"])

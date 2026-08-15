@@ -104,7 +104,13 @@
         <button class="btn primary" onclick="inspectField()">Inspect field</button>
         <button class="btn primary" onclick="stationField()">Find station field</button>
         <button class="btn primary" onclick="nameFields()">Find name fields</button>
+        <button class="btn primary" onclick="parseDefinition()">Read timetable (named stops)</button>
         <button class="btn primary" onclick="extractStations()">Extract station names</button>
+      </div>
+      <div class="field-row" style="margin-top:8px;">
+        <button class="btn primary" id="recBtn" onclick="toggleRecording()">● Record drive</button>
+        <button class="btn" onclick="matchStations()">Match driven names</button>
+        <span id="recStatus" class="small dim"></span>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -382,6 +388,93 @@ async function scanAllPaks() {
   }
 }
 
+let recTimer=null;
+async function toggleRecording(){
+  const btn=document.getElementById('recBtn');
+  const st=await (await fetch('/api/drive/status')).json();
+  if(st.recording){
+    const d=await (await fetch('/api/drive/record',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'stop'})})).json();
+    clearInterval(recTimer); recTimer=null;
+    btn.textContent='● Record drive'; btn.classList.remove('active');
+    document.getElementById('recStatus').textContent=
+      `stopped — ${d.stations_seen} stations saved from ${d.polls} polls`;
+    lastPakResult=d;
+    return;
+  }
+  const key=prompt('Route key for this recording:','FifeCircle');
+  if(!key) return;
+  await fetch('/api/drive/record',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'start',route_key:key})});
+  btn.textContent='■ Stop recording'; btn.classList.add('active');
+  recTimer=setInterval(async()=>{
+    try{
+      const s=await (await fetch('/api/drive/status')).json();
+      document.getElementById('recStatus').innerHTML=
+        `<span style="color:var(--status-green);">recording</span> · ${s.stations_seen} stations`
+        +` · ${s.polls} polls${s.errors?` · ${s.errors} errors`:''}`
+        +(s.sightings||[]).slice(0,3).map(x=>` · ${esc(x.station_name)}`).join('');
+    }catch(e){}
+  },2000);
+}
+
+async function matchStations(){
+  const key=prompt('Route key to match:','FifeCircle');
+  if(!key) return;
+  const out=document.getElementById('pak-results');
+  const d=await (await fetch('/api/drive/match?route_key='+encodeURIComponent(key))).json();
+  lastPakResult=d;
+  if(d.error){out.innerHTML=`<p class="small">${esc(d.error)}</p>`;return;}
+  out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
+      background:rgba(255,255,255,0.04);border-left:3px solid var(--accent);">
+      ${d.matched_count} driven names matched against ${d.catalogue_places} catalogue places.</p>`
+    +`<div class="mono" style="font-size:11px;padding:6px 9px;background:rgba(255,255,255,0.03);
+       border-radius:5px;max-height:320px;overflow:auto;">`
+    +(d.matched||[]).map(x=>`<div><span style="color:var(--accent-bright);">${esc(x.driven)}</span>
+       <span class="dim">→ ${esc(x.place)} ${(x.platforms||[]).join(',')}
+       ${x.closest_distance_m!=null?`· closest ${x.closest_distance_m}m`:''}</span></div>`).join('')
+    +`</div>`
+    +((d.unmatched_driven||[]).length?`<p class="small dim" style="margin-top:6px;">
+       Unmatched: ${(d.unmatched_driven||[]).map(esc).join(' · ')}</p>`:'');
+}
+
+async function parseDefinition(){
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the INDEX asset in the box, e.g. FCE_Timetable_TT.uasset');return;}
+  status.textContent='Reading the timetable definition…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/timetable_definition',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop(), save:true})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`
+      +(d.detail?` <span class="small dim">${esc(d.detail)}</span>`:'');return;}
+    const ok=(d.named_stops||0)>0;
+    status.innerHTML=`<span style="color:var(--status-${ok?'green':'amber'});">`
+      +`${d.service_count} services, ${d.named_stops} named stops</span>`
+      +` <span class="small dim">· ${(d.package||{}).export_count} exports`
+      +(d.saved?` · saved ${d.saved.services_saved} services, ${d.saved.calls_saved} calls`:'')+`</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
+        background:rgba(255,255,255,0.04);border-left:3px solid var(--status-${ok?'green':'amber'});">
+        ${esc(d.verdict)}</p>`
+      +(d.services||[]).slice(0,25).map(sv=>`
+        <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+          <div><strong>${esc(sv.headcode||sv.name||'service')}</strong>
+            <span class="mono" style="color:var(--accent-bright);">${esc(sv.first_time||'')} → ${esc(sv.last_time||'')}</span>
+            <span class="small dim">${sv.stop_count} stops</span></div>
+          ${(sv.stops||[]).slice(0,20).map(st=>`<div class="mono" style="font-size:11px;">
+            <span style="color:var(--accent-bright);">${esc(st.arrival||'　　　　')}</span>
+            <span class="dim">/</span>
+            <span style="color:var(--accent-bright);">${esc(st.departure||'　　　　')}</span>
+            ${esc(st.station||'')}${st.platform?` <span class="dim">plat ${esc(st.platform)}</span>`:''}
+            </div>`).join('')}
+        </div>`).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
+}
+
 async function extractStations() {
   const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
   const asset=document.getElementById('pak-asset').value.trim();
@@ -591,13 +684,16 @@ async function extractTimetable() {
     const d=await (await fetch('/api/paks/timetable',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({asset_name:asset.split('/').pop(),
         expected_services: Number(document.getElementById('pak-services').value)||null,
-        expected_calls: Number(document.getElementById('pak-calls').value)||null})})).json();
+        expected_calls: Number(document.getElementById('pak-calls').value)||null,
+        save: true})})).json();
     lastPakResult=d;
     if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
     status.innerHTML=`<span style="color:var(--status-green);">${d.service_count} services, `
       +`median ${d.median_calls} station calls</span>`
       +` <span class="small dim">· ${d.record_count} records · stride ${d.stride}`
-      +` · call gap ${d.call_gap_seconds}s · median ${d.median_duration_min} min</span>`;
+      +` · call gap ${d.call_gap_seconds}s · median ${d.median_duration_min} min`
+      +(d.saved?` · <span style="color:var(--status-green);">saved ${d.saved.services_saved} services,
+         ${d.saved.calls_saved} calls</span>`:'')+`</span>`;
     status.style.color='';
     out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
         background:rgba(255,255,255,0.04);border-left:3px solid var(--accent);">${esc(d.verdict)}</p>`

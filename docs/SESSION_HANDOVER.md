@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.58.1**
+**App version at end of session: 7.60.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,64 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.60.0 - THE TIMETABLE PARSER
+
+The user supplied github.com/hcfairbanks/tsw_projects, which settles it: the
+other app parses the **RouteTimetableDefinition** (the INDEX asset), never the
+DataTrack layers. Each Instruction carries Destination.Name (the STATION),
+ArrivalTime, CompletionTime and bIsStopping on the SAME record - there was
+never a join to find, which is why four searches for one came back negative.
+
+NEW: `uasset.py` - real package reader (header, name map, exports, .uexp).
+NEW: `timetable_definition.py` - Services -> Instructions -> named stops.
+NEW: `/api/paks/timetable_definition` + **Read timetable (named stops)**.
+Stored in extracted_services/extracted_calls with station_name + platform.
+
+Validated against tests/synth_ttdef.py, which writes a REAL .uasset/.uexp
+from the format spec (not from the parser). All domain rules planted and
+respected: first stop departure-only, last arrival-only, freight no arrivals,
+passed stations excluded from the call list, AI services read from
+SimulatedArrival/CompletionTime.
+
+The DataTrack work is not wrong, just aimed at the running profile rather
+than the schedule. Kept, but no longer the route to a timetable.
+
+**Next: run Read timetable (named stops) on the real FCE_Timetable_TT.uasset.**
+Then ribbon GUID + offset -> lat/long, which needs the route definition
+asset's geometry and would map every stop without driving.
+
+## What changed in v7.59.0 - download fixed, timetable banked, recorder built
+
+**Known Trains download, two bugs.** (a) After backing up it clicked an
+anchor to /api/known_trains/export - in pywebview the WEBVIEW navigates to
+the JSON and the page disappears. Removed; paths now shown in-page with an
+"Open backups folder" button. (b) uploadData posted to /restore which read
+only body["classes"], but the backup is {"tables":{...}} - so restoring a
+real backup imported NOTHING and reported success. /restore now takes both
+shapes, routes full backups through import_everything, 400s on junk, and
+reports row counts.
+
+**Timetable banked.** extracted_services / extracted_calls in timetables.db;
+Extract timetable saves automatically (39 services, 485 calls);
+/api/timetable/extracted reads back. Re-extraction REPLACES rather than
+merges - derived data, a better parser should supersede. station_name column
+exists but NULL so labelling is an UPDATE later.
+
+**Drive recorder.** drive_recorder.py + /api/drive/record|status|match +
+Record drive / Match driven names buttons. Reuses /api/journey so it shares
+the upstream lock. Closest approach must compare ABSOLUTE distance - the
+value goes negative past a station, and a plain < kept the point furthest
+PAST it (-1800m in the first test). Matching is REPORTED not applied, since
+the asset holds both "Edinburgh Waverley" and "Edinburgh Waverly".
+
+**New test: tests/eval_pipeline.py** - backup/wipe/restore round trip,
+timetable banking, recorder + matching. Note its first failure was the
+HARNESS: modules set DB_PATH absolutely from __file__, so os.chdir does not
+redirect them.
+
+**Next: drive the Leven branch with Record drive on**, then Match driven
+names. That produces the station-to-position mapping that labels the stops.
 
 ## What changed in v7.58.1 - REAL STATION NAMES EXTRACTED
 
