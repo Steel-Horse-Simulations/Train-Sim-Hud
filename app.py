@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.57.0"
+APP_VERSION = "7.58.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1711,6 +1711,54 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/stations", methods=["POST"])
+def paks_stations():
+    """Reads station names and headcodes out of a timetable INDEX asset and
+    stores them.
+    Body: {"asset_name": "FCE_Timetable_TT.uasset", "route_key": "FifeCircle",
+            "save": true}
+
+    The DataTrack layers carry no station identity - four searches confirmed
+    it. The index asset is where the names live, and it has no .uexp, so its
+    name table IS the payload."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.basename(name).lower()
+        if not want.endswith(".uasset"):
+            want += ".uasset"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+
+    result = pak_tools.read_station_names(path)
+    if "error" in result:
+        return jsonify(result), 400
+
+    if body.get("save"):
+        route_key = (body.get("route_key")
+                     or os.path.splitext(os.path.basename(path))[0])
+        saved = timetable_db.save_station_names(
+            route_key, result.get("places"), result.get("headcodes"),
+            source_asset=os.path.basename(path))
+        result["saved"] = saved
+    return jsonify(result)
+
+
+@app.route("/api/timetable/stations", methods=["GET"])
+def timetable_stations():
+    """Station names and headcodes already stored on this machine."""
+    return jsonify(timetable_db.list_route_stations(request.args.get("route_key")))
 
 
 @app.route("/api/paks/name_fields", methods=["POST"])

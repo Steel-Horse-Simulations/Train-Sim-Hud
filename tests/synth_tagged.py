@@ -543,3 +543,39 @@ def main_fife(out="/tmp/synth_fife"):
     print(f"built {base}.uexp - 39 services (37 x 13 calls, 2 x 2), "
           f"{total} records, NO service id field")
     return base, truth, stride, type_at, time_at
+
+
+def main_index(out="/tmp/synth_index"):
+    """A timetable INDEX asset: the name table IS the payload, with no .uexp.
+
+    Modelled on what section 5 of the findings recorded in the real one -
+    88 station names carrying platform numbers, 208 headcodes with _End
+    variants - plus the engine machinery any name table carries, so the
+    classifier has to separate three kinds of name rather than two.
+    """
+    os.makedirs(out, exist_ok=True)
+    base = os.path.join(out, "FCE_Timetable_TT")
+    rng = random.Random(88)
+    stations = ["Leven", "Cameron Bridge", "Thornton", "Glenrothes with Thornton",
+                "Markinch", "Kirkcaldy", "Kinghorn", "Burntisland", "Aberdour",
+                "Dalgety Bay", "Inverkeithing", "Haymarket", "Edinburgh Waverley"]
+    entries = []
+    for st in stations:
+        for p in range(1, rng.randint(2, 4)):
+            entries.append(f"{st} Platform {p}")
+    codes = []
+    for i in range(1, 105):
+        c = f"{rng.randint(1, 9)}{rng.choice('EKRHA')}{i % 100:02d}"
+        codes += [c, c + "_End"]
+    machinery = ["/Script/CoreUObject", "RouteTimetableDefinition", "None",
+                 "EnumProperty", "ETimetableTrackDataType::StopPoint",
+                 "Default__RouteTimetableDefinition", "ArrivalTime",
+                 "Package", "Class", "Guid", "EDirectionOfTravel::Forwards"]
+    buf = bytearray()
+    for s in machinery + entries + codes:
+        buf += _pstr(s)
+    with open(base + ".uasset", "wb") as f:
+        f.write(bytes(buf))
+    print(f"built {base}.uasset - {len(stations)} places, {len(entries)} platform "
+          f"entries, {len(set(codes))} headcodes, no .uexp")
+    return base, stations, entries, sorted(set(codes))

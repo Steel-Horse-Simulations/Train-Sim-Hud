@@ -302,3 +302,99 @@ def get_changes_since(since_timestamp, after_journey_id=0, limit=100):
         return results, has_more
     finally:
         conn.close()
+
+
+def init_station_tables():
+    """Tables for names extracted from the game's own files.
+
+    Kept separate from journeys/journey_stops on purpose: this is a
+    CATALOGUE of what exists on a route, read straight out of the pak, not a
+    record of anything driven. Mixing the two would mean a re-import of the
+    game files could disturb journey data.
+    """
+    conn = _connect()
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS route_stations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                route_key TEXT NOT NULL,
+                place TEXT NOT NULL,
+                platform TEXT,
+                raw_name TEXT NOT NULL,
+                source_asset TEXT,
+                imported_at TEXT NOT NULL,
+                UNIQUE(route_key, raw_name)
+            );
+
+            CREATE TABLE IF NOT EXISTS route_headcodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                route_key TEXT NOT NULL,
+                headcode TEXT NOT NULL,
+                source_asset TEXT,
+                imported_at TEXT NOT NULL,
+                UNIQUE(route_key, headcode)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_route_stations_place
+                ON route_stations(route_key, place);
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_station_names(route_key, places, headcodes, source_asset=None):
+    """Stores extracted stations and headcodes. Idempotent - re-importing
+    the same asset updates rather than duplicating, so the extraction can be
+    re-run freely as the parser improves."""
+    init_station_tables()
+    conn = _connect()
+    now = datetime.now().isoformat(timespec="seconds")
+    stations = headcodes_added = 0
+    try:
+        for place, platforms in (places or {}).items():
+            for p in (platforms or [None]):
+                raw = f"{place} {p}".strip() if p else place
+                conn.execute(
+                    "INSERT INTO route_stations "
+                    "(route_key, place, platform, raw_name, source_asset, imported_at) "
+                    "VALUES (?,?,?,?,?,?) "
+                    "ON CONFLICT(route_key, raw_name) DO UPDATE SET "
+                    "place=excluded.place, platform=excluded.platform, "
+                    "source_asset=excluded.source_asset, imported_at=excluded.imported_at",
+                    (route_key, place, p, raw, source_asset, now))
+                stations += 1
+        for hc in sorted(set(headcodes or [])):
+            conn.execute(
+                "INSERT INTO route_headcodes (route_key, headcode, source_asset, imported_at) "
+                "VALUES (?,?,?,?) ON CONFLICT(route_key, headcode) DO UPDATE SET "
+                "source_asset=excluded.source_asset, imported_at=excluded.imported_at",
+                (route_key, hc, source_asset, now))
+            headcodes_added += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"route_key": route_key, "stations_saved": stations,
+            "headcodes_saved": headcodes_added}
+
+
+def list_route_stations(route_key=None):
+    init_station_tables()
+    conn = _connect()
+    try:
+        if route_key:
+            rows = conn.execute(
+                "SELECT * FROM route_stations WHERE route_key=? ORDER BY place, platform",
+                (route_key,)).fetchall()
+            codes = conn.execute(
+                "SELECT headcode FROM route_headcodes WHERE route_key=? ORDER BY headcode",
+                (route_key,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM route_stations ORDER BY route_key, place, platform").fetchall()
+            codes = conn.execute(
+                "SELECT headcode FROM route_headcodes ORDER BY route_key, headcode").fetchall()
+        return {"stations": [dict(r) for r in rows],
+                "headcodes": [r[0] for r in codes]}
+    finally:
+        conn.close()

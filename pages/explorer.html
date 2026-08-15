@@ -104,6 +104,7 @@
         <button class="btn primary" onclick="inspectField()">Inspect field</button>
         <button class="btn primary" onclick="stationField()">Find station field</button>
         <button class="btn primary" onclick="nameFields()">Find name fields</button>
+        <button class="btn primary" onclick="extractStations()">Extract station names</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -379,6 +380,39 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function extractStations() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the INDEX asset path in the box first, e.g. FCE_Timetable_TT.uasset');return;}
+  status.textContent='Reading station names from the index asset…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/stations',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop(), save:true})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    const ok=(d.place_count||0)>0;
+    status.innerHTML=`<span style="color:var(--status-${ok?'green':'amber'});">`
+      +`${d.place_count} places, ${d.headcode_count} headcodes</span>`
+      +` <span class="small dim">· ${d.names_read} names read`
+      +(d.saved?` · saved ${d.saved.stations_saved} stations, ${d.saved.headcodes_saved} headcodes`:'')
+      +`</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
+        background:rgba(255,255,255,0.04);border-left:3px solid var(--status-${ok?'green':'amber'});">
+        ${esc(d.verdict)}</p>`
+      +(ok?`<div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;
+         max-height:300px;overflow:auto;">`
+        +Object.entries(d.places||{}).map(([place,plats])=>`<div class="mono" style="font-size:11px;">
+          <span style="color:var(--accent-bright);">${esc(place)}</span>
+          <span class="dim">${plats.length?'platforms '+plats.map(esc).join(', '):''}</span></div>`).join('')
+        +`</div>
+        <p class="small dim" style="margin-top:8px;">Headcodes:
+          ${(d.headcodes||[]).slice(0,40).map(esc).join(' ')}${(d.headcodes||[]).length>40?' …':''}</p>`
+       :`<p class="small dim">Names found: ${(d.other_sample||[]).slice(0,25).map(esc).join(' · ')}</p>`);
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }
 
 async function nameFields() {

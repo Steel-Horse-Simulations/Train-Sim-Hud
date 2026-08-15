@@ -678,6 +678,56 @@ def run_name_fields():
     return ok
 
 
+def run_station_names():
+    """Station names come from the INDEX asset, and must persist.
+
+    The DataTrack layers carry no station identity - four searches confirmed
+    it, the last finding only EDirectionOfTravel enums at two offsets in the
+    whole 707-byte record. The index asset has no .uexp, so its name table
+    IS the payload.
+
+    Three kinds of name are mixed in there - stations, headcodes and engine
+    machinery - so the classifier has to separate three things, not two,
+    and the fixture plants all three.
+    """
+    import sys as _sys
+    print("\n--- station names from the index asset ---")
+    base, stations, entries, codes = T.main_index("/tmp/eval_index")
+    ok = True
+    r = pak_tools.read_station_names(base + ".uasset")
+    print(f"  places {r['place_count']} (true {len(stations)}), "
+          f"platform entries {r['station_count']} (true {len(entries)}), "
+          f"headcodes {r['headcode_count']} (true {len(codes)})")
+    if r["place_count"] != len(stations):
+        print("  FAIL: place count"); ok = False
+    if r["headcode_count"] != len(codes):
+        print("  FAIL: headcode count"); ok = False
+    missing = set(stations) - set(r["places"])
+    if missing:
+        print(f"  FAIL: missed {missing}"); ok = False
+    # machinery must not be classified as a place
+    for junk in ("Package", "Class", "Guid", "EnumProperty", "None"):
+        if junk in r["places"]:
+            print(f"  FAIL: '{junk}' classified as a station"); ok = False
+
+    # persistence, and re-import must not duplicate
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import timetable_db
+    timetable_db.save_station_names("EvalRoute", r["places"], r["headcodes"],
+                                    source_asset="FCE_Timetable_TT.uasset")
+    first = timetable_db.list_route_stations("EvalRoute")
+    timetable_db.save_station_names("EvalRoute", r["places"], r["headcodes"],
+                                    source_asset="FCE_Timetable_TT.uasset")
+    second = timetable_db.list_route_stations("EvalRoute")
+    print(f"  stored {len(first['stations'])} rows; after re-import "
+          f"{len(second['stations'])}")
+    if len(second["stations"]) != len(first["stations"]):
+        print("  FAIL: re-import duplicated rows"); ok = False
+    else:
+        print("  re-import is idempotent")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
@@ -686,6 +736,6 @@ if __name__ == "__main__":
                run_phase_shift_recovery(), run_service_field(),
                run_fife_shape(), run_near_miss_rejection(),
                run_call_gap_tuning(), run_call_field(), run_byte_field(),
-               run_station_field(), run_name_fields()]
+               run_station_field(), run_name_fields(), run_station_names()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

@@ -3733,3 +3733,87 @@ def find_name_fields(path, stride=None, anchor=None, width=4, top=25,
             "the MasterDataTrack."
         ),
     }
+
+
+_STATION_HINTS = re.compile(
+    r"(platform|\bplat\b|\bp\d{1,2}[a-z]?\b|junction|sidings?|yard|depot|"
+    r"station|halt|parkway|central|waverley|bridge|road|street|park)", re.I)
+
+
+def read_station_names(path):
+    """Reads the station names out of a timetable INDEX asset.
+
+    The Leven Branch layer carries no station identity in any form - four
+    searches confirmed that (run counts, evenness, the +695 platform field,
+    and name references, which found only EDirectionOfTravel enums at two
+    offsets in the whole 707-byte record). The names live in the index asset
+    instead: `FCE_Timetable_TT.uasset`, which section 5 of the findings
+    records as holding 88 station names with platform numbers and 208
+    service headcodes.
+
+    That asset has NO .uexp, so there is nothing to parse record by record -
+    the name table IS the payload, and reading it is the whole job.
+
+    Classification is by shape, since a name table mixes stations,
+    headcodes and engine machinery:
+      - headcodes are the British 4-character form, digit-letter-digit-digit
+        (1E01, 2K05), optionally with an _End suffix;
+      - stations are the remainder that look like place names, usually
+        carrying a platform number;
+      - everything else is machinery.
+    """
+    if not os.path.isfile(path):
+        return {"error": "file_not_found", "path": path}
+    with open(path, "rb") as f:
+        names = _read_fname_strings(f.read(), max_strings=60000)
+    if not names:
+        return {"error": "no_names_read", "path": path}
+
+    headcode = re.compile(r"^\d[A-Z]\d{2}(_End)?$")
+    machinery = re.compile(
+        r"(Property$|^E[A-Z]|::|^/|^Default__|^Package$|^Class$|^Guid$|"
+        r"DataTrack|Timetable|Serialize|^None$|^BP_|^RVM_|^SM_|^MI_|^T_|"
+        r"Reference$|Index$|Location$|^Time$|^Timespan$|Direction)")
+
+    headcodes, stations, other = [], [], []
+    for n in names:
+        if headcode.match(n):
+            headcodes.append(n)
+        elif machinery.search(n) or len(n) < 3:
+            other.append(n)
+        elif _STATION_HINTS.search(n) or (" " in n and n[0].isupper()):
+            stations.append(n)
+        else:
+            other.append(n)
+
+    # Split a trailing platform designator off the station name, so
+    # "Aberdour Platform 1" and "Aberdour Platform 2" collapse to one place.
+    plat = re.compile(r"^(.*?)\s+(?:Platform\s+)?([0-9]{1,2}[a-zA-Z]?)$")
+    places = {}
+    for s in stations:
+        m = plat.match(s)
+        if m and m.group(1):
+            places.setdefault(m.group(1).strip(), []).append(m.group(2))
+        else:
+            places.setdefault(s.strip(), [])
+
+    return {
+        "path": path,
+        "names_read": len(names),
+        "station_entries": sorted(stations),
+        "station_count": len(stations),
+        "places": {k: sorted(v) for k, v in sorted(places.items())},
+        "place_count": len(places),
+        "headcodes": sorted(set(headcodes)),
+        "headcode_count": len(set(headcodes)),
+        "other_sample": other[:40],
+        "verdict": (
+            f"{len(places)} places with {len(stations)} platform entries, and "
+            f"{len(set(headcodes))} service headcodes. These are the labels "
+            "the DataTrack layers do not carry."
+            if places else
+            f"{len(names)} names read but none look like stations. Either this "
+            "is not the index asset, or the names are stored compressed - "
+            "check other_sample to see what IS in there."
+        ),
+    }

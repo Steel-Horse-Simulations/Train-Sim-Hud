@@ -1561,3 +1561,73 @@ Run **Find name fields** with 13 in the calls box.
 
 The second outcome is a real result too, and cheap to act on: the live API
 already names the stations on the route being driven.
+
+## Station identity is NOT in the layer - confirmed four ways (v7.58.0)
+
+`find_name_fields` on the real Leven Branch layer: **only two offsets in the
+entire 707-byte record resolve to names at all**, and both are the same
+thing - `EDirectionOfTravel` at +369 and +410, resolving on 100% of stop
+records. There are no place names in this layer.
+
+That closes the question. Four searches, each ruling out a different
+possibility:
+
+| search | result |
+|---|---|
+| run counts | matched the wrong fields (+407 services, +695 stations) |
+| evenness | float slices - +105 is a float32 exponent byte |
+| +695 directly | a PLATFORM number, 0-24 with -1 for none, 55% zeros |
+| name references | only direction enums exist |
+
+A negative arrived at four different ways is a finding, not a failure.
+
+Worth noting: +410 shows **15 runs** across 5,198 stop records. A direction
+flag on 39 services should change ~39 times. 15 is unexplained and may be
+worth a look if direction matters later.
+
+## Station names, read from the game and stored (v7.58.0)
+
+`read_station_names()` / `/api/paks/stations` / **Extract station names**.
+
+The names live in the timetable INDEX asset, which section 5 recorded as
+holding 88 station names with platform numbers and 208 headcodes. That asset
+has **no .uexp**, so there is nothing to parse record by record - the name
+table IS the payload, and reading it is the whole job.
+
+A name table mixes three kinds of name, so the classifier separates three:
+
+  - **headcodes** - the British 4-character form, digit-letter-digit-digit
+    (`1E01`, `2K05`), with `_End` variants;
+  - **stations** - the remainder that look like places, usually carrying a
+    platform number;
+  - **machinery** - property types, enums, package paths.
+
+Platform designators are split off, so `Aberdour Platform 1` and `Aberdour
+Platform 2` collapse to one place with two platforms.
+
+### Stored on this machine
+
+`route_stations` and `route_headcodes` in `timetables.db`, deliberately
+SEPARATE from journeys and journey_stops: this is a catalogue of what exists
+on a route, read from the pak, not a record of anything driven. Mixing them
+would mean a re-import of the game files could disturb journey data.
+
+Writes are idempotent - `ON CONFLICT ... DO UPDATE` on `(route_key,
+raw_name)` - so the extraction can be re-run freely as the parser improves,
+which it will.
+
+Validated on a fixture modelled on the real index asset: 13 places, 25
+platform entries and 208 headcodes all recovered exactly, machinery names
+correctly excluded, and a re-import leaves the row count unchanged.
+
+### Next step
+
+Point the asset box at the INDEX asset - `FCE_Timetable_TT.uasset`, in
+`Content/Timetable/` rather than `Content/Timetable/DataTracks/` - and press
+**Extract station names**. It saves automatically; `/api/timetable/stations`
+lists what is stored.
+
+Expect ~88 station entries and 208 headcodes, per section 5. If the counts
+come back near those, the names are banked and the remaining work is joining
+them to the extracted stop times - for which the most promising key is
+Distance, since both the records and the live API carry it.

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.57.0**
+**App version at end of session: 7.58.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,34 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.58.0 - station names read from the game files, and stored
+
+find_name_fields on the real layer: only TWO offsets in the whole 707-byte
+record resolve to names, both EDirectionOfTravel (+369, +410). No place names
+in this layer. Station identity is NOT there - confirmed four ways now (run
+counts, evenness, +695 platform field, name references).
+
+Oddity for later: +410 has 15 runs over 5,198 stop records. A direction flag
+across 39 services should change ~39 times.
+
+`read_station_names()` / `/api/paks/stations` / **Extract station names**
+reads the INDEX asset (no .uexp - the name table IS the payload) and
+classifies three kinds of name: headcodes (1E01 form, _End variants),
+stations (place-like, usually with a platform), machinery. Platform
+designators are split so "Aberdour Platform 1/2" collapse to one place.
+
+Stored in NEW tables `route_stations` / `route_headcodes` in timetables.db,
+deliberately separate from journeys so re-importing game files cannot disturb
+driven data. Idempotent via ON CONFLICT DO UPDATE.
+
+Validated: 13 places / 25 entries / 208 headcodes exact, machinery excluded,
+re-import does not duplicate.
+
+**Next: point the asset box at FCE_Timetable_TT.uasset** (Content/Timetable/,
+NOT DataTracks/) and press Extract station names. Expect ~88 entries and 208
+headcodes. Then the join to stop times - Distance is the likely key, since
+both the records and the live API carry it.
 
 ## What changed in v7.57.0 - the name scan
 
