@@ -485,6 +485,7 @@ CALL_AT = 480
 BYTE_AT = 520
 STATION_AT = 540
 PLATFORM_AT = 560
+FLOAT_AT = 600
 
 
 def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None):
@@ -512,6 +513,10 @@ def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None
         # A STATION index: even across 13 values, one per call - the thing
         # the evenness search must find.
         rec[STATION_AT] = call_id % 13
+        # A FLOAT decoy - a distance that grows along the route. Its bytes
+        # are near-uniform, so an evenness score alone ranks it ABOVE the
+        # real station index. This is what +105 on the real file is.
+        struct.pack_into("<f", rec, FLOAT_AT, 100.0 + call_id * 137.5)
         # A PLATFORM-shaped decoy: 13 values but wildly skewed, 0 taking
         # over half. This is what +695 on the real file looks like, and a
         # run-count or distinct-count search cannot tell it from a station.

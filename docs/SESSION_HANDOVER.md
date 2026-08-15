@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.56.0**
+**App version at end of session: 7.56.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,32 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.56.1 - evenness finds FLOATS, not indices
+
+find_station_field picked +105: 16 values, evenness 0.9915. The values are
+64..79 CONTIGUOUS - the exponent byte of a float32. It is a Distance. Other
+high scorers: +200 = {0,32,64,...,224} (mantissa top bits), +410 = {13,14}
+(low-variance exponent), +474 = another exponent byte. All above 0.98, none
+an identifier.
+
+A float varies smoothly so every byte of it is near-uniform - exactly what
+entropy rewards. Evenness was needed to reject the platform field but is not
+sufficient alone.
+
+Fixed: reject contiguous runs starting >=32 (float exponents) and values
+spaced by a power of two (mantissa slices); rank by closeness to the expected
+station count FIRST with evenness as tie-break; window +-4 -> +-2. Fixture
+now plants a float decoy too.
+
+**Station identity is probably NOT an integer in these records.** Three
+searches negative: run counts (+407, +695), evenness (floats), and +695
+specifically (platform, 0-24 with -1 sentinel).
+
+**Next: stop looking for integers.** RibbonLocation / NetworkRibbonLocation
+hold FName references, and a station call IS a network position. Needs an
+FName scan at a fixed record offset resolved through the name table, not an
+integer histogram.
 
 ## What changed in v7.56.0 - +695 is a PLATFORM number
 

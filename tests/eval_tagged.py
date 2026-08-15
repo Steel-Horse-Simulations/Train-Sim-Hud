@@ -591,17 +591,22 @@ def run_byte_field():
 
 
 def run_station_field():
-    """The station field must be found by EVENNESS, and the platform-shaped
-    decoy rejected.
+    """The station field must survive two traps that both scored ABOVE it on
+    the real file.
 
-    This is the exact trap the real file set: the byte at +695 has 13
-    non-sentinel values and a Leven-Edinburgh service calls at 13 stations,
-    so every count-based test says "station". But 0 takes 55% of records
-    where an even share would be 8%. The fixture plants both - an even
-    13-value station index and a skewed 13-value platform decoy - so the
-    test fails if the tool cannot tell them apart.
+    PLATFORM: 13 values, matching the 13 stations, but 0 takes 55% of
+    records. Count-based tests cannot tell it from a station.
+
+    FLOAT SLICE: any byte of a Distance or coordinate is near-uniform, so
+    entropy scoring ranks it top. On the real Leven layer the winner was
+    +105 with values 64..79 CONTIGUOUS - the exponent byte of a float32 -
+    and the runners-up were {0,32,64,96,128,160,192,224} and {13,14}. All
+    scored above 0.98 and none is an identifier.
+
+    The fixture plants all three so the test fails unless both traps are
+    rejected.
     """
-    print("\n--- station field found by evenness, not by count ---")
+    print("\n--- station field: reject platform and float decoys ---")
     base, truth, _s, _t, _tm = T.main_fife("/tmp/eval_stn")
     r = pak_tools.find_station_field(base + ".uexp", expected_stations=13)
     ok = True
@@ -610,17 +615,16 @@ def run_station_field():
         print("  FAIL: found nothing"); return False
     print(f"  best +{b['offset']} ({b['width']}): {b['distinct']} values, "
           f"evenness {b['evenness']}, top share {b['top_share']}")
-    if b["distinct"] != 13:
-        print("  FAIL: wrong value count"); ok = False
-    if b["evenness"] < 0.9:
-        print("  FAIL: winner is not evenly distributed"); ok = False
-    if b["top_share"] > 0.2:
-        print("  FAIL: winner is dominated by one value - that is a platform"); ok = False
+    print(f"  values {b['values'][:8]}")
+    if b["distinct"] != 13 or b["evenness"] < 0.9 or b["top_share"] > 0.2:
+        print("  FAIL: winner is not the even 13-value station index"); ok = False
 
-    # the skewed decoy must rank below the real field
-    decoys = [c for c in r["candidates"] if c["top_share"] > 0.45]
-    if decoys:
-        print(f"  skewed decoy ranked at evenness {decoys[0]['evenness']} - below")
+    # a contiguous high run is a float exponent and must never be chosen
+    v = b["values"]
+    if len(v) > 3 and v == list(range(v[0], v[0] + len(v))) and v[0] >= 32:
+        print("  FAIL: chose a float exponent byte"); ok = False
+    else:
+        print("  winner is not a contiguous high run - not a float slice")
     return ok
 
 

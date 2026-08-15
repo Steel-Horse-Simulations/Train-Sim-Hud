@@ -3526,6 +3526,28 @@ def find_station_field(path, expected_stations=13, stride=None, anchor=None,
                 vals.append(struct.unpack_from(sfmt, data, o)[0])
             if not ok:
                 continue
+            # Reject float slices before scoring.
+            #
+            # Evenness alone finds floats, not indices: Distance and
+            # coordinates vary smoothly, so every byte of them is nearly
+            # uniform. On the real file the top scorer was +105 with the
+            # values 64..79 CONTIGUOUS - the exponent byte of a float32 in
+            # the range ~2 to ~5e5 - and the next candidates were
+            # {0,32,64,96,128,160,192,224} (the top three bits of a mantissa
+            # byte) and {13,14} (a low-variance exponent). All scored above
+            # 0.98 and none is an identifier.
+            #
+            # A contiguous high run, or values evenly spaced by a power of
+            # two, is a float slice. A real index starts near zero and its
+            # values need not be contiguous.
+            uniq = sorted(set(vals))
+            if len(uniq) > 3:
+                contiguous = uniq == list(range(uniq[0], uniq[0] + len(uniq)))
+                if contiguous and uniq[0] >= 32:
+                    continue
+                steps = {b - a for a, b in zip(uniq, uniq[1:])}
+                if len(steps) == 1 and steps.pop() in (16, 32, 64, 128, 256):
+                    continue
             counts = Counter(vals)
             # Sentinels are excluded before scoring: -1 / 255 / 65535 mean
             # "none" and would otherwise drag the evenness down.
@@ -3546,8 +3568,11 @@ def find_station_field(path, expected_stations=13, stride=None, anchor=None,
                 "distance_from_expected": abs(n - expected_stations),
             })
 
-    # Evenness first, then closeness to the expected station count.
-    results.sort(key=lambda r: (-r["evenness"], r["distance_from_expected"]))
+    # Closeness to the expected station count FIRST, then evenness. Ranking
+    # by evenness alone put a 16-value float exponent above every genuine
+    # candidate - the station count is the stronger constraint, and evenness
+    # is the tie-break among fields that already have the right shape.
+    results.sort(key=lambda r: (r["distance_from_expected"], -r["evenness"]))
     dedup, seen = [], set()
     for r in results:
         key = (r["distinct"], r["evenness"])
@@ -3558,7 +3583,7 @@ def find_station_field(path, expected_stations=13, stride=None, anchor=None,
 
     best = None
     for r in dedup:
-        if r["evenness"] >= 0.85 and abs(r["distinct"] - expected_stations) <= 4:
+        if r["evenness"] >= 0.85 and abs(r["distinct"] - expected_stations) <= 2:
             best = r
             break
 
@@ -3575,8 +3600,9 @@ def find_station_field(path, expected_stations=13, stride=None, anchor=None,
             "station."
             if best else
             "No field has both a station-like value count and an even "
-            "distribution. Station identity may not be an integer in these "
-            "records - the next candidates are the RibbonLocation FName "
-            "values, which name track positions directly."
+            "distribution once float slices are excluded. Station identity is "
+            "probably not an integer in these records - the next candidates "
+            "are the RibbonLocation / NetworkRibbonLocation FName values, "
+            "which name track positions directly."
         ),
     }

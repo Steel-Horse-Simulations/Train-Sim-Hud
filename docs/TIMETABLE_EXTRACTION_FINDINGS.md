@@ -1442,3 +1442,70 @@ needs.
 If nothing scores above 0.85, station identity is probably not an integer in
 these records at all, and the next candidates are the `RibbonLocation` /
 `NetworkRibbonLocation` FName values, which name track positions directly.
+
+## Evenness alone finds FLOATS, not indices (v7.56.1)
+
+`find_station_field` returned +105 with 16 values at evenness 0.9915 and
+called it a station field. It is not. The values:
+
+```
+64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
+```
+
+**Contiguous, starting at 64** - that is the exponent byte of a float32 in
+the range ~2 to ~5e5. It is a Distance or a coordinate.
+
+The other high scorers are the same mistake:
+
+| offset | values | what it is |
+|---|---|---|
+| +200 | 0,32,64,96,128,160,192,224 | top three bits of a mantissa byte |
+| +410 | 13,14 | a low-variance float exponent |
+| +474 | 64..79 | another float exponent byte |
+
+All above 0.98, none an identifier. **A float varies smoothly, so every byte
+of it is near-uniform - which is exactly what an entropy score rewards.**
+Evenness was necessary to reject the platform field, but it is not
+sufficient, and on its own it is actively misleading.
+
+### Fixed
+
+  - Values that are CONTIGUOUS and start at 32 or above are rejected as
+    float exponent slices. A real index starts near zero and need not be
+    contiguous.
+  - Values evenly spaced by a power of two (16/32/64/128/256) are rejected
+    as mantissa slices.
+  - Ranking is now by closeness to the expected station count FIRST, with
+    evenness as the tie-break among fields that already have the right
+    shape. The count is the stronger constraint; ranking by evenness put a
+    float above every genuine candidate.
+  - The acceptance window narrowed from +-4 values to +-2.
+
+The fixture now plants a float decoy alongside the station index and the
+platform decoy, so the test fails unless both traps are rejected.
+
+### Where this leaves station identity
+
+Three searches have now come back negative, and each ruled something out:
+
+  - **run counts** -> +407 (services) and +695 (stations): count matched,
+    behaviour did not.
+  - **evenness** -> float slices.
+  - **+695 specifically** -> a platform number, 0-24 with -1 for none.
+
+No integer field in the record behaves like a station index. That is a real
+finding rather than a failure: it means station identity is very probably
+**not an integer in these records at all**.
+
+### Next step
+
+Stop looking for integers. The `RibbonLocation` and `NetworkRibbonLocation`
+fields hold FName references - names, not numbers - and a station call IS a
+position on the network. The right question is which NAME each StopPoint
+record points at, and whether consecutive records sharing a name are one
+call.
+
+That needs a scan over FName references at a fixed offset within the record,
+resolved through the name table, rather than an integer histogram. The 88
+names in this layer's table include the P2K/S5K ribbon ids, so the values
+should be readable directly.
