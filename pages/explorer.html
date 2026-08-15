@@ -103,6 +103,7 @@
         <button class="btn primary" onclick="callField()">Find call field</button>
         <button class="btn primary" onclick="inspectField()">Inspect field</button>
         <button class="btn primary" onclick="stationField()">Find station field</button>
+        <button class="btn primary" onclick="nameFields()">Find name fields</button>
       </div>
       <p class="small" id="pak-status" style="margin-top:8px;"></p>
       <div id="pak-results" style="margin-top:12px;"></div>
@@ -378,6 +379,38 @@ async function scanAllPaks() {
     status.textContent = 'Error: ' + e.message;
     status.style.color = 'var(--status-red)';
   }
+}
+
+async function nameFields() {
+  const status=document.getElementById('pak-status'), out=document.getElementById('pak-results');
+  const asset=document.getElementById('pak-asset').value.trim();
+  if(!asset){alert('Put the DataTrack asset path in the box first.');return;}
+  status.textContent='Resolving name references in the stop records…';
+  status.style.color='var(--text-dim)'; out.innerHTML='';
+  try{
+    const d=await (await fetch('/api/paks/name_fields',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({asset_name:asset.split('/').pop(),
+        expected_stations:Number(document.getElementById('pak-calls').value)||null})})).json();
+    lastPakResult=d;
+    if(d.error){status.innerHTML=`<span style="color:var(--status-red);">${esc(d.error)}</span>`;return;}
+    const b=d.best;
+    status.innerHTML=b?`<span style="color:var(--status-green);">+${b.offset}: ${b.distinct} names`
+      +` on ${Math.round(b.resolved_share*100)}% of stop records</span>`
+      :`<span style="color:var(--status-amber);">no name field on the stop records</span>`;
+    status.innerHTML+=` <span class="small dim">· ${d.stop_records} StopPoint records`
+      +` · name table ${d.name_table_size}</span>`;
+    status.style.color='';
+    out.innerHTML=`<p class="small" style="padding:8px 10px;border-radius:6px;
+        background:rgba(255,255,255,0.04);border-left:3px solid var(--accent);">${esc(d.verdict)}</p>`
+      +(d.candidates||[]).map(c=>`
+        <div style="padding:6px 9px;background:rgba(255,255,255,0.03);border-radius:5px;margin-bottom:5px;">
+          <div class="small"><strong>+${c.offset}</strong>
+            <span class="dim">${c.distinct} distinct · ${Math.round(c.resolved_share*100)}% resolve
+            · ${Math.round(c.place_like_share*100)}% place-like · ${c.runs} runs</span></div>
+          <div class="mono" style="font-size:11px;color:var(--accent-bright);">
+            ${(c.values||[]).slice(0,14).map(esc).join('  ')}</div>
+        </div>`).join('');
+  }catch(e){status.textContent='Error: '+e.message;status.style.color='var(--status-red)';}
 }
 
 async function stationField() {

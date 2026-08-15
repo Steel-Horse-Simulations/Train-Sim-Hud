@@ -628,6 +628,56 @@ def run_station_field():
     return ok
 
 
+def run_name_fields():
+    """Station identity as a NAME reference, not an integer.
+
+    Three integer searches came back negative on the real file - run counts
+    matched the wrong fields, evenness found float slices. A station call is
+    a position on the network and the record's own field names
+    (RibbonLocation, NetworkRibbonLocation) say those positions are named,
+    so this reads the names instead.
+
+    Checked in BOTH directions, because a negative is the likely real-world
+    answer and it has to be trustworthy: with ribbon references planted it
+    must find them, and with them stripped out it must say so rather than
+    name the closest thing.
+    """
+    import shutil, struct, random
+    print("\n--- name references on stop records ---")
+    base, truth, _s, _t, _tm = T.main_fife("/tmp/eval_names")
+    ok = True
+
+    r = pak_tools.find_name_fields(base + ".uexp", expected_stations=13)
+    b = r.get("best")
+    if not b:
+        print("  FAIL: missed the planted ribbon references"); return False
+    print(f"  found +{b['offset']}: {b['distinct']} names, "
+          f"{b['resolved_share']:.0%} resolve, {b['place_like_share']:.0%} place-like")
+    print(f"  values {b['values'][:5]}")
+    if b["distinct"] != 13:
+        print("  FAIL: wrong number of distinct names"); ok = False
+    if not all(v.startswith("P2K") for v in b["values"]):
+        print("  FAIL: resolved to machinery names, not places"); ok = False
+
+    # strip the references out; the scan must then find nothing
+    raw = bytearray(open(base + ".uexp", "rb").read())
+    for i in range(len(raw) // 707):
+        off = i * 707 + T.RIBBON_AT
+        raw[off:off + 8] = struct.pack("<ii",
+                                       random.Random(i).randint(1 << 20, (1 << 31) - 1), 7)
+    stripped = "/tmp/eval_names/stripped"
+    with open(stripped + ".uexp", "wb") as f:
+        f.write(bytes(raw))
+    shutil.copy(base + ".uasset", stripped + ".uasset")
+    r2 = pak_tools.find_name_fields(stripped + ".uexp", expected_stations=13)
+    print(f"  with references removed: {r2.get('best')}")
+    if r2.get("best") is not None:
+        print("  FAIL: named a field when none carries names"); ok = False
+    else:
+        print("  correctly reports nothing")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_with_guid(), run_without_guid(), run_wide_fnames(),
                run_opaque_control(), run_probe(), run_window_diagnostic(),
@@ -636,6 +686,6 @@ if __name__ == "__main__":
                run_phase_shift_recovery(), run_service_field(),
                run_fife_shape(), run_near_miss_rejection(),
                run_call_gap_tuning(), run_call_field(), run_byte_field(),
-               run_station_field()]
+               run_station_field(), run_name_fields()]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.56.1**
+**App version at end of session: 7.57.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -24,6 +24,31 @@ work and should be read before touching any of it.
   changes, run the code against synthetic data, don't eyeball geometry.
 
 ---
+
+## What changed in v7.57.0 - the name scan
+
+Three integer searches negative (run counts -> wrong fields, evenness ->
+float slices, +695 -> platform number). So stop treating fields as integers.
+
+`find_name_fields()` / `/api/paks/name_fields` / **Find name fields** resolves
+FName REFERENCES at each record offset through the name table and asks which
+NAME a StopPoint record points at. Right question because a call is a network
+position and the record's fields are literally called RibbonLocation /
+NetworkRibbonLocation.
+
+Index + Number(0) pairing is required, which is what separates a real
+reference from a small integer - with 88 names, 29% of offsets pass the index
+test alone. Ranked by place-like share so machinery names (Class, Guid,
+DataType) cannot win.
+
+Tested BOTH ways, since a negative is the likely answer: finds planted ribbon
+references (13 names, 100% resolve, 100% place-like), and reports nothing when
+they are stripped out.
+
+**Next: Find name fields, 13 in the calls box.** Place-like names = the track
+positions, which settles call grouping AND gives labels. Nothing found =
+station identity is not in this layer at all; fall back to the index asset or
+the live API's DriverAid.TrackData stationName.
 
 ## What changed in v7.56.1 - evenness finds FLOATS, not indices
 

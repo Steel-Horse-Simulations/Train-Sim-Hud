@@ -57,6 +57,8 @@ NAMES = [
     "Timespan",
     "Package",
     "PropertyReference",
+] + [f"P2K{n}" for n in range(70, 83)] + [   # ribbon ids, one per station
+    "S5K84",
     "ServiceDataTracks",
     "SignalRef",
 ] + [f"P2K{n}" for n in range(50, 60)]   # NetworkRibbonLocation values, as in the real table
@@ -486,6 +488,7 @@ BYTE_AT = 520
 STATION_AT = 540
 PLATFORM_AT = 560
 FLOAT_AT = 600
+RIBBON_AT = 620
 
 
 def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None):
@@ -513,6 +516,11 @@ def _fife_record(rng, stride, kind, t, type_at, time_at, anchor_at, call_id=None
         # A STATION index: even across 13 values, one per call - the thing
         # the evenness search must find.
         rec[STATION_AT] = call_id % 13
+        # An FName REFERENCE to a ribbon id - index + Number(0) - which is
+        # how a named track position is actually stored. This is what the
+        # name scan has to find; an integer scan cannot see it as anything
+        # but a small number.
+        rec[RIBBON_AT:RIBBON_AT + 8] = _fname(f"P2K{70 + (call_id % 13)}")
         # A FLOAT decoy - a distance that grows along the route. Its bytes
         # are near-uniform, so an evenness score alone ranks it ABOVE the
         # real station index. This is what +105 on the real file is.

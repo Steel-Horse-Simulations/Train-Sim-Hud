@@ -3606,3 +3606,130 @@ def find_station_field(path, expected_stations=13, stride=None, anchor=None,
             "which name track positions directly."
         ),
     }
+
+
+def find_name_fields(path, stride=None, anchor=None, width=4, top=25,
+                     expected_stations=None):
+    """Scans for FName REFERENCES at fixed offsets in the record, resolving
+    each through the name table.
+
+    Every previous search treated fields as integers, and all three came
+    back negative: run counts picked fields whose count matched but whose
+    behaviour did not (+407, +695), and evenness picked float slices. This
+    asks a different question - which NAME does each StopPoint record point
+    at - and the answer is readable text rather than a histogram.
+
+    It is the right question for station identity because a station call is
+    a position on the network, and the record's own field names say the
+    positions are named: `RibbonLocation`, `NetworkRibbonLocation`,
+    `SignalRef`. The layer's 88-entry name table holds the P2K/S5K ribbon
+    ids those fields must point at.
+
+    An FName is an index plus a Number, so a value only counts if the index
+    is in range AND the Number is zero. That pairing is what separates a
+    real reference from an arbitrary small integer - which matters here,
+    because with 88 names roughly 29% of byte offsets pass the index test
+    alone.
+    """
+    layout = decode_fixed_records(path, stride=stride, anchor=anchor, width=width)
+    if "error" in layout:
+        return layout
+    stride = layout["stride"]
+    with open(path, "rb") as f:
+        data = f.read()
+    with open(layout["uasset"], "rb") as f:
+        names = _read_fname_strings(f.read())
+    type_idx = {i: n.split("::")[-1] for i, n in enumerate(names)
+                if "::" in n and n.split("::")[-1] in _TRACK_DATA_TYPES}
+    refs = _name_ref_offsets(data, names, width)
+    starts = _stride_chain(refs[{n: i for i, n in enumerate(names)}[layout["anchor"]]],
+                           stride)
+
+    fmt = "<ii" if width == 4 else "<qq"
+    step = 2 * width
+    tdelta = layout["type_field_offset"]
+    stops, others = [], []
+    for s in starts:
+        o = s + tdelta
+        if o + step > len(data):
+            continue
+        idx, num = struct.unpack_from(fmt, data, o)
+        (stops if (num == 0 and type_idx.get(idx) == "StopPoint") else others).append(s)
+    if len(stops) < 32:
+        return {"error": "too_few_stop_records", "stop_records": len(stops)}
+
+    # Names that could plausibly BE a place: not property machinery, not
+    # type names, not the package path.
+    def place_like(n):
+        if not n or n == "None":
+            return False
+        if n.endswith("Property") or "::" in n or "/" in n:
+            return False
+        if n in ("Class", "Package", "Guid", "ServiceDataTracks", "None",
+                 "PropertyReference", "SignalPropertyReference",
+                 "RibbonReference", "DataType", "Time", "Timespan",
+                 "Direction", "DirectionOfTravel", "Distance",
+                 "InstructionIndex", "GoViaIndex", "ActionIndices",
+                 "Location", "NetworkRibbonLocation", "RibbonLocation",
+                 "SignalRef", "EDirectionOfTravel", "ETimetableTrackDataType"):
+            return False
+        return True
+
+    results = []
+    for d in range(0, stride - step):
+        vals, resolved = [], 0
+        for s in stops:
+            o = s + d
+            if o + step > len(data):
+                vals = []
+                break
+            idx, num = struct.unpack_from(fmt, data, o)
+            if num == 0 and 0 <= idx < len(names):
+                vals.append(names[idx])
+                resolved += 1
+            else:
+                vals.append(None)
+        if not vals or resolved < len(stops) * 0.8:
+            continue
+        counts = Counter(v for v in vals if v)
+        distinct = len(counts)
+        if not (2 <= distinct <= 90):
+            continue
+        placey = sum(n for v, n in counts.items() if place_like(v))
+        results.append({
+            "offset": d,
+            "distinct": distinct,
+            "resolved_share": round(resolved / len(stops), 3),
+            "place_like_share": round(placey / max(1, resolved), 3),
+            "values": [v for v, _n in counts.most_common(20)],
+            "frequency": counts.most_common(8),
+            "runs": 1 + sum(1 for a, b in zip(vals, vals[1:]) if a != b),
+        })
+
+    # Fields pointing at PLACE-like names first - the machinery names
+    # (Class, Guid, DataType) resolve everywhere and say nothing.
+    results.sort(key=lambda r: (-r["place_like_share"], -r["resolved_share"]))
+    best = next((r for r in results if r["place_like_share"] > 0.5), None)
+    if expected_stations and best and abs(best["distinct"] - expected_stations) > 8:
+        best = None
+
+    return {
+        "path": path,
+        "stop_records": len(stops),
+        "other_records": len(others),
+        "name_table_size": len(names),
+        "candidates": results[:top],
+        "best": best,
+        "verdict": (
+            f"Field at +{best['offset']} resolves to {best['distinct']} "
+            f"place-like names on {best['resolved_share']:.0%} of StopPoint "
+            f"records: {', '.join(best['values'][:6])}. If those are track "
+            "positions, consecutive records sharing one are a single station "
+            "call."
+            if best else
+            "No offset resolves to place-like names on the StopPoint records. "
+            "Station identity is not carried as a name reference here either, "
+            "so it likely lives outside this layer - in the index asset or "
+            "the MasterDataTrack."
+        ),
+    }

@@ -1509,3 +1509,55 @@ That needs a scan over FName references at a fixed offset within the record,
 resolved through the name table, rather than an integer histogram. The 88
 names in this layer's table include the P2K/S5K ribbon ids, so the values
 should be readable directly.
+
+## Stop looking for integers: the name scan (v7.57.0)
+
+Three integer searches came back negative, and each ruled something out:
+
+| search | picked | why it was wrong |
+|---|---|---|
+| run counts | +407, +695 | count matched, behaviour did not |
+| evenness | +105, +200, +474 | float slices - every byte of a smoothly varying float is near-uniform |
+| +695 specifically | - | 0-24 with -1 for none, 55% zeros: a PLATFORM number |
+
+`find_name_fields()` / `/api/paks/name_fields` / **Find name fields** asks a
+different question: which NAME does each StopPoint record point at?
+
+That is the right question because a station call is a position on the
+network, and the record's own field names say those positions are named -
+`RibbonLocation`, `NetworkRibbonLocation`, `SignalRef`. The layer's 88-entry
+table holds the P2K/S5K ribbon ids they must reference.
+
+An FName is an index PLUS a Number, and a value only counts if the index is
+in range AND the Number is zero. That pairing is what separates a real
+reference from an arbitrary small integer - which matters here, because with
+88 names about 29% of byte offsets pass the index test on its own.
+
+Candidates are ranked by how many of their names are PLACE-like: machinery
+names (`Class`, `Guid`, `DataType`, `IntProperty`) resolve on every record
+and say nothing, so they are filtered out rather than allowed to win.
+
+### Tested in BOTH directions
+
+A negative is the likely real answer here, so the negative has to be
+trustworthy. On a fixture with ribbon references planted it finds them - 13
+names, 100% resolving, 100% place-like. With the same references overwritten
+by non-FName integers it reports **nothing** rather than naming the closest
+field.
+
+### Next step
+
+Run **Find name fields** with 13 in the calls box.
+
+  - **Place-like names on most stop records** - those are the track
+    positions. Consecutive records sharing one are a single station call,
+    which would settle the call grouping that time clustering could not, and
+    the names themselves are the labels.
+  - **Nothing found** - station identity is not in this layer in any form.
+    It would then have to come from the index asset
+    (`FCE_Timetable_TT.uasset`, which section 5 records as holding 88 station
+    names with platform numbers) or from the live API's
+    `DriverAid.TrackData`, which supplies `stationName` while driving.
+
+The second outcome is a real result too, and cheap to act on: the live API
+already names the stations on the route being driven.

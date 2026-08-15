@@ -43,7 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.56.1"
+APP_VERSION = "7.57.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1711,6 +1711,36 @@ def paks_services():
     if not path:
         return jsonify({"error": "path or asset_name required"}), 400
     return jsonify(pak_tools.extract_time_series(path))
+
+
+@app.route("/api/paks/name_fields", methods=["POST"])
+def paks_name_fields():
+    """Scans for FName REFERENCES in the record and resolves them to text.
+    Body: {"asset_name": "...", "expected_stations": 13}
+
+    Every earlier search treated fields as integers and came back negative:
+    run counts matched the wrong fields, evenness found float slices. A
+    station call is a position on the network, and the record's own field
+    names - RibbonLocation, NetworkRibbonLocation - say those positions are
+    NAMED. This reads the names."""
+    import pak_tools
+    body = request.get_json(force=True, silent=True) or {}
+    path = (body.get("path") or "").strip()
+    name = (body.get("asset_name") or "").strip()
+    if not path and name:
+        want = os.path.splitext(os.path.basename(name))[0].lower() + ".uexp"
+        for root, _dirs, files in os.walk(os.path.join(APP_DIR, "extracted")):
+            for f in files:
+                if f.lower() == want:
+                    path = os.path.join(root, f)
+                    break
+            if path:
+                break
+    if not path:
+        return jsonify({"error": "path or asset_name required"}), 400
+    exp = body.get("expected_stations")
+    return jsonify(pak_tools.find_name_fields(
+        path, expected_stations=int(exp) if exp else None))
 
 
 @app.route("/api/paks/station_field", methods=["POST"])
