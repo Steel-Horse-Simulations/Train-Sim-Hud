@@ -92,6 +92,7 @@ TSW Hud/
     ├── groups.html           Groups list — families. Several Classes belong to
     │                         one Group, e.g. Class 801/802/805 → "Class 8xx".
     ├── operators.html        Operators and their liveries (colour per livery)
+    ├── routes.html           Routes: scan paks for timetables, read them
     └── timetable.html        Colour-theme placeholder (earmarked for a
                               different timetable feature, not built yet)
 
@@ -571,6 +572,9 @@ PAK / GAME FILES (Discovery page, offline timetable extraction):
                   unpack,clear_extracted}
   GET  /api/timetable/stations   → station names + headcodes stored locally
   GET  /api/timetable/extracted  → services + calls extracted from the paks
+  GET  /api/routes               → routes found by scanning paks
+  POST /api/routes/scan          → scan every pak for timetables
+  POST /api/routes/extract       → read one route, or every unread one
   POST /api/drive/record         → start/stop recording station sightings
   GET  /api/drive/status         → what the recorder has seen
   GET  /api/drive/match          → driven names vs pak-derived catalogue

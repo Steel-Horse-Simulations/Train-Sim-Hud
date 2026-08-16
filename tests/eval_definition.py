@@ -197,6 +197,27 @@ def run():
     if td.expects_calls("5G35") or not td.expects_calls("2K05"):
         print("  FAIL: headcode classification wrong"); ok = False
 
+    # Continuation legs come in several naming forms, and only checking _B
+    # and _End missed most of them - 145 services on the real file looked
+    # "unexpectedly empty" when they were ordinary continuations. A trailing
+    # capital counts only when the rest of the name IS the headcode, so a
+    # real service name ending in a capital is not swept up.
+    cases = {
+        ("P1L86", "1L86"): "player_leg",
+        ("1L86_B", "1L86"): "ai_continuation",
+        ("1L30_1_B", "1L30"): "ai_continuation",
+        ("2P02-B", "2P02"): "ai_continuation",
+        ("2G16B", "2G16"): "ai_continuation",
+        ("1L96_C", "1L96"): "ai_continuation",
+        ("SVC_1E01", "1E01"): None,
+        ("Edinburgh Park", ""): None,
+    }
+    for (nm_, code), want in cases.items():
+        got = td._classify_role(nm_, code)
+        if got != want:
+            print(f"  FAIL: role for {nm_} was {got}, expected {want}"); ok = False
+    print(f"  continuation-leg naming variants: {len(cases)} checked")
+
     print("  " + ("PASS" if ok else "FAIL"))
     return ok
 

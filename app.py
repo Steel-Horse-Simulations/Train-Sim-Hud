@@ -1715,6 +1715,128 @@ def paks_services():
     return jsonify(pak_tools.extract_time_series(path))
 
 
+@app.route("/api/routes", methods=["GET"])
+def routes_list():
+    """Routes discovered by scanning paks, with what has been extracted."""
+    return jsonify(timetable_db.list_scanned_routes())
+
+
+@app.route("/api/routes/scan", methods=["POST"])
+def routes_scan():
+    """Scans every pak for timetables and records the routes found.
+    Body: {"pak_dir": "optional override"}
+
+    Delegates the actual scan to /api/paks/scan_all rather than repeating
+    its folder auto-detection. That logic is careful for a reason - paks are
+    not all in one place, since separately-sold timetables ship as their own
+    pak and can land in Content/Paks rather than Content/DLC - and a second
+    copy of it would drift."""
+    body = request.get_json(force=True, silent=True) or {}
+    with app.test_request_context("/api/paks/scan_all", method="POST",
+                                  json={"pak_dir": body.get("pak_dir") or "",
+                                        "aes_key": body.get("aes_key") or ""}):
+        resp = paks_scan_all()
+    payload = resp[0] if isinstance(resp, tuple) else resp
+    result = payload.get_json() if hasattr(payload, "get_json") else payload
+    if result.get("error"):
+        return jsonify(result), 400
+
+    # scan_all_paks returns per-folder results when it scanned several.
+    found = result.get("results")
+    if found is None:
+        found = []
+        for folder in result.get("folders", []) or []:
+            found.extend(folder.get("results") or [])
+    result["saved"] = timetable_db.save_scanned_routes(found)
+    result.update(timetable_db.list_scanned_routes())
+    return jsonify(result)
+
+
+@app.route("/api/routes/extract", methods=["POST"])
+def routes_extract():
+    """Extracts the timetable for one route, or every route not yet done.
+    Body: {"route_key": "FifeCircle"} or {"only_new": true}
+
+    Extraction is the expensive half - a scan lists what exists, this reads
+    it. Kept separate so a rescan after installing DLC does not re-parse
+    everything already stored."""
+    import pak_tools, timetable_definition
+    body = request.get_json(force=True, silent=True) or {}
+    listing = timetable_db.list_scanned_routes()
+    routes = listing["routes"]
+    if body.get("route_key"):
+        routes = [r for r in routes if r["route_key"] == body["route_key"]]
+        if not routes:
+            return jsonify({"error": "route_not_found",
+                            "route_key": body["route_key"]}), 404
+    elif body.get("only_new"):
+        routes = [r for r in routes if r["is_new"]]
+
+    done, failed = [], []
+    for route in routes[:int(body.get("limit") or 40)]:
+        assets = route.get("assets") or []
+        # The INDEX asset is the one carrying the schedule - a DataTrack
+        # layer holds only the running profile, which has no station names.
+        index_assets = [a for a in assets
+                        if "/datatracks/" not in str(a).lower()]
+        target = index_assets[0] if index_assets else (assets[0] if assets else None)
+        if not target or not route.get("pak_path"):
+            failed.append({"route_key": route["route_key"],
+                           "error": "no_timetable_asset"})
+            continue
+        try:
+            out_dir = os.path.join(APP_DIR, "extracted")
+            os.makedirs(out_dir, exist_ok=True)
+            unpacked = pak_tools.unpack_pak(route["pak_path"], out_dir,
+                                            include=target)
+            if unpacked.get("error"):
+                failed.append({"route_key": route["route_key"],
+                               "error": unpacked["error"]})
+                continue
+            # repak lays the asset out under its in-pak path, and some
+            # builds ignore --include and unpack everything - so find the
+            # file by name rather than assuming where it landed.
+            want = os.path.basename(target).lower()
+            path = None
+            for root, _dirs, files in os.walk(out_dir):
+                for f in files:
+                    if f.lower() == want:
+                        path = os.path.join(root, f)
+                        break
+                if path:
+                    break
+            if not path:
+                failed.append({"route_key": route["route_key"],
+                               "error": "asset_not_found_after_unpack"})
+                continue
+            parsed = timetable_definition.parse_timetable_definition(path)
+            if "error" in parsed:
+                failed.append({"route_key": route["route_key"],
+                               "error": parsed["error"]})
+                continue
+            saved = timetable_db.save_definition_timetable(
+                route["route_key"], os.path.basename(path),
+                parsed.get("services") or [])
+            timetable_db.mark_route_extracted(
+                route["route_key"], saved["services_saved"], saved["calls_saved"])
+            done.append({
+                "route_key": route["route_key"],
+                "services": saved["services_saved"],
+                "calls": saved["calls_saved"],
+                "named_stops": parsed.get("named_stops"),
+            })
+        except Exception as e:
+            failed.append({"route_key": route["route_key"], "error": str(e)})
+
+    return jsonify({
+        "extracted": done,
+        "failed": failed,
+        "routes_done": len(done),
+        "routes_failed": len(failed),
+        **timetable_db.list_scanned_routes(),
+    })
+
+
 @app.route("/api/paks/timetable_definition", methods=["POST"])
 def paks_timetable_definition():
     """Parses a RouteTimetableDefinition into services with NAMED stops.

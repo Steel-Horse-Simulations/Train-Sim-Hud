@@ -147,6 +147,69 @@ def run_drive_recorder(m):
     return ok
 
 
+def run_routes(m):
+    """The Routes page: scan lists what exists, extract reads it.
+
+    The two are kept separate on purpose. A scan is cheap and gets re-run
+    whenever DLC is installed; an extraction is not. Rescanning must
+    therefore refresh what exists WITHOUT wiping the record of what has
+    already been read.
+    """
+    import os, shutil, sys as _sys
+    print("\n--- routes: scan, list, extract ---")
+    ok = True
+    scan = [
+        {"pak_name": "TS2Prototype-WindowsNoEditor-FifeCircle.pak",
+         "pak_path": "/x/FifeCircle.pak",
+         "timetables": ["a/Content/Timetable/FCE_Timetable_TT.uasset"],
+         "timetables_by_name": [], "layer_datatracks": [],
+         "counts": {"datatrack": 3}},
+        {"pak_name": "TS2Prototype-WindowsNoEditor-BRClass158.pak",
+         "pak_path": "/x/158.pak",
+         "timetables": ["b/Content/Timetable/158_FCL_Timetable.uasset"],
+         "timetables_by_name": [], "layer_datatracks": [],
+         "counts": {"datatrack": 1}},
+        # a pak that failed to open must be skipped, not stored as a route
+        {"pak_name": "broken.pak", "error": "repak_not_found"},
+    ]
+    r = m.timetable_db.save_scanned_routes(scan)
+    listing = m.timetable_db.list_scanned_routes()
+    print(f"  saved {r['added']} routes; listing {listing['route_count']}, "
+          f"{listing['new_count']} new")
+    if listing["route_count"] != 2:
+        print("  FAIL: the failed pak became a route"); ok = False
+    keys = {x["route_key"] for x in listing["routes"]}
+    if keys != {"FifeCircle", "BRClass158"}:
+        print(f"  FAIL: route keys {keys} - platform prefix not stripped"); ok = False
+
+    # rescanning must not duplicate
+    m.timetable_db.save_scanned_routes(scan)
+    if m.timetable_db.list_scanned_routes()["route_count"] != 2:
+        print("  FAIL: rescan duplicated routes"); ok = False
+    else:
+        print("  rescan does not duplicate")
+
+    # extraction marks the route read, and a rescan must NOT undo that
+    m.timetable_db.mark_route_extracted("FifeCircle", 7, 30)
+    m.timetable_db.save_scanned_routes(scan)
+    after = {x["route_key"]: x for x in
+             m.timetable_db.list_scanned_routes()["routes"]}
+    fc = after["FifeCircle"]
+    print(f"  after re-scan: FifeCircle services={fc['services_extracted']}, "
+          f"is_new={fc['is_new']}")
+    if fc["is_new"] or fc["services_extracted"] != 7:
+        print("  FAIL: rescanning wiped the extraction record"); ok = False
+    if not after["BRClass158"]["is_new"]:
+        print("  FAIL: an unread route is not marked new"); ok = False
+
+    c = m.app.test_client()
+    if c.get("/pages/routes.html").status_code != 200:
+        print("  FAIL: routes page missing"); ok = False
+    if c.post("/api/routes/extract", json={"route_key": "Nope"}).status_code != 404:
+        print("  FAIL: unknown route should 404"); ok = False
+    return ok
+
+
 if __name__ == "__main__":
     import tempfile, shutil
     tmp = tempfile.mkdtemp()
@@ -160,6 +223,7 @@ if __name__ == "__main__":
         mod.DB_PATH = os.path.join(tmp, "data", fname)
     m.train_classes_db.init_db()
     m.timetable_db.init_db()
-    results = [run_backup_restore(m), run_timetable_banking(m), run_drive_recorder(m)]
+    results = [run_backup_restore(m), run_timetable_banking(m),
+               run_drive_recorder(m), run_routes(m)]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)

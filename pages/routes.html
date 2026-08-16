@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TSW Hud - Routes</title>
+<link rel="stylesheet" href="/pages/style.css">
+<script src="/pages/theme.js"></script>
+
+<style>
+  main { max-width: none; padding: 8px; padding-top: 10px; }
+
+  .routes-container { display: flex; flex-direction: column; gap: 10px; }
+
+  .route-pill {
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .route-pill.is-new { border-color: rgba(232,183,74,0.45); background: rgba(232,183,74,0.05); }
+  .route-pill.done { border-color: rgba(95,208,122,0.35); }
+
+  .route-main { flex: 1; min-width: 0; }
+  .route-name {
+    font-family: var(--heading); font-weight: 700; font-size: 15px;
+    color: var(--text); letter-spacing: 0.02em;
+  }
+  .route-meta { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .route-pak { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); opacity: 0.7; }
+
+  .route-status {
+    font-family: var(--heading); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 10px; white-space: nowrap;
+  }
+  .status-new { background: rgba(232,183,74,0.18); color: var(--status-amber); }
+  .status-done { background: rgba(95,208,122,0.15); color: var(--status-green); }
+  .status-fail { background: rgba(224,90,78,0.15); color: var(--status-red); }
+
+  .scan-btn {
+    background: var(--accent); color: #1a1013; border: none;
+    padding: 6px 14px; border-radius: 6px; font-weight: 700;
+    font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  .scan-btn:disabled { opacity: 0.5; cursor: default; }
+  .scan-btn.secondary { background: transparent; color: var(--text);
+                        border: 1px solid var(--hairline); }
+
+  .empty-note { color: var(--text-dim); padding: 20px 4px; }
+  .log { font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+         max-height: 180px; overflow: auto; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><strong>TSW HUD</strong><br>ROUTES</div>
+    <div class="nav" id="navContainer"></div>
+    <button class="exit-btn" onclick="exitApp()">Exit</button>
+  </div>
+
+  <main>
+    <div class="panel">
+      <h2>Route Files</h2>
+      <p class="small dim">
+        Finds every Train Sim World pak that contains a timetable, then reads the
+        services and station stops out of it. Read-only &mdash; nothing in the
+        game folder is opened for writing or changed.
+      </p>
+      <div class="field-row" style="margin-top:10px;">
+        <button class="scan-btn" id="scanBtn" onclick="scanPaks()">Find routes with timetables</button>
+        <button class="scan-btn secondary" id="scanNewBtn" onclick="extractAll(true)">Scan all new routes</button>
+        <span id="scanStatus" class="small dim"></span>
+      </div>
+      <div id="scanLog" class="log"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Routes <span id="routeCount" class="small dim"></span></h2>
+      <div id="routes" class="routes-container">
+        <div class="empty-note">
+          No routes yet. Press <strong>Find routes with timetables</strong> to scan
+          your installed content.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/pages/nav.js"></script>
+  <script>
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g,
+      c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function exitApp() { fetch('/api/shutdown', { method: 'POST' }); }
+
+  function setStatus(msg, colour) {
+    const el = document.getElementById('scanStatus');
+    el.innerHTML = colour ? `<span style="color:var(--status-${colour});">${esc(msg)}</span>`
+                          : esc(msg);
+  }
+
+  function log(lines) {
+    document.getElementById('scanLog').innerHTML =
+      (lines || []).map(l => `<div>${esc(l)}</div>`).join('');
+  }
+
+  async function loadRoutes() {
+    try {
+      const d = await (await fetch('/api/routes')).json();
+      render(d);
+      return d;
+    } catch (e) {
+      setStatus('Could not load routes: ' + e.message, 'red');
+    }
+  }
+
+  function render(d) {
+    const box = document.getElementById('routes');
+    const count = document.getElementById('routeCount');
+    const routes = d.routes || [];
+    count.textContent = routes.length
+      ? `— ${routes.length} found, ${d.new_count} not yet read`
+      : '';
+    if (!routes.length) {
+      box.innerHTML = `<div class="empty-note">No routes found yet. Press
+        <strong>Find routes with timetables</strong> above.</div>`;
+      return;
+    }
+    box.innerHTML = routes.map(r => {
+      const isNew = r.is_new;
+      const failed = r.status === 'failed';
+      const cls = failed ? '' : (isNew ? 'is-new' : 'done');
+      const status = failed
+        ? `<span class="route-status status-fail">failed</span>`
+        : isNew ? `<span class="route-status status-new">not read</span>`
+                : `<span class="route-status status-done">read</span>`;
+      const detail = isNew
+        ? `${r.timetable_count} timetable${r.timetable_count === 1 ? '' : 's'}`
+          + (r.datatrack_count ? ` · ${r.datatrack_count} datatracks` : '')
+        : `${r.services_extracted} services · ${r.calls_extracted} station calls`
+          + (r.last_extracted ? ` · read ${esc(r.last_extracted.replace('T', ' '))}` : '');
+      return `
+        <div class="route-pill ${cls}">
+          <div class="route-main">
+            <div class="route-name">${esc(r.display_name || r.route_key)}</div>
+            <div class="route-meta">${detail}</div>
+            <div class="route-pak">${esc(r.pak_name || '')}</div>
+          </div>
+          ${status}
+          <button class="scan-btn" onclick="extractOne('${esc(r.route_key)}', this)">
+            ${isNew ? 'Scan timetable' : 'Re-scan'}
+          </button>
+        </div>`;
+    }).join('');
+  }
+
+  async function scanPaks() {
+    const btn = document.getElementById('scanBtn');
+    btn.disabled = true;
+    setStatus('Searching your installed paks…');
+    log([]);
+    try {
+      const d = await (await fetch('/api/routes/scan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      })).json();
+      if (d.error) {
+        setStatus(d.detail || d.error, 'red');
+        return;
+      }
+      const saved = d.saved || {};
+      setStatus(`${d.route_count} routes with timetables `
+        + `(${saved.added || 0} new, ${saved.updated || 0} already known)`, 'green');
+      render(d);
+    } catch (e) {
+      setStatus('Scan failed: ' + e.message, 'red');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function extractOne(key, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Reading…'; }
+    setStatus(`Reading the timetable for ${key}…`);
+    try {
+      const d = await (await fetch('/api/routes/extract', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ route_key: key })
+      })).json();
+      reportExtraction(d);
+      render(d);
+    } catch (e) {
+      setStatus('Failed: ' + e.message, 'red');
+      if (btn) { btn.disabled = false; btn.textContent = 'Scan timetable'; }
+    }
+  }
+
+  async function extractAll(onlyNew) {
+    const btn = document.getElementById('scanNewBtn');
+    btn.disabled = true;
+    setStatus('Reading every route not yet done — this can take a while…');
+    try {
+      const d = await (await fetch('/api/routes/extract', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ only_new: !!onlyNew })
+      })).json();
+      reportExtraction(d);
+      render(d);
+    } catch (e) {
+      setStatus('Failed: ' + e.message, 'red');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function reportExtraction(d) {
+    const done = d.extracted || [], failed = d.failed || [];
+    const services = done.reduce((n, x) => n + (x.services || 0), 0);
+    const calls = done.reduce((n, x) => n + (x.calls || 0), 0);
+    // Failures are reported alongside successes rather than swallowed: a
+    // route whose timetable could not be read is exactly what someone
+    // needs to know about, and a silent skip looks like it worked.
+    setStatus(
+      `${done.length} route${done.length === 1 ? '' : 's'} read — `
+      + `${services} services, ${calls} station calls`
+      + (failed.length ? ` · ${failed.length} could not be read` : ''),
+      failed.length ? 'amber' : 'green');
+    log([
+      ...done.map(x => `${x.route_key}: ${x.services} services, ${x.calls} calls`),
+      ...failed.map(x => `${x.route_key}: ${x.error}`),
+    ]);
+  }
+
+  loadRoutes();
+  </script>
+</body>
+</html>

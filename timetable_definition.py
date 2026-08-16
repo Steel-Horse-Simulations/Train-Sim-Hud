@@ -81,6 +81,38 @@ def expects_calls(headcode):
     return c not in ("0", "5")
 
 
+CONTINUATION_SUFFIX = re.compile(
+    r"(_End|_\d+_[A-Z]|_[A-Z]|-[A-Z]|[A-Z])$")
+
+
+def _classify_role(name, headcode):
+    """Player leg, AI continuation, or a plain service.
+
+    TSW splits one working across several records and marks the
+    continuations with a suffix - but the suffix takes several forms, and
+    only checking `_B` and `_End` missed most of them. On the real Fife
+    Circle file that left 145 services looking "unexpectedly empty" when
+    they were ordinary continuation legs: `_B` (34), `_1_B` (8), `_C`, `_A`,
+    and bare or hyphenated forms like `2P02-B` and `2G16B` (101 between
+    them).
+
+    A trailing capital is only treated as a continuation when the name is
+    otherwise the headcode, so a genuine service name ending in a capital is
+    not swept up.
+    """
+    if not name:
+        return None
+    if headcode and name == "P" + headcode:
+        return "player_leg"
+    if headcode:
+        rest = name[len(headcode):] if name.startswith(headcode) else None
+        if rest and CONTINUATION_SUFFIX.fullmatch(rest):
+            return "ai_continuation"
+    if name.endswith("_End") or re.search(r"(_\d+)?_[A-Z]$", name):
+        return "ai_continuation"
+    return None
+
+
 def _hms(ticks, allow_next_day=True):
     """A Timespan as a clock time.
 
@@ -441,11 +473,7 @@ def parse_timetable_definition(path, max_services=5000):
         # would lose half the timetable.
         nm_ = svc["name"] or ""
         code = svc["headcode"] or derive_headcode(nm_)
-        role = None
-        if nm_.endswith("_B") or nm_.endswith("_End"):
-            role = "ai_continuation"
-        elif code and nm_ == "P" + code:
-            role = "player_leg"
+        role = _classify_role(nm_, code)
 
         hc_class, hc_meaning = classify_headcode(code)
         out.append({
@@ -469,8 +497,15 @@ def parse_timetable_definition(path, max_services=5000):
     # An empty stop list is only a concern for a working that SHOULD call
     # somewhere. Counting them apart keeps a real fault visible instead of
     # being buried under legitimate empty-stock moves.
-    empty_expected = [s for s in out if not s["stops"] and s["expects_calls"]]
-    empty_ok = [s for s in out if not s["stops"] and not s["expects_calls"]]
+    # A continuation leg legitimately carries no calls: it is the tail of a
+    # working whose passenger calls belong to the leg before it. Counting
+    # those as unexplained hid the real number - 145 of them on the Fife
+    # Circle file, of which 122 share a headcode with a service that does
+    # have stops.
+    empty_expected = [s for s in out
+                      if not s["stops"] and s["expects_calls"] and not s["role"]]
+    empty_ok = [s for s in out
+                if not s["stops"] and (not s["expects_calls"] or s["role"])]
     return {
         "truncated": len(services) >= max_services,
         "path": path,
@@ -484,8 +519,9 @@ def parse_timetable_definition(path, max_services=5000):
         "verdict": (
             f"{len(out)} services with {named} named stops, read straight from "
             "the timetable definition - no driving, no inference. "
-            f"{len(empty_ok)} carry no calls because they are empty stock or "
-            f"light engine moves; {len(empty_expected)} are unexpectedly empty."
+            f"{len(empty_ok)} carry no calls because they are empty stock, "
+            f"light engine or continuation legs; {len(empty_expected)} are "
+            "unexpectedly empty."
             if named else
             f"{len(out)} services parsed but no stop carries a station name. "
             "Check package.exports: this may not be the RouteTimetableDefinition, "

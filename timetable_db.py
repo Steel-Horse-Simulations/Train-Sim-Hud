@@ -711,3 +711,244 @@ def save_definition_timetable(route_key, source_asset, services):
                 "replaced": len(old)}
     finally:
         conn.close()
+
+
+def init_route_tables():
+    """Routes discovered by scanning the game's pak files.
+
+    A catalogue of what exists, kept apart from journeys and from the
+    extracted timetable itself. Storing it means the route list survives a
+    restart: scanning every pak takes a while, and a page that had to
+    re-scan before it could show anything would be unusable.
+    """
+    conn = _connect()
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS routes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                route_key TEXT NOT NULL UNIQUE,
+                pak_name TEXT NOT NULL,
+                pak_path TEXT NOT NULL,
+                display_name TEXT,
+                timetable_count INTEGER DEFAULT 0,
+                index_assets TEXT,
+                layer_count INTEGER DEFAULT 0,
+                discovered_at TEXT NOT NULL,
+                last_scanned_at TEXT,
+                service_count INTEGER DEFAULT 0,
+                call_count INTEGER DEFAULT 0,
+                station_count INTEGER DEFAULT 0,
+                scan_error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_routes_scanned
+                ON routes(last_scanned_at);
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_discovered_routes(entries):
+    """Records paks that contain timetables.
+
+    Re-discovery UPDATES rather than replaces, so a rescan of the pak folder
+    never wipes the scan results already gathered for a route - those are
+    the expensive part.
+    """
+    init_route_tables()
+    conn = _connect()
+    now = datetime.now().isoformat(timespec="seconds")
+    added = updated = 0
+    try:
+        for e in entries or []:
+            key = e.get("route_key") or e.get("pak_name")
+            if not key:
+                continue
+            row = conn.execute("SELECT id FROM routes WHERE route_key=?",
+                               (key,)).fetchone()
+            payload = (e.get("pak_name"), e.get("pak_path"),
+                       e.get("display_name") or e.get("pak_name"),
+                       e.get("timetable_count") or 0,
+                       json.dumps(e.get("index_assets") or []),
+                       e.get("layer_count") or 0)
+            if row:
+                conn.execute(
+                    "UPDATE routes SET pak_name=?, pak_path=?, display_name=?, "
+                    "timetable_count=?, index_assets=?, layer_count=? WHERE id=?",
+                    payload + (row[0],))
+                updated += 1
+            else:
+                conn.execute(
+                    "INSERT INTO routes (pak_name, pak_path, display_name, "
+                    "timetable_count, index_assets, layer_count, route_key, "
+                    "discovered_at) VALUES (?,?,?,?,?,?,?,?)",
+                    payload + (key, now))
+                added += 1
+        conn.commit()
+        return {"added": added, "updated": updated}
+    finally:
+        conn.close()
+
+
+def list_routes():
+    init_route_tables()
+    conn = _connect()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM routes ORDER BY display_name")]
+        for r in rows:
+            try:
+                r["index_assets"] = json.loads(r.get("index_assets") or "[]")
+            except Exception:
+                r["index_assets"] = []
+        return {"routes": rows, "route_count": len(rows),
+                "scanned": sum(1 for r in rows if r.get("last_scanned_at")),
+                "unscanned": sum(1 for r in rows if not r.get("last_scanned_at"))}
+    finally:
+        conn.close()
+
+
+def record_route_scan(route_key, service_count=0, call_count=0,
+                      station_count=0, error=None):
+    init_route_tables()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE routes SET last_scanned_at=?, service_count=?, call_count=?, "
+            "station_count=?, scan_error=? WHERE route_key=?",
+            (datetime.now().isoformat(timespec="seconds"), service_count,
+             call_count, station_count, error, route_key))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def init_route_tables():
+    """Routes discovered by scanning pak files.
+
+    A ROUTE here is one pak containing timetable assets. Kept separate from
+    the extracted timetable itself so a rescan can refresh what exists
+    without touching the services already parsed out of it - the scan is
+    cheap and gets re-run often, the extraction is not.
+    """
+    conn = _connect()
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS scanned_routes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                route_key TEXT NOT NULL UNIQUE,
+                pak_name TEXT NOT NULL,
+                pak_path TEXT,
+                display_name TEXT,
+                timetable_count INTEGER DEFAULT 0,
+                datatrack_count INTEGER DEFAULT 0,
+                assets TEXT,
+                first_seen TEXT NOT NULL,
+                last_scanned TEXT,
+                last_extracted TEXT,
+                services_extracted INTEGER DEFAULT 0,
+                calls_extracted INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'found'
+            );
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _route_key_from_pak(pak_name):
+    """A stable key from a pak filename.
+
+    TSW names them like `TS2Prototype-WindowsNoEditor-FifeCircle.pak`, so the
+    trailing segment is the route. Stripping the platform prefix keeps the
+    key readable and stable across TSW versions, which rename the prefix.
+    """
+    base = os.path.splitext(os.path.basename(pak_name or ""))[0]
+    for prefix in ("TS2Prototype-WindowsNoEditor-", "TS2Prototype-Windows-",
+                   "TS2Prototype-"):
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+            break
+    return base or "unknown"
+
+
+def save_scanned_routes(results):
+    """Records routes found by a pak scan.
+
+    Only ever ADDS or refreshes the scan fields. Extraction results
+    (last_extracted, services_extracted) are left alone, so rescanning after
+    installing new DLC cannot wipe the record of what has already been
+    parsed.
+    """
+    init_route_tables()
+    conn = _connect()
+    now = datetime.now().isoformat(timespec="seconds")
+    added = updated = 0
+    try:
+        for r in results or []:
+            if r.get("error"):
+                continue
+            pak_name = r.get("pak_name") or ""
+            key = _route_key_from_pak(pak_name)
+            assets = (r.get("timetables") or []) + (r.get("timetables_by_name") or [])
+            counts = r.get("counts") or {}
+            row = conn.execute(
+                "SELECT id FROM scanned_routes WHERE route_key=?", (key,)).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE scanned_routes SET pak_name=?, pak_path=?, "
+                    "timetable_count=?, datatrack_count=?, assets=?, last_scanned=? "
+                    "WHERE route_key=?",
+                    (pak_name, r.get("pak_path"), len(assets),
+                     counts.get("datatrack", 0), json.dumps(assets), now, key))
+                updated += 1
+            else:
+                conn.execute(
+                    "INSERT INTO scanned_routes (route_key, pak_name, pak_path, "
+                    "display_name, timetable_count, datatrack_count, assets, "
+                    "first_seen, last_scanned, status) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,'found')",
+                    (key, pak_name, r.get("pak_path"), key.replace("_", " "),
+                     len(assets), counts.get("datatrack", 0),
+                     json.dumps(assets), now, now))
+                added += 1
+        conn.commit()
+        return {"added": added, "updated": updated}
+    finally:
+        conn.close()
+
+
+def list_scanned_routes():
+    init_route_tables()
+    conn = _connect()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM scanned_routes ORDER BY "
+            "CASE WHEN last_extracted IS NULL THEN 0 ELSE 1 END, route_key")]
+        for r in rows:
+            try:
+                r["assets"] = json.loads(r.get("assets") or "[]")
+            except Exception:
+                r["assets"] = []
+            r["is_new"] = not r.get("last_extracted")
+        return {
+            "routes": rows,
+            "route_count": len(rows),
+            "new_count": sum(1 for r in rows if r["is_new"]),
+        }
+    finally:
+        conn.close()
+
+
+def mark_route_extracted(route_key, services, calls):
+    init_route_tables()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE scanned_routes SET last_extracted=?, services_extracted=?, "
+            "calls_extracted=?, status='extracted' WHERE route_key=?",
+            (datetime.now().isoformat(timespec="seconds"), services, calls,
+             route_key))
+        conn.commit()
+    finally:
+        conn.close()

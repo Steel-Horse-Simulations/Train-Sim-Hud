@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 7.61.0
+## Current version: 8.0.0
 
 ## Shipped features (working, tested against real data)
 
@@ -1499,3 +1499,47 @@ APP was correct - each module sets `DB_PATH` absolutely from its own
 while the app read the real one. The harness now redirects `DB_PATH` after
 import. Worth remembering: a test that changes directory does not redirect
 these modules.
+
+
+## SHIPPED in v8.0.0 - the Routes page
+
+A new page, `pages/routes.html`, added to the nav. It answers "which of my
+installed routes have timetables, and which have I read?"
+
+**Find routes with timetables** scans every pak and lists what it finds.
+**Scan timetable** on a route reads it. **Scan all new routes** does every
+route not yet read.
+
+### Scan and extract are deliberately separate
+
+A scan is cheap and gets re-run whenever DLC is installed; an extraction is
+not. `save_scanned_routes()` therefore only ever adds or refreshes the SCAN
+fields - `last_extracted` and `services_extracted` are left untouched - so
+rescanning after installing new content cannot wipe the record of what has
+already been parsed. The regression test asserts exactly that.
+
+### Details worth keeping
+
+  - `_route_key_from_pak()` strips the `TS2Prototype-WindowsNoEditor-`
+    prefix, because TSW renames that prefix between versions and the key has
+    to stay stable across them. `FifeCircle`, not the full filename.
+  - The extractor prefers a NON-DataTrack asset. A DataTrack layer holds only
+    the running profile with no station names; the index asset holds the
+    schedule. Picking the wrong one would silently produce nameless stops.
+  - `/api/routes/scan` delegates to the existing `/api/paks/scan_all` rather
+    than repeating its folder auto-detection. That logic is careful for a
+    reason - separately-sold timetables ship as their own pak and can land in
+    `Content/Paks` rather than `Content/DLC` - and a second copy would drift.
+  - After unpacking, the asset is located by NAME rather than by assuming
+    where it landed: some repak builds ignore `--include` and unpack
+    everything.
+  - Paks that failed to open are skipped rather than stored as routes.
+  - Failures are reported next to successes in the page, never swallowed. A
+    route whose timetable could not be read is exactly what someone needs to
+    see, and a silent skip looks like success.
+
+### Storage
+
+`scanned_routes` in `timetables.db`: route key, pak, asset list, timetable
+counts, and the extraction record. Kept apart from `extracted_services` so
+the two lifecycles do not interfere.

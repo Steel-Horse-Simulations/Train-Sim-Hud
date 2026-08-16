@@ -61,5 +61,12 @@
     "url": "/pages/known_trains.html",
     "dev_only": false,
     "order": 10
+  },
+  {
+    "id": "routes",
+    "name": "Routes",
+    "url": "/pages/routes.html",
+    "dev_only": false,
+    "order": 11
   }
 ]

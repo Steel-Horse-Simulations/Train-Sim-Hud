@@ -45,6 +45,44 @@ Three faults the real run exposed, all fixed:
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
 
+## What changed in v8.0.0 - the Routes page
+
+New page pages/routes.html (in the nav). Find routes with timetables -> lists
+every pak containing one, as pills like Known Trains. Per-route "Scan
+timetable", plus "Scan all new routes".
+
+SCAN and EXTRACT are separate on purpose: a scan is cheap and re-run on every
+DLC install, an extraction is not. save_scanned_routes() only refreshes SCAN
+fields, never last_extracted/services_extracted - so a rescan cannot wipe the
+record of what was already read. Regression test asserts it.
+
+Points to remember:
+  - route_key strips the TS2Prototype-WindowsNoEditor- prefix (TSW renames it
+    between versions; the key must stay stable)
+  - extraction prefers a NON-DataTrack asset - DataTrack has the running
+    profile with no station names, the index asset has the schedule
+  - /api/routes/scan DELEGATES to /api/paks/scan_all rather than duplicating
+    its folder detection (paks land in both Content/DLC and Content/Paks)
+  - after unpack the asset is found by NAME - some repak builds ignore
+    --include and unpack everything
+  - failed paks are skipped, not stored; failures shown in the page
+
+New table: scanned_routes in timetables.db.
+
+## What changed in v7.62.1 - midnight confirmed, last 145 explained
+
+Real re-run: P2K85 now 23:03 -> 00:09:30 with Cameron Bridge 00:04:30 and
+Leven 00:09:30. named_stops 2,663 -> 3,043; 10 past-midnight stops recovered.
+
+The 145 "unexpectedly empty" were CONTINUATION LEGS. Names: 1L86_B,
+1L30_1_B, 2P02-B, 2G16B, 1L96_C - the suffix takes several forms and only _B
+and _End were recognised (44 caught, 101 missed). 122 of the 145 share a
+headcode with a service that HAS stops, which is what a continuation is.
+_classify_role() now handles _End, _B, _1_B, -B and a bare trailing capital
+(the last only when the rest of the name IS the headcode).
+
+Final state: 820 services, 3,043 named stops, arr==dep on 10 of 3,044.
+
 ## What changed in v7.62.0 - both open questions resolved
 
 **Untimed tails = a MIDNIGHT bug in my code.** Only 3 of 585 services, and

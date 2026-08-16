@@ -2020,3 +2020,47 @@ repositioning legs at the end of a working.
 Instruction-to-stop ratio across all services with calls: **median exactly
 2.00**, range 1.5 to 5.0. A pure GoTo+LoadUnload timetable is 2.0, so the
 pairing is consuming instructions correctly rather than skipping them.
+
+## Midnight fix confirmed, and the last 145 explained (v7.62.1)
+
+The re-run confirms the midnight fix on the real file:
+
+```
+P2K85  23:03:00 -> 00:09:30, 13 stops
+   23:49:30 / 23:50:00  Kirkcaldy        next_day=False
+   00:04:30 / 00:05:00  Cameron Bridge   next_day=True
+   00:09:30 / 00:10:00  Leven            next_day=True
+```
+
+`named_stops` rose from 2,663 to **3,043**, and 10 stops past midnight were
+recovered rather than discarded.
+
+### The 145 "unexpectedly empty" were continuation legs
+
+Their names give it away: `1L86_B`, `1L30_1_B`, `2P02-B`, `2G16B`, `1L96_C`.
+TSW marks a continuation with a suffix, but the suffix takes several forms
+and the first version only recognised `_B` and `_End` - which caught 44 and
+missed 101.
+
+**122 of the 145 share a headcode with a service that DOES have stops**,
+which is what a continuation leg is: the tail of a working whose passenger
+calls belong to the leg before it.
+
+`_classify_role()` now recognises `_End`, `_B`, `_1_B`, `-B`, and a bare
+trailing capital - the last only when the rest of the name IS the headcode,
+so a genuine service name ending in a capital is not swept up. Continuation
+legs with no calls are counted as expected, alongside empty stock and light
+engine moves.
+
+### Where the timetable now stands
+
+```
+820 services · 3,043 named stops · 3,045 calls saved
+arrival == departure: 10 of 3,044 timed stops
+service classes: 384 express, 245 stopping, 91 empty stock, 13 passenger
+```
+
+Every remaining oddity has an explanation grounded in the data rather than a
+guess: empty stock has nowhere to call, continuation legs inherit their calls
+from the leg before, and the 10 stops with equal times are a rounding
+artefact rather than a structural fault.
