@@ -43,9 +43,66 @@ TICKS_PER_DAY = TICKS_PER_SECOND * 86_400
 LOCATION_SEPARATORS = (" Platform ", " Siding ", " Track ", " Line ")
 
 
-def _hms(ticks):
-    if not ticks or ticks <= 0 or ticks >= TICKS_PER_DAY:
+# British headcode classes. The first character says what a working IS, and
+# it explains output that would otherwise look like a parse failure: on the
+# real Fife Circle file 90 of 91 class-5 services have NO passenger calls,
+# because class 5 is empty coaching stock - a positioning move with nowhere
+# to call. Reporting that as "0 stops" without saying why invites someone to
+# go looking for a bug that is not there.
+HEADCODE_CLASSES = {
+    "1": "express passenger",
+    "2": "stopping passenger",
+    "3": "parcels or empty",
+    "4": "freight",
+    "5": "empty coaching stock",
+    "6": "freight",
+    "7": "freight",
+    "8": "freight",
+    "9": "passenger",
+    "0": "light engine",
+}
+
+
+def classify_headcode(headcode):
+    """('class digit', 'what it is') for a headcode, or (None, None)."""
+    if not headcode or not headcode[0].isdigit():
+        return None, None
+    return headcode[0], HEADCODE_CLASSES.get(headcode[0])
+
+
+def expects_calls(headcode):
+    """Whether a working of this class should be calling anywhere.
+
+    Empty stock and light engine moves legitimately have none. This is why
+    the parser reports a service class rather than treating an empty stop
+    list as a failure.
+    """
+    c, _ = classify_headcode(headcode)
+    return c not in ("0", "5")
+
+
+def _hms(ticks, allow_next_day=True):
+    """A Timespan as a clock time.
+
+    A service that runs past midnight keeps counting: a call at ten past
+    midnight on a train that left at 23:50 is stored as 24:10, not 00:10,
+    because a Timespan is an elapsed duration from the start of the service
+    day rather than a wall clock.
+
+    Rejecting anything at or beyond 24 hours - which the first version did -
+    silently dropped exactly those calls. On the real Fife Circle file it
+    cost the last two stops of P2K85 and six of P2K86, both terminating at
+    Leven after 23:50. The times were there; they were being thrown away.
+
+    Values past midnight are wrapped for display and flagged by the caller,
+    so 24:10 shows as 00:10 while the ORDER stays correct.
+    """
+    if not ticks or ticks <= 0:
         return None
+    if ticks >= TICKS_PER_DAY:
+        if not allow_next_day or ticks >= TICKS_PER_DAY * 2:
+            return None
+        ticks -= TICKS_PER_DAY
     s = int(ticks // TICKS_PER_SECOND)
     return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
 
@@ -218,7 +275,15 @@ def _build_stops(instructions):
             # STARTS at a platform - a real call, with a departure and no
             # arrival.
             if itype == "LoadUnload":
-                stops.append(_make_stop(ins, ins, starts_here=True))
+                # A leading LoadUnload is the service STARTING at a platform,
+                # and it carries no destination of its own - the location
+                # comes from the GoTo that follows. Using the LoadUnload for
+                # both produced 382 nameless stops on the real file, one at
+                # the head of most services.
+                nxt2 = instructions[i + 1] if i + 1 < n else None
+                place_from = nxt2 if (nxt2 and not (ins.get("station") or
+                                                    ins.get("display_name"))) else ins
+                stops.append(_make_stop(place_from, ins, starts_here=True))
             i += 1
             continue
 
@@ -249,12 +314,19 @@ def _make_stop(goto_ins, time_ins, starts_here=False):
 
     # A dwell of zero with both times present is what an unpaired read looks
     # like; report the dwell so it can be judged rather than hidden.
+    # A dwell needs BOTH times. Reporting one from waiting_seconds alone
+    # produced a stop showing "no arrival, no departure, dwell 30s", which
+    # is self-contradictory and would read on a HUD as a timed call.
     dwell = None
     if arrival and departure and departure >= arrival:
         dwell = int((departure - arrival) // TICKS_PER_SECOND)
 
     return {
         "station": place,
+        # True when this call falls after midnight. The HUD needs to know:
+        # 00:10 sorts before 23:50 as a string, so a stop list ordered by
+        # displayed time would put the end of the journey at the top.
+        "next_day": bool(arrival >= TICKS_PER_DAY or departure >= TICKS_PER_DAY),
         "structure_type": stype or None,
         "platform": snum or None,
         "raw_location": label,
@@ -375,10 +447,14 @@ def parse_timetable_definition(path, max_services=5000):
         elif code and nm_ == "P" + code:
             role = "player_leg"
 
+        hc_class, hc_meaning = classify_headcode(code)
         out.append({
             "name": svc["name"],
             "role": role,
             "headcode": code,
+            "headcode_class": hc_class,
+            "service_class": hc_meaning,
+            "expects_calls": expects_calls(code),
             "operator": svc["operator"],
             "formation": svc["formation"],
             "is_player_drivable": svc["is_player_drivable"],
@@ -390,6 +466,11 @@ def parse_timetable_definition(path, max_services=5000):
         })
 
     named = sum(1 for s in out for st in s["stops"] if st["station"])
+    # An empty stop list is only a concern for a working that SHOULD call
+    # somewhere. Counting them apart keeps a real fault visible instead of
+    # being buried under legitimate empty-stock moves.
+    empty_expected = [s for s in out if not s["stops"] and s["expects_calls"]]
+    empty_ok = [s for s in out if not s["stops"] and not s["expects_calls"]]
     return {
         "truncated": len(services) >= max_services,
         "path": path,
@@ -397,9 +478,14 @@ def parse_timetable_definition(path, max_services=5000):
         "service_count": len(out),
         "services": out,
         "named_stops": named,
+        "services_without_calls": len(empty_expected) + len(empty_ok),
+        "empty_stock_or_light_engine": len(empty_ok),
+        "unexpectedly_empty": len(empty_expected),
         "verdict": (
             f"{len(out)} services with {named} named stops, read straight from "
-            "the timetable definition - no driving, no inference."
+            "the timetable definition - no driving, no inference. "
+            f"{len(empty_ok)} carry no calls because they are empty stock or "
+            f"light engine moves; {len(empty_expected)} are unexpectedly empty."
             if named else
             f"{len(out)} services parsed but no stop carries a station name. "
             "Check package.exports: this may not be the RouteTimetableDefinition, "

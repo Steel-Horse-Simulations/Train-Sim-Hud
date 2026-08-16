@@ -78,6 +78,21 @@ def route_location(nm, station, guid_byte=7, offset=1234.5):
                struct_type="RouteLocationName")
 
 
+def starts_here(nm, station, departure, guid_byte=7, waiting=120):
+    """A service beginning at a platform: a LoadUnload with NO destination,
+    followed by the GoTo that names where it is.
+
+    The real file stores it this way, and reading the location from the
+    LoadUnload gives a nameless stop at the head of most services - 382 of
+    them on the Fife Circle file.
+    """
+    out = bytearray()
+    out += instruction(nm, "", departure=departure, itype="LoadUnload",
+                       guid_byte=0, waiting=waiting, no_destination=True)
+    out += instruction(nm, station, itype="GoTo", guid_byte=guid_byte)
+    return bytes(out)
+
+
 def call_pair(nm, station, arrival=None, departure=None, simulated=False,
               guid_byte=7, waiting=60):
     """A station CALL as the real file stores it: a GoTo naming the
@@ -103,12 +118,14 @@ def pass_through(nm, station, guid_byte=7):
 
 
 def instruction(nm, station, arrival=None, departure=None, stopping=True,
-                itype="LoadUnload", simulated=False, guid_byte=7, waiting=None):
+                itype="LoadUnload", simulated=False, guid_byte=7, waiting=None,
+                no_destination=False):
     body = bytearray()
     body += tag(nm, "InstructionType", "EnumProperty",
                 nm.fname(f"ERouteTimetableServiceInstructionType::{itype}"),
                 inner_type="ERouteTimetableServiceInstructionType")
-    body += route_location(nm, station, guid_byte=guid_byte)
+    if not no_destination:
+        body += route_location(nm, station, guid_byte=guid_byte)
     if arrival is not None:
         body += timespan(nm, "SimulatedArrivalTime" if simulated else "ArrivalTime",
                          arrival)
@@ -130,11 +147,14 @@ def service(nm, name, headcode, stops, simulated=False):
     body += tag(nm, "bIsPlayerDrivable", "BoolProperty", b"", bool_val=True)
 
     instrs = bytearray()
-    n_instr = sum(2 if st[3] else 1 for st in stops)
+    n_instr = sum(2 if st[3] else 1 for st in stops)   # start pair is also 2
     instrs += struct.pack("<i", n_instr)             # element count
     instrs += tag(nm, "Instructions", "StructProperty", b"",
                   struct_type="RouteTimetableServiceInstruction")
     for i, (st, arr, dep, stopping) in enumerate(stops):
+        if i == 0 and arr is None and dep is not None and stopping:
+            instrs += starts_here(nm, st, dep, guid_byte=(i % 200) + 1)
+            continue
         if stopping:
             instrs += call_pair(nm, st, arr, dep, simulated=simulated,
                                 guid_byte=(i % 200) + 1)
@@ -191,6 +211,19 @@ def build(out="/tmp/synth_ttdef"):
         t += 600
         stops.append((st, None, t, True))
     specs.append(("6S42", stops, False))
+
+    # A service crossing MIDNIGHT. Timespans keep counting past 24h, so a
+    # call at 00:10 is stored as 24:10 - and rejecting anything past a day
+    # silently dropped the last stops of the real late-night Leven services.
+    t = 23 * 3600 + 40 * 60
+    stops = []
+    for i, st in enumerate(route[:4]):
+        arr = None if i == 0 else t
+        t += 60
+        dep = None if i == 3 else t
+        t += 900                       # pushes the last calls past 24:00
+        stops.append((st, arr, dep, True))
+    specs.append(("2N99", stops, False))
 
     # An AI service carrying only simulated times.
     t = 11 * 3600

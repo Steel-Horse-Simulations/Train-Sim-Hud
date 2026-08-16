@@ -88,12 +88,19 @@ def run():
     else:
         print("  AI service read from simulated times - correct")
 
-    # times must ascend within a service
+    # Times must ascend within a service - but compared as ELAPSED time, not
+    # as displayed strings. A call at 00:12 after one at 23:56 is correct and
+    # sorts wrongly as text, which is exactly why the stop carries next_day.
     for svc in r["services"]:
-        seq = [s["arrival"] or s["departure"] for s in svc["stops"]]
-        seq = [x for x in seq if x]
+        seq = []
+        for st in svc["stops"]:
+            t = st["arrival"] or st["departure"]
+            if not t:
+                continue
+            h, m, sec = (int(x) for x in t.split(":"))
+            seq.append(h * 3600 + m * 60 + sec + (86400 if st["next_day"] else 0))
         if seq != sorted(seq):
-            print(f"  FAIL: {svc['headcode']} times not ascending"); ok = False
+            print(f"  FAIL: {svc['name']} times not ascending"); ok = False
 
     # headcodes must survive real-world name shapes: an underscore is a
     # word character, so a \\b-anchored regex matched none of 1L86_B, P1L86
@@ -144,6 +151,51 @@ def run():
     print(f"  roles: P1L86={roles.get('P1L86')}, 1L86_B={roles.get('1L86_B')}")
     if roles.get("P1L86") != "player_leg" or roles.get("1L86_B") != "ai_continuation":
         print("  FAIL: player/AI legs not labelled"); ok = False
+
+    # A service STARTING at a platform stores a LoadUnload with no
+    # destination followed by the GoTo that names it. Reading the location
+    # from the LoadUnload gave 382 nameless stops on the real file.
+    nameless = [st for svc in r["services"] for st in svc["stops"]
+                if not st["station"]]
+    print(f"  stops with no station name: {len(nameless)}")
+    if nameless:
+        print("  FAIL: the starting stop lost its location"); ok = False
+
+    # A dwell needs BOTH times. "no arrival, no departure, dwell 30s" is
+    # self-contradictory and would read on a HUD as a timed call.
+    contradictory = [st for svc in r["services"] for st in svc["stops"]
+                     if st["dwell_seconds"] is not None
+                     and not (st["arrival"] and st["departure"])]
+    if contradictory:
+        print(f"  FAIL: {len(contradictory)} stops report a dwell without both times")
+        ok = False
+    else:
+        print("  no dwell reported without both times")
+
+    # MIDNIGHT. A Timespan keeps counting past 24h, so a call at 00:12 is
+    # stored as 24:12. Rejecting anything past a day dropped the last stops
+    # of the real late-night Leven services - the times were there.
+    mid = by_code.get("2N99")
+    if not mid:
+        print("  FAIL: midnight service missing"); ok = False
+    else:
+        after = [st for st in mid["stops"] if st["next_day"]]
+        print(f"  midnight service: {len(after)} stops after midnight, "
+              f"last {mid['stops'][-1]['arrival']}")
+        if not after:
+            print("  FAIL: stops past midnight were dropped"); ok = False
+        if any(st["arrival"] is None and st["departure"] is None
+               for st in mid["stops"]):
+            print("  FAIL: a midnight stop lost both times"); ok = False
+
+    # Headcode class explains a legitimately empty stop list - class 5 is
+    # empty coaching stock, which has nowhere to call. 90 of 91 class-5
+    # services on the real file carry no calls, and that is correct.
+    print(f"  services without calls: {r['services_without_calls']} "
+          f"({r['empty_stock_or_light_engine']} empty-stock/light-engine, "
+          f"{r['unexpectedly_empty']} unexplained)")
+    if td.expects_calls("5G35") or not td.expects_calls("2K05"):
+        print("  FAIL: headcode classification wrong"); ok = False
 
     print("  " + ("PASS" if ok else "FAIL"))
     return ok

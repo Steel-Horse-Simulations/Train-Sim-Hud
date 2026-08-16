@@ -45,6 +45,41 @@ Three faults the real run exposed, all fixed:
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
 
+## What changed in v7.62.0 - both open questions resolved
+
+**Untimed tails = a MIDNIGHT bug in my code.** Only 3 of 585 services, and
+they were the last two of the day terminating at Leven. A Timespan keeps
+counting past midnight - 00:10 is stored as 24:10 - and _hms() rejected
+anything >= 24h, discarding those calls. Now wrapped for display with a
+next_day flag. The flag matters: "00:10" sorts before "23:50" as text, so a
+list ordered by displayed time would invert the journey. The TEST also
+compared strings, which is why it flagged a correct midnight service.
+
+**235 zero-stop services are CORRECT.** By headcode class: class 5 (EMPTY
+COACHING STOCK) is 90 empty of 91. A positioning move has nowhere to call.
+Parser now reports headcode_class / service_class / expects_calls and splits
+the count into empty_stock_or_light_engine vs unexpectedly_empty.
+
+Confirming check: instruction-to-stop ratio median EXACTLY 2.00, which is
+what a pure GoTo+LoadUnload timetable gives - the pairing consumes
+instructions correctly rather than skipping them.
+
+## What changed in v7.61.1 - pairing confirmed on real data, two fixes
+
+Real re-run: arrival == departure on 10 of 3,035 stops (was 80%), 2,630
+dwells with a median of 30s. P2K85 reads as a proper timetable - Haymarket
+23:06:30/23:07:00, Edinburgh Gateway, Dalmeny, ... Kirkcaldy, all p2, 30s
+dwells.
+
+Fixed: (a) 382 NAMELESS stops - a service starting at a platform stores a
+LoadUnload with no destination followed by the GoTo that names it; the
+location now comes from that GoTo. (b) dwell reported without times - a
+dwell now requires BOTH arrival and departure.
+
+STILL OPEN: 235 services with 0 stops (mostly _B AI continuations with 1-2
+instructions - likely repositioning legs, but that is inference not
+measurement), and the final stops of a service carrying no times.
+
 ## What changed in v7.61.0 - the GoTo/LoadUnload pairing rule
 
 First real run: 820 services, 3,263 named stops, real stations in correct

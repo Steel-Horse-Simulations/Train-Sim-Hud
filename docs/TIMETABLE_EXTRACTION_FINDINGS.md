@@ -1924,3 +1924,99 @@ labelled.
 Re-run **Read timetable (named stops)**. Expect fewer, better stops: pairs
 collapsed into real calls with genuine dwells, pass-through waypoints gone.
 The check is that arrival no longer equals departure across the board.
+
+## The pairing rule works - real output (v7.61.1)
+
+Re-run on the real file, with GoTo/LoadUnload pairing:
+
+```
+arrival == departure:  10 of 3,035 timed stops (0%)   <- was 80%
+dwells: 2,630, median 30s
+roles: 655 plain, 123 player_leg, 42 ai_continuation
+```
+
+`P2K85` reads as a real timetable:
+
+```
+   --    / 23:03:00  (start)
+23:06:30 / 23:07:00  Haymarket           p2  dwell 30
+23:13:30 / 23:14:00  Edinburgh Gateway   p2  dwell 30
+23:19:30 / 23:20:00  Dalmeny             p2  dwell 30
+...
+23:49:30 / 23:50:00  Kirkcaldy           p2  dwell 30
+```
+
+Two faults remained and are now fixed:
+
+**382 nameless stops**, one at the head of most services. A service starting
+at a platform stores a `LoadUnload` with NO destination, followed by the
+`GoTo` that names it. The location was being read from the LoadUnload, which
+has none. It now comes from the following GoTo.
+
+**A dwell without times.** The last stops of a service showed "no arrival, no
+departure, dwell 30s" - self-contradictory, and on a HUD it would read as a
+timed call. A dwell is now reported only when both times are present.
+
+The fixture gained the starts-at-a-platform pattern so both are covered by
+the test.
+
+### Still open
+
+  - 235 services with no stops. Most are `_B` AI continuations with 1-2
+    instructions - short repositioning legs rather than passenger workings -
+    but that is an inference, not a measurement, and worth confirming.
+  - The last stops of a service carry no times at all. Whether TSW simply
+    does not schedule a terminating AI leg, or the times live on an
+    instruction the walker stops before, is not yet established.
+
+## Both open questions resolved (v7.62.0)
+
+### The untimed tails were a MIDNIGHT bug in my code
+
+Only **3 of 585** services had them, not the widespread fault it looked like -
+and the three tell the story: `P2K85` and `P2K86` are the last two services of
+the day, both terminating at Leven, both losing their times after about 23:50.
+
+A `Timespan` keeps counting past midnight. A call at ten past midnight on a
+train that left at 23:50 is stored as **24:10**, not 00:10, because the value
+is elapsed time from the start of the service day rather than a wall clock.
+`_hms()` rejected anything at or beyond 24 hours, so those calls were
+silently discarded. The times were there all along.
+
+Fixed: values past a day are wrapped for display and the stop carries
+`next_day`. The flag matters - "00:10" sorts before "23:50" as a string, so a
+stop list ordered by displayed time would put the end of the journey at the
+top. The test now compares ELAPSED time, not text; comparing strings was what
+made it report a correct midnight service as out of order.
+
+### The 235 services with no stops are CORRECT
+
+Broken down by headcode class:
+
+```
+class 1 (express passenger)     80 empty / 304 with calls
+class 2 (stopping passenger)    64 empty / 181 with calls
+class 5 (EMPTY COACHING STOCK)  90 empty /   1 with calls
+class 9 (passenger)              0 empty /  13 with calls
+```
+
+**90 of 91 class-5 services carry no calls**, which is exactly right: class 5
+is empty coaching stock - a positioning move with nowhere to call. Of the 235,
+106 have a headcode that appears nowhere else with stops, and every sampled
+one is a 5xxx.
+
+The parser now reports `headcode_class`, `service_class` and `expects_calls`,
+and splits the count into `empty_stock_or_light_engine` versus
+`unexpectedly_empty`. An empty stop list is only a concern for a working that
+should be calling somewhere; burying the two together invites a hunt for a
+bug that is not there.
+
+The remaining class-1 and class-2 empties are worth a look eventually, though
+many are `_B` AI continuations with one or two instructions - short
+repositioning legs at the end of a working.
+
+### A check that confirmed the pairing
+
+Instruction-to-stop ratio across all services with calls: **median exactly
+2.00**, range 1.5 to 5.0. A pure GoTo+LoadUnload timetable is 2.0, so the
+pairing is consuming instructions correctly rather than skipping them.
