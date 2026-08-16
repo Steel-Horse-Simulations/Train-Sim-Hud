@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.0.1**
+**App version at end of session: 8.0.2**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -44,6 +44,26 @@ Three faults the real run exposed, all fixed:
 
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
+
+## What changed in v8.0.2 - RivieraLine: pick the RIGHT timetable asset
+
+`no_services_parsed - it may be a DataTrack layer rather than the timetable
+index`. It was not a DataTrack; the extractor made ONE guess at which asset to
+read and picked wrong.
+
+Two causes:
+  - `save_scanned_routes` merged `timetables` (found by FOLDER - the real
+    index) with `timetables_by_name` (found only by an `_TT` suffix - a weak
+    match), so a ServiceMode or oddly-named asset could sort ahead of the
+    route's actual timetable. They are now stored separately.
+  - the extractor took the first non-DataTrack asset and gave up if it
+    yielded nothing.
+
+Now `_timetable_candidates()` RANKS them - asset directly in Timetable/ first,
+then other folder matches, then `_TT` name matches, DataTracks last, scenario
+and training timetables excluded entirely - and extraction TRIES each in turn
+until one produces named stops. A route only fails once every candidate has
+been tried, and the error lists what was tried and why each failed.
 
 ## What changed in v8.0.1 - two bugs the Routes page exposed
 

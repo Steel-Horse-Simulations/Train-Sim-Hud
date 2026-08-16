@@ -890,7 +890,14 @@ def save_scanned_routes(results):
                 continue
             pak_name = r.get("pak_name") or ""
             key = _route_key_from_pak(pak_name)
-            assets = (r.get("timetables") or []) + (r.get("timetables_by_name") or [])
+            # Keep the two kinds APART. `timetables` are assets sitting in a
+            # Timetable/ or ServiceMode/ folder - the real index. Those found
+            # only by an `_TT` name suffix are a weaker match, and mixing
+            # them meant a ServiceMode or scenario asset could be picked
+            # ahead of the route's actual timetable. RivieraLine failed that
+            # way: the chosen asset parsed to zero services.
+            assets = list(r.get("timetables") or [])
+            fallback = list(r.get("timetables_by_name") or [])
             counts = r.get("counts") or {}
             row = conn.execute(
                 "SELECT id FROM scanned_routes WHERE route_key=?", (key,)).fetchone()
@@ -909,8 +916,9 @@ def save_scanned_routes(results):
                     "first_seen, last_scanned, status) "
                     "VALUES (?,?,?,?,?,?,?,?,?,'found')",
                     (key, pak_name, r.get("pak_path"), key.replace("_", " "),
-                     len(assets), counts.get("datatrack", 0),
-                     json.dumps(assets), now, now))
+                     len(assets) + len(fallback), counts.get("datatrack", 0),
+                     json.dumps({"primary": assets, "fallback": fallback}),
+                     now, now))
                 added += 1
         conn.commit()
         return {"added": added, "updated": updated}
@@ -927,9 +935,17 @@ def list_scanned_routes():
             "CASE WHEN last_extracted IS NULL THEN 0 ELSE 1 END, route_key")]
         for r in rows:
             try:
-                r["assets"] = json.loads(r.get("assets") or "[]")
+                raw = json.loads(r.get("assets") or "[]")
             except Exception:
-                r["assets"] = []
+                raw = []
+            # Older rows stored a flat list; newer ones separate primary from
+            # fallback. Read both so an existing database keeps working.
+            if isinstance(raw, dict):
+                r["assets"] = raw.get("primary") or []
+                r["fallback_assets"] = raw.get("fallback") or []
+            else:
+                r["assets"] = raw
+                r["fallback_assets"] = []
             r["is_new"] = not r.get("last_extracted")
         return {
             "routes": rows,

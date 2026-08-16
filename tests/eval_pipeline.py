@@ -231,6 +231,29 @@ def run_routes(m):
     if after["BRClass158"]["status"] != "failed":
         print("  FAIL: failure not recorded"); ok = False
 
+    # CANDIDATE RANKING. RivieraLine reported "no_services_parsed" because a
+    # single guess picked the wrong asset - a ServiceMode or _TT-named file -
+    # while the real timetable sat beside it. The index asset (directly in a
+    # Timetable/ folder) must rank first, DataTracks last, and scenario or
+    # training timetables must be excluded entirely.
+    route = {
+        "assets": ["P/Content/ServiceMode/SM_RVL.uasset",
+                   "P/Content/Timetable/DataTracks/x_MasterDataTrack.uasset",
+                   "P/Content/Timetable/RVL_Timetable_TT.uasset",
+                   "P/Content/Timetable/Scenarios/S1.uasset"],
+        "fallback_assets": ["P/Content/Other/RVL_TT.uasset"],
+    }
+    order = [os.path.basename(a) for a in m._timetable_candidates(route)]
+    print(f"  candidate order: {order}")
+    if order[0] != "RVL_Timetable_TT.uasset":
+        print("  FAIL: the index asset must be tried first"); ok = False
+    if any("S1" in a for a in order):
+        print("  FAIL: a scenario timetable was offered"); ok = False
+    if order[-1] != "RVL_TT.uasset":
+        print("  FAIL: the weak _TT name match should rank last"); ok = False
+    if "x_MasterDataTrack.uasset" not in order:
+        print("  FAIL: DataTracks should remain as a last resort"); ok = False
+
     c = m.app.test_client()
     if c.get("/pages/routes.html").status_code != 200:
         print("  FAIL: routes page missing"); ok = False

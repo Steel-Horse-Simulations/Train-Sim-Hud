@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.0.1
+## Current version: 8.0.2
 
 ## Shipped features (working, tested against real data)
 
@@ -1582,3 +1582,33 @@ error, then parses the complete pair and asserts it works.
 A general lesson worth keeping: a parser that returns cleanly with nothing is
 more dangerous than one that throws, because every layer above it treats the
 emptiness as an answer.
+
+
+## FIXED in v8.0.2 - RivieraLine picked the wrong timetable asset
+
+A route can carry several timetable-ish assets: the index in `Timetable/`, a
+`ServiceMode/` asset, MasterDataTrack and Layer DataTracks, scenario and
+training timetables, and sometimes a file matched only by an `_TT` name.
+The extractor made ONE guess and reported the whole route as having no
+services when that guess was wrong.
+
+`save_scanned_routes` was also merging the two kinds `find_timetables`
+carefully separates - assets found by FOLDER versus those found only by an
+`_TT` name suffix. Merging threw away the confidence distinction that the
+classifier had gone to trouble to establish.
+
+`_timetable_candidates()` now ranks:
+
+```
+0  directly in a Timetable/ folder   <- the index: Services -> Instructions
+1  elsewhere under /timetable/
+2  other folder matches (ServiceMode)
+3  matched only by an _TT name suffix
+4  DataTracks - running profile, NO station names
+-  scenario/training timetables excluded: single scripted runs
+```
+
+Extraction tries each until one yields named stops. Verified three ways:
+the index wins when present; a dud preferred asset falls through to the next
+candidate; and when everything fails the error names each asset tried and its
+reason.

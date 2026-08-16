@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "8.0.1"
+APP_VERSION = "8.0.2"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1752,6 +1752,43 @@ def routes_scan():
     return jsonify(result)
 
 
+def _timetable_candidates(route):
+    """Timetable assets for a route, best first.
+
+    Ranked rather than guessed at, because one wrong guess reports the whole
+    route as having no services. Preference order:
+
+      1. an asset directly in a Timetable/ folder - the index, which is what
+         carries Services -> Instructions -> Destination.Name;
+      2. anything else found by folder;
+      3. assets matched only by an `_TT` name suffix - a weaker signal;
+      4. a MasterDataTrack, last, since a DataTrack holds the running
+         profile and has no station names at all.
+
+    Scenario and training timetables are excluded: they are single scripted
+    runs, not the route's service pattern.
+    """
+    primary = list(route.get("assets") or [])
+    fallback = list(route.get("fallback_assets") or [])
+
+    def rank(a):
+        low = str(a).replace("\\", "/").lower()
+        if "/scenario" in low or "/training" in low:
+            return 99
+        if "/datatracks/" in low:
+            return 4
+        parts = low.split("/")
+        parent = parts[-2] if len(parts) >= 2 else ""
+        if parent == "timetable":
+            return 0
+        if "/timetable/" in low:
+            return 1
+        return 2
+
+    ranked = sorted(primary, key=rank) + sorted(fallback, key=rank)
+    return [a for a in ranked if rank(a) < 99]
+
+
 @app.route("/api/routes/extract", methods=["POST"])
 def routes_extract():
     """Extracts the timetable for one route, or every route not yet done.
@@ -1774,77 +1811,84 @@ def routes_extract():
 
     done, failed = [], []
     for route in routes[:int(body.get("limit") or 40)]:
-        assets = route.get("assets") or []
-        # The INDEX asset is the one carrying the schedule - a DataTrack
-        # layer holds only the running profile, which has no station names.
-        index_assets = [a for a in assets
-                        if "/datatracks/" not in str(a).lower()]
-        target = index_assets[0] if index_assets else (assets[0] if assets else None)
-        if not target or not route.get("pak_path"):
+        # Try candidates in order of confidence rather than betting on one.
+        # RivieraLine failed because a single guess picked an asset that
+        # parsed to zero services while the real timetable sat beside it.
+        candidates = _timetable_candidates(route)
+        if not candidates or not route.get("pak_path"):
             failed.append({"route_key": route["route_key"],
                            "error": "no_timetable_asset"})
             continue
-        try:
-            out_dir = os.path.join(APP_DIR, "extracted")
-            os.makedirs(out_dir, exist_ok=True)
-            # Unpack by DIRECTORY, not by the single .uasset. A cooked
-            # asset keeps its data in a sibling .uexp, and including only
-            # the .uasset extracts half the file - which parses cleanly and
-            # yields nothing, reading as "this route has no timetable".
-            include = target.rsplit("/", 1)[0] if "/" in target else target
-            unpacked = pak_tools.unpack_pak(route["pak_path"], out_dir,
-                                            include=include)
-            if unpacked.get("error"):
-                failed.append({"route_key": route["route_key"],
-                               "error": unpacked["error"]})
-                continue
-            # repak lays the asset out under its in-pak path, and some
-            # builds ignore --include and unpack everything - so find the
-            # file by name rather than assuming where it landed.
-            want = os.path.basename(target).lower()
-            path = None
-            for root, _dirs, files in os.walk(out_dir):
-                for f in files:
-                    if f.lower() == want:
-                        path = os.path.join(root, f)
+        out_dir = os.path.join(APP_DIR, "extracted")
+        os.makedirs(out_dir, exist_ok=True)
+        attempts = []
+        succeeded = False
+
+        for target in candidates[:4]:
+            try:
+                # Unpack the DIRECTORY, not the single .uasset: a cooked
+                # asset keeps its data in a sibling .uexp, and half a file
+                # parses cleanly to nothing.
+                include = target.rsplit("/", 1)[0] if "/" in target else target
+                unpacked = pak_tools.unpack_pak(route["pak_path"], out_dir,
+                                                include=include)
+                if unpacked.get("error"):
+                    attempts.append({"asset": target, "error": unpacked["error"]})
+                    continue
+
+                want = os.path.basename(target).lower()
+                path = None
+                for root, _dirs, files in os.walk(out_dir):
+                    for f in files:
+                        if f.lower() == want:
+                            path = os.path.join(root, f)
+                            break
+                    if path:
                         break
-                if path:
-                    break
-            if not path:
-                failed.append({"route_key": route["route_key"],
-                               "error": "asset_not_found_after_unpack"})
-                continue
-            parsed = timetable_definition.parse_timetable_definition(path)
-            if "error" in parsed:
-                failed.append({"route_key": route["route_key"],
-                               "error": parsed["error"],
-                               "detail": parsed.get("detail")})
-                continue
-            # An empty parse is a FAILURE, not a route without services.
-            # Marking it read showed "0 services - read" on every route and
-            # hid a broken extraction behind a success.
-            if not parsed.get("named_stops"):
-                failed.append({
+                if not path:
+                    attempts.append({"asset": target,
+                                     "error": "asset_not_found_after_unpack"})
+                    continue
+
+                parsed = timetable_definition.parse_timetable_definition(path)
+                if "error" in parsed:
+                    attempts.append({"asset": target, "error": parsed["error"]})
+                    continue
+                if not parsed.get("named_stops"):
+                    # Not necessarily a failure of the route - just the wrong
+                    # asset. Try the next candidate before giving up.
+                    attempts.append({"asset": target,
+                                     "error": "no_named_stops",
+                                     "services": parsed.get("service_count", 0)})
+                    continue
+
+                saved = timetable_db.save_definition_timetable(
+                    route["route_key"], os.path.basename(path),
+                    parsed.get("services") or [])
+                timetable_db.mark_route_extracted(
+                    route["route_key"], saved["services_saved"],
+                    saved["calls_saved"])
+                done.append({
                     "route_key": route["route_key"],
-                    "error": "no_services_parsed",
-                    "detail": f"{parsed.get('service_count', 0)} services and no "
-                              "named stops came out of this asset - it may be a "
-                              "DataTrack layer rather than the timetable index.",
+                    "asset": os.path.basename(path),
+                    "services": saved["services_saved"],
+                    "calls": saved["calls_saved"],
+                    "named_stops": parsed.get("named_stops"),
+                    "tried": len(attempts) + 1,
                 })
-                continue
-            saved = timetable_db.save_definition_timetable(
-                route["route_key"], os.path.basename(path),
-                parsed.get("services") or [])
-            timetable_db.mark_route_extracted(
-                route["route_key"], saved["services_saved"], saved["calls_saved"])
-            done.append({
+                succeeded = True
+                break
+            except Exception as e:
+                attempts.append({"asset": target, "error": str(e)})
+
+        if not succeeded:
+            failed.append({
                 "route_key": route["route_key"],
-                "services": saved["services_saved"],
-                "calls": saved["calls_saved"],
-                "named_stops": parsed.get("named_stops"),
+                "error": attempts[-1]["error"] if attempts else "no_candidates",
+                "detail": f"tried {len(attempts)} asset(s): "
+                          + "; ".join(f"{os.path.basename(a['asset'])} -> {a['error']}"
+                                      for a in attempts[:4]),
             })
-        except Exception as e:
-            failed.append({"route_key": route["route_key"], "error": str(e)})
 
     for f in failed:
         timetable_db.mark_route_failed(f["route_key"], f.get("error"))
