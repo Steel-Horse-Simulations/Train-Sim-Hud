@@ -447,6 +447,17 @@ def parse_timetable_definition(path, max_services=5000):
     except Exception as e:
         return {"error": "not_a_package", "path": path, "detail": str(e)}
 
+    if getattr(pkg, "uexp_missing", False):
+        return {
+            "error": "uexp_missing",
+            "path": path,
+            "detail": "The .uasset was found but its .uexp is not beside it. "
+                      "A cooked asset keeps all its data in the .uexp, so "
+                      "extract BOTH files - the .uasset alone parses cleanly "
+                      "and yields nothing, which looks like an empty route.",
+            "package": pkg.summary(),
+        }
+
     services = []
     for exp in pkg.exports:
         body = pkg.export_body(exp)

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 7.60.1**
+**App version at end of session: 8.0.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -44,6 +44,27 @@ Three faults the real run exposed, all fixed:
 
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
+
+## What changed in v8.0.1 - two bugs the Routes page exposed
+
+**The version had been stale since 7.61.** Every bump was done by matching the
+PREVIOUS literal string; once that drifted the replace silently did nothing,
+and every later bump missed too. The app reported 7.60.1 while the docs
+claimed 8.0.0. Fixed by regex, and `tests/bump_version.py` now FAILS if the
+edit is a no-op. `eval_pipeline.run_version_declared()` asserts app.py and the
+spec agree - it caught the spec still saying 7.60.1 the moment it was added.
+
+**Every route read as "0 services - read".** A cooked asset keeps its data in
+a sibling `.uexp`, and extraction was unpacking only the `.uasset` (include=
+the exact file). The `.uasset` alone parses CLEANLY and yields nothing - no
+error - so the route was marked read on a total failure.
+
+Three changes, because the bug had three chances to be caught and took none:
+  - unpack the DIRECTORY, not the single file, so the .uexp comes too;
+  - `uasset.Package` flags `uexp_missing` when a cooked header has no payload,
+    and the parser returns `uexp_missing` rather than an empty result;
+  - an empty parse is treated as a FAILURE - the route is marked `failed`
+    with the reason shown, never "read".
 
 ## What changed in v8.0.0 - the Routes page
 

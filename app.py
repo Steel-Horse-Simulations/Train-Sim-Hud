@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "7.60.1"
+APP_VERSION = "8.0.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1787,8 +1787,13 @@ def routes_extract():
         try:
             out_dir = os.path.join(APP_DIR, "extracted")
             os.makedirs(out_dir, exist_ok=True)
+            # Unpack by DIRECTORY, not by the single .uasset. A cooked
+            # asset keeps its data in a sibling .uexp, and including only
+            # the .uasset extracts half the file - which parses cleanly and
+            # yields nothing, reading as "this route has no timetable".
+            include = target.rsplit("/", 1)[0] if "/" in target else target
             unpacked = pak_tools.unpack_pak(route["pak_path"], out_dir,
-                                            include=target)
+                                            include=include)
             if unpacked.get("error"):
                 failed.append({"route_key": route["route_key"],
                                "error": unpacked["error"]})
@@ -1812,7 +1817,20 @@ def routes_extract():
             parsed = timetable_definition.parse_timetable_definition(path)
             if "error" in parsed:
                 failed.append({"route_key": route["route_key"],
-                               "error": parsed["error"]})
+                               "error": parsed["error"],
+                               "detail": parsed.get("detail")})
+                continue
+            # An empty parse is a FAILURE, not a route without services.
+            # Marking it read showed "0 services - read" on every route and
+            # hid a broken extraction behind a success.
+            if not parsed.get("named_stops"):
+                failed.append({
+                    "route_key": route["route_key"],
+                    "error": "no_services_parsed",
+                    "detail": f"{parsed.get('service_count', 0)} services and no "
+                              "named stops came out of this asset - it may be a "
+                              "DataTrack layer rather than the timetable index.",
+                })
                 continue
             saved = timetable_db.save_definition_timetable(
                 route["route_key"], os.path.basename(path),
@@ -1827,6 +1845,9 @@ def routes_extract():
             })
         except Exception as e:
             failed.append({"route_key": route["route_key"], "error": str(e)})
+
+    for f in failed:
+        timetable_db.mark_route_failed(f["route_key"], f.get("error"))
 
     return jsonify({
         "extracted": done,

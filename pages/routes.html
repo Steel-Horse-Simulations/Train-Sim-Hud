@@ -122,8 +122,15 @@
     const box = document.getElementById('routes');
     const count = document.getElementById('routeCount');
     const routes = d.routes || [];
+    // Count failures apart from unread. Lumping them together said "1 not
+    // yet read" beside a route plainly marked FAILED, which reads as though
+    // nothing had been tried.
+    const nFailed = routes.filter(r => r.status === 'failed').length;
+    const nUnread = routes.filter(r => r.is_new && r.status !== 'failed').length;
     count.textContent = routes.length
-      ? `— ${routes.length} found, ${d.new_count} not yet read`
+      ? `— ${routes.length} found`
+        + (nUnread ? `, ${nUnread} not yet read` : '')
+        + (nFailed ? `, ${nFailed} could not be read` : '')
       : '';
     if (!routes.length) {
       box.innerHTML = `<div class="empty-note">No routes found yet. Press
@@ -138,7 +145,12 @@
         ? `<span class="route-status status-fail">failed</span>`
         : isNew ? `<span class="route-status status-new">not read</span>`
                 : `<span class="route-status status-done">read</span>`;
-      const detail = isNew
+      // A failed route shows WHY, not "0 services · read". Reporting an
+      // empty extraction as a success is what made every route look
+      // identical and hid a broken unpack.
+      const detail = failed
+        ? `could not be read — see the log above`
+        : isNew
         ? `${r.timetable_count} timetable${r.timetable_count === 1 ? '' : 's'}`
           + (r.datatrack_count ? ` · ${r.datatrack_count} datatracks` : '')
         : `${r.services_extracted} services · ${r.calls_extracted} station calls`
@@ -152,7 +164,7 @@
           </div>
           ${status}
           <button class="scan-btn" onclick="extractOne('${esc(r.route_key)}', this)">
-            ${isNew ? 'Scan timetable' : 'Re-scan'}
+            ${failed ? 'Try again' : isNew ? 'Scan timetable' : 'Re-scan'}
           </button>
         </div>`;
     }).join('');
@@ -231,7 +243,8 @@
       failed.length ? 'amber' : 'green');
     log([
       ...done.map(x => `${x.route_key}: ${x.services} services, ${x.calls} calls`),
-      ...failed.map(x => `${x.route_key}: ${x.error}`),
+      ...failed.map(x => `${x.route_key}: ${x.error}`
+                          + (x.detail ? ` — ${x.detail}` : '')),
     ]);
   }
 

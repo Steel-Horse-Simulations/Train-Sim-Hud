@@ -8,6 +8,7 @@ number, so each is checked by round trip rather than by inspection.
 """
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import time
@@ -202,12 +203,65 @@ def run_routes(m):
     if not after["BRClass158"]["is_new"]:
         print("  FAIL: an unread route is not marked new"); ok = False
 
+    # A HALF-EXTRACTION must fail loudly. A cooked asset keeps its data in
+    # the sibling .uexp; extracting only the .uasset parses cleanly and
+    # yields nothing, which showed as "0 services - read" on every route and
+    # hid a broken unpack behind a success.
+    import synth_ttdef, pak_tools, timetable_definition
+    base, _t, _r = synth_ttdef.build("/tmp/eval_routes_asset")
+    only = os.path.join("/tmp/eval_routes_only")
+    os.makedirs(only, exist_ok=True)
+    shutil.copy(base + ".uasset", os.path.join(only, "X.uasset"))
+    half = timetable_definition.parse_timetable_definition(os.path.join(only, "X.uasset"))
+    print(f"  .uasset without .uexp -> {half.get('error')}")
+    if half.get("error") != "uexp_missing":
+        print("  FAIL: a missing .uexp must be reported, not parsed as empty")
+        ok = False
+
+    whole = timetable_definition.parse_timetable_definition(base + ".uasset")
+    if not whole.get("named_stops"):
+        print("  FAIL: the complete asset should parse"); ok = False
+    else:
+        print(f"  complete asset -> {whole['service_count']} services")
+
+    # A failed route must be marked failed, never left looking merely unread.
+    m.timetable_db.mark_route_failed("BRClass158", "uexp_missing")
+    after = {x["route_key"]: x for x in
+             m.timetable_db.list_scanned_routes()["routes"]}
+    if after["BRClass158"]["status"] != "failed":
+        print("  FAIL: failure not recorded"); ok = False
+
     c = m.app.test_client()
     if c.get("/pages/routes.html").status_code != 200:
         print("  FAIL: routes page missing"); ok = False
     if c.post("/api/routes/extract", json={"route_key": "Nope"}).status_code != 404:
         print("  FAIL: unknown route should 404"); ok = False
     return ok
+
+
+def run_version_declared(m):
+    """APP_VERSION must match what the docs claim.
+
+    Several releases shipped with a stale version: the bump was done by
+    matching the previous literal string, and once that drifted the replace
+    silently did nothing - so every later bump missed too, and the app
+    reported 7.60.1 while the docs said 8.0.0. A no-op edit has to be an
+    error, which is what tests/bump_version.py enforces.
+    """
+    import re, pathlib
+    print("\n--- declared version ---")
+    app_src = pathlib.Path(m.__file__ if hasattr(m, "__file__") else "app.py")
+    src = pathlib.Path(APP, "app.py").read_text(encoding="utf-8")
+    mv = re.search(r'^APP_VERSION = "([\d.]+)"', src, re.M)
+    spec = pathlib.Path(APP, "docs", "TSW_HUD_NEW_CHAT_SPEC.txt").read_text(encoding="utf-8")
+    sv = re.search(r"VERSION THIS SPEC DESCRIBES: ([\d.]+)", spec)
+    print(f"  app.py {mv.group(1) if mv else '?'} | spec {sv.group(1) if sv else '?'}")
+    if not mv or not sv:
+        print("  FAIL: could not read a version"); return False
+    if mv.group(1) != sv.group(1):
+        print("  FAIL: app.py and the spec disagree - a version bump was missed")
+        return False
+    return True
 
 
 if __name__ == "__main__":
@@ -224,6 +278,9 @@ if __name__ == "__main__":
     m.train_classes_db.init_db()
     m.timetable_db.init_db()
     results = [run_backup_restore(m), run_timetable_banking(m),
-               run_drive_recorder(m), run_routes(m)]
+               run_drive_recorder(m), run_routes(m),
+               run_version_declared(m)]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)
+
+

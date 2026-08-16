@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.0.0
+## Current version: 8.0.1
 
 ## Shipped features (working, tested against real data)
 
@@ -1543,3 +1543,42 @@ already been parsed. The regression test asserts exactly that.
 `scanned_routes` in `timetables.db`: route key, pak, asset list, timetable
 counts, and the extraction record. Kept apart from `extracted_services` so
 the two lifecycles do not interfere.
+
+
+## FIXED in v8.0.1 - stale version, and a silent half-extraction
+
+### The version had not moved since 7.60.1
+
+Bumps were done by matching the previous literal string. Once that drifted,
+the replace silently did nothing - and every later bump missed too, so the
+app reported 7.60.1 while the docs claimed 8.0.0.
+
+`tests/bump_version.py` now does it by regex and RAISES if the edit changed
+nothing, and `eval_pipeline.run_version_declared()` asserts app.py and the
+spec agree. That test found the spec still on 7.60.1 within seconds of being
+written.
+
+### Every route showed "0 services - read"
+
+A cooked Unreal asset keeps all its data in a sibling `.uexp`. The extractor
+passed the exact `.uasset` path as repak's `--include`, so only that file came
+out. The `.uasset` alone has a valid header and a valid export table and NO
+payload, so it parses perfectly and returns zero services with no error - and
+the route was then marked read.
+
+Fixed at all three points where it should have been caught:
+
+  - **unpack the directory**, not the single file, so the `.uexp` comes with
+    it;
+  - **`uasset.Package` sets `uexp_missing`** when a cooked header has no
+    payload, and `parse_timetable_definition` returns that as an error rather
+    than an empty result;
+  - **an empty parse is a failure.** The route is marked `failed`, the reason
+    is shown in the page and the log, and the button offers "Try again".
+
+The regression test extracts a `.uasset` without its `.uexp` and asserts the
+error, then parses the complete pair and asserts it works.
+
+A general lesson worth keeping: a parser that returns cleanly with nothing is
+more dangerous than one that throws, because every layer above it treats the
+emptiness as an answer.

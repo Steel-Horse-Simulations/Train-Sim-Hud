@@ -940,6 +940,25 @@ def list_scanned_routes():
         conn.close()
 
 
+def mark_route_failed(route_key, error):
+    """Records why a route could not be read.
+
+    Kept visible in the list rather than leaving the route looking merely
+    unread: "not read" invites pressing the button again forever, while a
+    stated reason can be acted on.
+    """
+    init_route_tables()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE scanned_routes SET status='failed', last_scanned=? "
+            "WHERE route_key=?",
+            (datetime.now().isoformat(timespec="seconds"), route_key))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def mark_route_extracted(route_key, services, calls):
     init_route_tables()
     conn = _connect()

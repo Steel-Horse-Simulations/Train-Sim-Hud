@@ -223,13 +223,22 @@ class Package:
         # offsets are absolute across header+payload, so the header size is
         # subtracted to index into the .uexp.
         uexp_path = os.path.splitext(self.path)[0] + ".uexp"
+        self.uexp_missing = False
         if os.path.isfile(uexp_path):
             with open(uexp_path, "rb") as f:
                 self.uexp = f.read()
-        else:
-            # Uncooked or single-file: the payload is in the .uasset itself.
+        elif len(data) > self.header_size + 16:
+            # Uncooked or single-file: the payload really is in the .uasset.
             self.uexp = data
             self.header_size = 0
+        else:
+            # Cooked asset whose .uexp was not extracted alongside it. The
+            # header parses, the export table looks fine, and there is simply
+            # no payload - so a parse returns ZERO services and no error,
+            # which reads as "this route has no timetable" when in fact the
+            # file is half there. Flagged so the caller can say so.
+            self.uexp = b""
+            self.uexp_missing = True
 
     def export_body(self, export):
         start = int(export["serial_offset"]) - self.header_size
@@ -248,6 +257,7 @@ class Package:
             "export_count": len(self.exports),
             "header_size": self.header_size,
             "uexp_bytes": len(self.uexp),
+            "uexp_missing": getattr(self, "uexp_missing", False),
             "exports": [
                 {"object_name": e["object_name"],
                  "serial_size": e["serial_size"]}
