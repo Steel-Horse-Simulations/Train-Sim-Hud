@@ -45,6 +45,31 @@ Three faults the real run exposed, all fixed:
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
 
+## What changed in v7.61.0 - the GoTo/LoadUnload pairing rule
+
+First real run: 820 services, 3,263 named stops, real stations in correct
+geographic order. Approach confirmed. Two bugs found.
+
+**A call is a GoTo PAIRED with the following LoadUnload.** GoTo is routing and
+carries no times; the LoadUnload after it carries ArrivalTime/CompletionTime.
+Reading every GoTo as a stop gave 80% of stops with arrival == departure, all
+instructions typed GoTo, 99% is_stopping. Now: GoTo+LoadUnload = one call,
+lone GoTo = passed through, leading LoadUnload = service starts here,
+Couple/Uncouple = yard work.
+
+**The 263 single-stop "fragments" were NOT a bug** - 1L86_B is the AI
+continuation of P1L86. TSW splits a working across player and AI legs sharing
+a headcode. Now LABELLED via `role`, never merged or dropped. service_name +
+role stored, with a column migration for existing DBs.
+
+Fixture rewritten to store times where the GAME does (on the LoadUnload) -
+it previously put them on the GoTo, which let the broken parser pass. Test
+also keyed on headcode, which compares the wrong record once two share one;
+keyed by name now.
+
+**Next: re-run Read timetable (named stops).** Expect fewer, better stops with
+real dwells; the check is arrival no longer equalling departure.
+
 ## What changed in v7.60.0 - THE TIMETABLE PARSER
 
 The user supplied github.com/hcfairbanks/tsw_projects, which settles it: the

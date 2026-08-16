@@ -78,8 +78,32 @@ def route_location(nm, station, guid_byte=7, offset=1234.5):
                struct_type="RouteLocationName")
 
 
+def call_pair(nm, station, arrival=None, departure=None, simulated=False,
+              guid_byte=7, waiting=60):
+    """A station CALL as the real file stores it: a GoTo naming the
+    destination, followed by a LoadUnload carrying the times.
+
+    The first version of the fixture put times on the GoTo, which let a
+    parser that read every GoTo as a stop pass the test - and that parser
+    then produced 3,263 stops on the real file with 80% having arrival equal
+    to departure. The fixture has to store times where the game does.
+    """
+    out = bytearray()
+    out += instruction(nm, station, itype="GoTo", guid_byte=guid_byte)
+    out += instruction(nm, station, arrival=arrival, departure=departure,
+                       itype="LoadUnload", simulated=simulated,
+                       guid_byte=guid_byte, waiting=waiting)
+    return bytes(out)
+
+
+def pass_through(nm, station, guid_byte=7):
+    """A GoTo with NO LoadUnload after it - a routing waypoint the train
+    passes without calling. Must not appear in the stop list."""
+    return instruction(nm, station, itype="GoTo", guid_byte=guid_byte)
+
+
 def instruction(nm, station, arrival=None, departure=None, stopping=True,
-                itype="LoadUnload", simulated=False, guid_byte=7):
+                itype="LoadUnload", simulated=False, guid_byte=7, waiting=None):
     body = bytearray()
     body += tag(nm, "InstructionType", "EnumProperty",
                 nm.fname(f"ERouteTimetableServiceInstructionType::{itype}"),
@@ -91,6 +115,8 @@ def instruction(nm, station, arrival=None, departure=None, stopping=True,
     if departure is not None:
         body += timespan(nm, "SimulatedCompletionTime" if simulated else "CompletionTime",
                          departure)
+    if waiting is not None:
+        body += timespan(nm, "WaitingTime", waiting)
     body += tag(nm, "bIsStopping", "BoolProperty", b"", bool_val=stopping)
     body += nm.fname("None")                        # ends this struct
     return bytes(body)
@@ -104,12 +130,16 @@ def service(nm, name, headcode, stops, simulated=False):
     body += tag(nm, "bIsPlayerDrivable", "BoolProperty", b"", bool_val=True)
 
     instrs = bytearray()
-    instrs += struct.pack("<i", len(stops))          # element count
+    n_instr = sum(2 if st[3] else 1 for st in stops)
+    instrs += struct.pack("<i", n_instr)             # element count
     instrs += tag(nm, "Instructions", "StructProperty", b"",
                   struct_type="RouteTimetableServiceInstruction")
     for i, (st, arr, dep, stopping) in enumerate(stops):
-        instrs += instruction(nm, st, arr, dep, stopping,
-                              simulated=simulated, guid_byte=(i % 200) + 1)
+        if stopping:
+            instrs += call_pair(nm, st, arr, dep, simulated=simulated,
+                                guid_byte=(i % 200) + 1)
+        else:
+            instrs += pass_through(nm, st, guid_byte=(i % 200) + 1)
     body += tag(nm, "Instructions", "ArrayProperty", bytes(instrs),
                 inner_type="StructProperty")
     body += nm.fname("None")
@@ -173,18 +203,35 @@ def build(out="/tmp/synth_ttdef"):
         stops.append((st, arr, dep, True))
     specs.append(("2K05", stops, True))
 
+    # TSW splits one working across a player leg (P<code>) and an AI
+    # continuation (<code>_B). Both are real records in the file - this is
+    # in the findings doc - so the fixture carries the pattern and the
+    # parser must LABEL them rather than merge or discard either.
+    specs.append(("1L86", [(route[0], None, 6*3600, True),
+                           (route[1], 6*3600+300, 6*3600+400, True)], False))
+    names = {"1L86": "P1L86"}
+
     for headcode, stops, sim in specs:
-        services_bin += service(nm, f"SVC_{headcode}", headcode, stops, simulated=sim)
+        svc_name = names.get(headcode, f"SVC_{headcode}")
+        services_bin += service(nm, svc_name, headcode, stops, simulated=sim)
         truth.append({
+            "service_name": svc_name,
             "headcode": headcode,
             "stops": [s[0] for s in stops],
             "calls": [s[0] for s in stops if s[3]],
             "simulated": sim,
         })
 
+    # the AI continuation of 1L86
+    services_bin += service(nm, "1L86_B", "1L86",
+                            [(route[2], 6*3600+900, 6*3600+1000, True)], simulated=False)
+    truth.append({"service_name": "1L86_B", "headcode": "1L86",
+                  "stops": [route[2]], "calls": [route[2]], "simulated": False})
+    specs.append(("1L86", [(route[2], None, None, True)], False))
+
     export_body = bytearray()
     arr = bytearray()
-    arr += struct.pack("<i", len(specs))
+    arr += struct.pack("<i", len(truth))
     arr += tag(nm, "Services", "StructProperty", b"",
                struct_type="RouteTimetableService")
     arr += services_bin

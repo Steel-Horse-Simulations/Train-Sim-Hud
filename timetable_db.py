@@ -424,6 +424,8 @@ def init_extracted_tables():
                 stop_records INTEGER,
                 call_count INTEGER,
                 headcode TEXT,
+                service_name TEXT,
+                role TEXT,
                 imported_at TEXT NOT NULL,
                 UNIQUE(route_key, source_asset, service_index)
             );
@@ -445,6 +447,18 @@ def init_extracted_tables():
             CREATE INDEX IF NOT EXISTS idx_extracted_calls_service
                 ON extracted_calls(service_id);
         """)
+        # Older databases predate service_name/role. Add the columns rather
+        # than requiring the file to be deleted - it holds real extractions.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(extracted_services)")}
+        for col in ("service_name", "role"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE extracted_services ADD COLUMN {col} TEXT")
+        # Older databases predate service_name/role; add them rather than
+        # forcing the file to be deleted.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(extracted_services)")}
+        for col in ("service_name", "role"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE extracted_services ADD COLUMN {col} TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -677,10 +691,10 @@ def save_definition_timetable(route_key, source_asset, services):
             cur = conn.execute(
                 "INSERT INTO extracted_services (route_key, source_asset, "
                 "service_index, first_time, last_time, call_count, headcode, "
-                "imported_at) VALUES (?,?,?,?,?,?,?,?)",
+                "service_name, role, imported_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (route_key, source_asset, i, svc.get("first_time"),
                  svc.get("last_time"), len(stops),
-                 svc.get("headcode") or svc.get("name"), now))
+                 svc.get("headcode"), svc.get("name"), svc.get("role"), now))
             sid = cur.lastrowid
             n_services += 1
             for k, st in enumerate(stops):

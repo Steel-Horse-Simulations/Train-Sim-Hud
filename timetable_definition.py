@@ -180,41 +180,94 @@ def derive_headcode(name):
 def _build_stops(instructions):
     """Turns instructions into the stop list a passenger would recognise.
 
-    A stop keeps whichever times it has. First stop has departure only, last
-    has arrival only, freight often has neither - all correct, none dropped.
-    Explicit times win over simulated ones, which AI services carry instead.
+    THE PAIRING RULE. A station call is a **GoTo followed by a LoadUnload**.
+    The GoTo names the destination; the LoadUnload that follows it carries
+    the arrival and completion times and the dwell. A GoTo with no LoadUnload
+    after it is a routing waypoint the train passes through, NOT a call.
+
+    Reading every GoTo as a stop - which is what the first version did -
+    produced 3,263 "stops" on the real Fife Circle file where 80% had
+    arrival equal to departure and every instruction came back as GoTo with
+    is_stopping true. Both were signs that the times were being read from
+    the wrong record.
+
+    Simulated times are used ONLY as a fallback and never in preference to
+    real ones. The reference implementation warns that SimulatedArrivalTime
+    is frequently unset or non-monotonic, and will happily produce a stop at
+    12:01 sitting before an earlier stop at 10:08 - so a real time always
+    wins, and a missing time stays missing.
+
+    Domain rules from the user, all preserved: first stop has a departure
+    and no arrival, last has an arrival and no departure, freight often has
+    no arrivals at all. A single time is CORRECT data. Nothing is dropped
+    for having one.
     """
     stops = []
-    for ins in instructions:
-        label = ins.get("station") or ins.get("display_name") or ""
-        if not label:
+    i = 0
+    n = len(instructions)
+    while i < n:
+        ins = instructions[i]
+        itype = (ins.get("type") or "").split("::")[-1]
+
+        if itype in ("Couple", "Uncouple"):
+            i += 1
             continue
-        # Explicit times win; simulated ones are the fallback AI services
-        # carry. They must NOT be mixed: on the real file, taking an
-        # explicit ArrivalTime with a simulated CompletionTime produced
-        # dwells like 05:57 -> 17:55, because the two describe different
-        # things. Use one source or the other for the pair.
-        if ins["arrival_ticks"] or ins["completion_ticks"]:
-            arrival = ins["arrival_ticks"]
-            departure = ins["completion_ticks"]
-        else:
-            arrival = ins["sim_arrival_ticks"]
-            departure = ins["sim_completion_ticks"]
-        place, stype, snum = split_location(label)
-        stops.append({
-            "station": place,
-            "structure_type": stype or None,
-            "platform": snum or None,
-            "raw_location": label,
-            "arrival": _hms(arrival),
-            "departure": _hms(departure),
-            "is_stopping": ins["is_stopping"],
-            "instruction_type": ins["type"],
-            "ribbon_guid": ins["ribbon_guid"],
-            "ribbon_offset": ins["ribbon_offset"],
-            "waiting_seconds": ins["waiting_seconds"],
-        })
+
+        if itype != "GoTo":
+            # A leading LoadUnload with no GoTo before it means the service
+            # STARTS at a platform - a real call, with a departure and no
+            # arrival.
+            if itype == "LoadUnload":
+                stops.append(_make_stop(ins, ins, starts_here=True))
+            i += 1
+            continue
+
+        nxt = instructions[i + 1] if i + 1 < n else None
+        nxt_type = (nxt.get("type") or "").split("::")[-1] if nxt else None
+        if nxt_type == "LoadUnload":
+            stops.append(_make_stop(ins, nxt))
+            i += 2                       # the pair is one call
+            continue
+
+        # GoTo with no LoadUnload after it: passed through, not called at.
+        i += 1
+
     return stops
+
+
+def _make_stop(goto_ins, time_ins, starts_here=False):
+    label = (goto_ins.get("station") or goto_ins.get("display_name")
+             or time_ins.get("station") or time_ins.get("display_name") or "")
+    place, stype, snum = split_location(label)
+
+    # Real times only, with simulated as a fallback - never mixed, since a
+    # simulated value can sit out of order against real ones.
+    arrival = time_ins["arrival_ticks"] or time_ins["sim_arrival_ticks"]
+    departure = time_ins["completion_ticks"] or time_ins["sim_completion_ticks"]
+    if starts_here:
+        arrival = 0                       # the train is already there
+
+    # A dwell of zero with both times present is what an unpaired read looks
+    # like; report the dwell so it can be judged rather than hidden.
+    dwell = None
+    if arrival and departure and departure >= arrival:
+        dwell = int((departure - arrival) // TICKS_PER_SECOND)
+
+    return {
+        "station": place,
+        "structure_type": stype or None,
+        "platform": snum or None,
+        "raw_location": label,
+        "arrival": _hms(arrival),
+        "departure": _hms(departure),
+        "dwell_seconds": dwell,
+        "waiting_seconds": time_ins.get("waiting_seconds"),
+        "instruction_type": (time_ins.get("type") or "").split("::")[-1],
+        "ribbon_guid": goto_ins.get("ribbon_guid"),
+        "ribbon_offset": goto_ins.get("ribbon_offset"),
+        "used_simulated": bool(
+            not time_ins["arrival_ticks"] and time_ins["sim_arrival_ticks"]),
+    }
 
 
 def _parse_service(r, limit):
@@ -305,12 +358,27 @@ def parse_timetable_definition(path, max_services=5000):
 
     out = []
     for svc in services[:max_services]:
-        stops = _build_stops(svc["instructions"])
-        calls = [s for s in stops if s["is_stopping"]] or stops
+        # _build_stops already returns only real calls - a GoTo without a
+        # following LoadUnload is a pass-through and never reaches here.
+        calls = _build_stops(svc["instructions"])
         times = [s["arrival"] or s["departure"] for s in calls if (s["arrival"] or s["departure"])]
+        # TSW splits one working across a player leg (P<code>) and an AI
+        # continuation (<code>_B). Both are genuine records in the file - the
+        # findings doc records this - so they are LABELLED, not merged and
+        # not discarded. Merging would hide a real distinction; discarding
+        # would lose half the timetable.
+        nm_ = svc["name"] or ""
+        code = svc["headcode"] or derive_headcode(nm_)
+        role = None
+        if nm_.endswith("_B") or nm_.endswith("_End"):
+            role = "ai_continuation"
+        elif code and nm_ == "P" + code:
+            role = "player_leg"
+
         out.append({
             "name": svc["name"],
-            "headcode": svc["headcode"] or derive_headcode(svc["name"]),
+            "role": role,
+            "headcode": code,
             "operator": svc["operator"],
             "formation": svc["formation"],
             "is_player_drivable": svc["is_player_drivable"],

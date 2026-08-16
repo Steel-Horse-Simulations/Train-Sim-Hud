@@ -1852,3 +1852,75 @@ cap is visible rather than assumed.
 
 Ribbon GUID + offset -> lat/long, which needs the route definition asset's
 geometry. That would place every stop on the map without driving.
+
+## First real run of the definition parser - and the pairing rule (v7.61.0)
+
+`FCE_Timetable_TT.uasset` from the real Fife Circle pak:
+
+```
+2,328 names · 1 export · 21.3 MB payload
+820 services · 3,263 named stops · saved
+```
+
+Real stations at sensible frequencies - Haymarket 368, Edinburgh Waverly 256,
+Inverkeithing 146, Kirkcaldy 83 - and a genuine Edinburgh -> Leven working in
+correct geographic order: Haymarket, Edinburgh Gateway, Dalmeny, North
+Queensferry, Inverkeithing, Dalgety Bay, Aberdour, Burntisland, Kinghorn,
+Kirkcaldy, Cameron Bridge, Leven. **The approach works.**
+
+But the output had three problems, and two were real bugs.
+
+### A call is a GoTo PAIRED with the LoadUnload that follows it
+
+Symptoms on the real file: every instruction came back `GoTo`, 99% had
+`is_stopping` true, and **80% of timed stops had arrival equal to departure**.
+Three signs of the same fault.
+
+`GoTo` is routing. It names a destination but carries no times. The **next**
+instruction, a `LoadUnload`, carries `ArrivalTime`, `CompletionTime` and the
+dwell. Reading every GoTo as a stop therefore produced a stop list of routing
+waypoints with the wrong times attached.
+
+The rule now:
+  - `GoTo` followed by `LoadUnload` -> ONE call: destination from the GoTo,
+    times from the LoadUnload.
+  - `GoTo` with no LoadUnload after it -> passed through, NOT a call.
+  - a leading `LoadUnload` with no GoTo before it -> the service STARTS here,
+    so departure only.
+  - `Couple` / `Uncouple` -> yard work, not a call.
+
+Simulated times remain a fallback only. The reference implementation warns
+they are often unset or non-monotonic and will place a stop at 12:01 before
+an earlier one at 10:08, so a real time always wins and a missing time stays
+missing.
+
+### The 263 "fragments" were NOT a bug
+
+263 services had a single stop, which looked like the walker emitting extra
+records. It is not: `1L86_B` is the AI continuation of `P1L86`. TSW splits
+one working across a player leg and an AI leg, both genuine records sharing a
+headcode - which the findings doc already recorded under journey stitching.
+
+They are now LABELLED (`role`: `player_leg` / `ai_continuation`) rather than
+merged or discarded. Merging would hide a real distinction; discarding would
+lose half the timetable. `service_name` and `role` are stored, with a
+migration so existing databases gain the columns rather than needing deletion.
+
+This also caught a fault in the test itself: it keyed services by headcode,
+which silently compares the wrong record once two share one. Keyed by name
+now.
+
+### Fixture updated to store times where the game does
+
+The fixture originally put times on the `GoTo`, which let the broken parser
+pass. A fixture has to store data the way the game does or it validates
+nothing - the same lesson as the map tiles. It now emits GoTo+LoadUnload
+pairs, pass-through GoTos, and a player/AI split, and the test asserts
+non-zero dwells, that pass-throughs are excluded, and that roles are
+labelled.
+
+### Next step
+
+Re-run **Read timetable (named stops)**. Expect fewer, better stops: pairs
+collapsed into real calls with genuine dwells, pass-through waypoints gone.
+The check is that arrival no longer equals departure across the board.

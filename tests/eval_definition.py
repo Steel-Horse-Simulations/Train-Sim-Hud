@@ -44,20 +44,24 @@ def run():
     if r["service_count"] != len(truth):
         print("  FAIL: service count"); ok = False
 
-    by_code = {s["headcode"]: s for s in r["services"]}
+    # Keyed by service NAME, not headcode: TSW splits a working across a
+    # player leg and an AI continuation which SHARE a headcode, so keying on
+    # the code silently compares the wrong record.
+    by_name = {s["name"]: s for s in r["services"]}
+    by_code = {s["headcode"]: s for s in r["services"] if not s["role"]}
     for t in truth:
-        svc = by_code.get(t["headcode"])
+        svc = by_name.get(t["service_name"])
         if not svc:
-            print(f"  FAIL: lost service {t['headcode']}"); ok = False
+            print(f"  FAIL: lost service {t['service_name']}"); ok = False
             continue
         # Only CALLS should appear, not stations passed through.
         if svc["stop_count"] != len(t["calls"]):
-            print(f"  FAIL: {t['headcode']} has {svc['stop_count']} stops, "
+            print(f"  FAIL: {t['service_name']} has {svc['stop_count']} stops, "
                   f"expected {len(t['calls'])}"); ok = False
         names = [s["station"] for s in svc["stops"]]
         want = [synth_ttdef and s.split(" Platform ")[0] for s in t["calls"]]
         if names != want:
-            print(f"  FAIL: {t['headcode']} stations {names[:3]} != {want[:3]}")
+            print(f"  FAIL: {t['service_name']} stations {names[:3]} != {want[:3]}")
             ok = False
 
     # platform designators split off the station name
@@ -114,6 +118,32 @@ def run():
                     print(f"  FAIL: implausible dwell {st['arrival']}->{st['departure']} "
                           f"at {st['station']}"); ok = False
     print("  no implausible dwells")
+
+    # GoTo + LoadUnload PAIRING. A GoTo names the destination; the
+    # LoadUnload after it carries the times. Reading every GoTo as a stop
+    # gave 3,263 "stops" on the real file with 80% having arrival ==
+    # departure - the signature of times read from the wrong record.
+    dwells = [s["dwell_seconds"] for svc in r["services"] for s in svc["stops"]
+              if s["dwell_seconds"] is not None]
+    zero = sum(1 for d in dwells if d == 0)
+    print(f"  dwells recorded: {len(dwells)}, of which zero-length: {zero}")
+    if dwells and zero == len(dwells):
+        print("  FAIL: every dwell is zero - arrival and departure came from "
+              "the same record"); ok = False
+
+    # Pass-throughs must NOT appear as calls.
+    r03 = by_code["1R03"]
+    if r03["stop_count"] != 6:
+        print(f"  FAIL: 1R03 has {r03['stop_count']} stops, expected 6 - "
+              "pass-through GoTos are being counted as calls"); ok = False
+    else:
+        print("  passed stations excluded from the call list")
+
+    # Player leg and AI continuation are separate records; label, never merge.
+    roles = {s["name"]: s["role"] for s in r["services"]}
+    print(f"  roles: P1L86={roles.get('P1L86')}, 1L86_B={roles.get('1L86_B')}")
+    if roles.get("P1L86") != "player_leg" or roles.get("1L86_B") != "ai_continuation":
+        print("  FAIL: player/AI legs not labelled"); ok = False
 
     print("  " + ("PASS" if ok else "FAIL"))
     return ok
