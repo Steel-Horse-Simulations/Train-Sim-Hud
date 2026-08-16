@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "8.0.2"
+APP_VERSION = "8.0.3"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -1855,11 +1855,16 @@ def routes_extract():
                     attempts.append({"asset": target, "error": parsed["error"]})
                     continue
                 if not parsed.get("named_stops"):
-                    # Not necessarily a failure of the route - just the wrong
-                    # asset. Try the next candidate before giving up.
+                    # Not necessarily a failure of the route - often just the
+                    # wrong asset. Try the next candidate, but carry WHAT WAS
+                    # IN the asset forward: if every candidate fails, the
+                    # array names it did contain are the only lead worth
+                    # having.
+                    arrays = [a["name"] for a in (parsed.get("array_properties") or [])]
                     attempts.append({"asset": target,
                                      "error": "no_named_stops",
-                                     "services": parsed.get("service_count", 0)})
+                                     "services": parsed.get("service_count", 0),
+                                     "arrays_found": arrays[:8]})
                     continue
 
                 saved = timetable_db.save_definition_timetable(
@@ -1886,8 +1891,11 @@ def routes_extract():
                 "route_key": route["route_key"],
                 "error": attempts[-1]["error"] if attempts else "no_candidates",
                 "detail": f"tried {len(attempts)} asset(s): "
-                          + "; ".join(f"{os.path.basename(a['asset'])} -> {a['error']}"
-                                      for a in attempts[:4]),
+                          + "; ".join(
+                              f"{os.path.basename(a['asset'])} -> {a['error']}"
+                              + (f" (contains: {', '.join(a['arrays_found'])})"
+                                 if a.get("arrays_found") else "")
+                              for a in attempts[:4]),
             })
 
     for f in failed:

@@ -218,6 +218,32 @@ def run():
             print(f"  FAIL: role for {nm_} was {got}, expected {want}"); ok = False
     print(f"  continuation-leg naming variants: {len(cases)} checked")
 
+    # An UNRECOGNISED layout must report what it found, not fail blankly.
+    # NorthLondonLine returned "no_named_stops" with no indication of which
+    # property should have been read - the service array name is a guess,
+    # and a wrong guess has to be diagnosable from the output.
+    import struct as _s
+    nm2 = synth_ttdef.NameMap(); nm2.add("None")
+    body = bytearray()
+    inner = bytearray(); inner += _s.pack("<i", 1)
+    inner += synth_ttdef.tag(nm2, "MysteryList", "StructProperty", b"",
+                             struct_type="RouteTimetableService")
+    inner += synth_ttdef.service(nm2, "SVC_X", "1X01",
+                                 [("Leven Platform 1", None, 3600, True)])
+    body += synth_ttdef.tag(nm2, "MysteryList", "ArrayProperty", bytes(inner),
+                            inner_type="StructProperty")
+    body += nm2.fname("None")
+    odd = "/tmp/eval_unknown_array"
+    os.makedirs(odd, exist_ok=True)
+    synth_ttdef.write_package(os.path.join(odd, "NL_Timetable_378"), nm2, bytes(body))
+    u = td.parse_timetable_definition(os.path.join(odd, "NL_Timetable_378.uasset"))
+    names = [a["name"] for a in (u.get("array_properties") or [])]
+    print(f"  unrecognised layout -> arrays reported: {names}")
+    if "MysteryList" not in names:
+        print("  FAIL: an unknown service array was not reported"); ok = False
+    if not u.get("service_array_names_tried"):
+        print("  FAIL: the names tried were not reported"); ok = False
+
     print("  " + ("PASS" if ok else "FAIL"))
     return ok
 

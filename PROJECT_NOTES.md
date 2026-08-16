@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.0.2
+## Current version: 8.0.3
 
 ## Shipped features (working, tested against real data)
 
@@ -1612,3 +1612,27 @@ Extraction tries each until one yields named stops. Verified three ways:
 the index wins when present; a dud preferred asset falls through to the next
 candidate; and when everything fails the error names each asset tried and its
 reason.
+
+
+## v8.0.3 - make an unrecognised timetable layout diagnosable
+
+`NL_Timetable_378.uasset -> no_named_stops`, with only one candidate to try.
+
+The service array name was a guess. `_walk_top_level` accepted `Services` or
+`ServiceDefinitions` - both taken from the Fife Circle definition - and
+ignored every other array in silence. A route naming it differently produced
+a clean, empty, useless result.
+
+The parser now records every top-level property it passes and, when nothing
+is found, returns:
+
+  - `array_properties` - the arrays that ARE in the asset, with sizes
+  - `top_level_properties` - everything else it walked past
+  - `service_array_names_tried` - what it was looking for
+
+and the Routes page prints the array names in the failure line. The candidate
+names live in `SERVICE_ARRAY_NAMES`, so adding a real one is a one-line change.
+
+A guessed name is not a bug in itself - the format is undocumented and the
+guess was drawn from a real asset. Failing without saying what it looked for
+or what was there IS the bug, and that is what is fixed.

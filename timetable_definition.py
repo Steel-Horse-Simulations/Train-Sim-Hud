@@ -410,14 +410,30 @@ def _parse_service(r, limit):
     return svc
 
 
-def _walk_top_level(r, limit):
+# Array names that hold the service list. `Services` is what the Fife Circle
+# definition uses; the others are added as they are found. Anything not here
+# is REPORTED rather than silently ignored - guessing a name and returning
+# nothing is how NorthLondonLine came back as "no_named_stops" with no clue
+# which property it should have been reading.
+SERVICE_ARRAY_NAMES = ("Services", "ServiceDefinitions", "TimetableServices",
+                       "RouteServices", "ServiceList", "Timetables")
+
+
+def _walk_top_level(r, limit, seen_properties=None):
+    """Finds the service array in an export, recording every top-level
+    property it passes so an unrecognised layout can be diagnosed."""
     services = []
     while r.pos < limit:
         t = uasset.read_tag(r)
         if t is None:
             break
         dp = r.pos
-        if t.ptype == "ArrayProperty" and t.name in ("Services", "ServiceDefinitions"):
+        if seen_properties is not None:
+            seen_properties.append({
+                "name": t.name, "type": t.ptype, "size": t.size,
+                "inner": t.inner_type or t.struct_type or None,
+            })
+        if t.ptype == "ArrayProperty" and t.name in SERVICE_ARRAY_NAMES:
             count = r.i32()
             if 0 < count < 5000:
                 save = r.pos
@@ -459,12 +475,13 @@ def parse_timetable_definition(path, max_services=5000):
         }
 
     services = []
+    seen_properties = []
     for exp in pkg.exports:
         body = pkg.export_body(exp)
         if not body:
             continue
         r = pkg.reader_for(exp)
-        found = _walk_top_level(r, len(body))
+        found = _walk_top_level(r, len(body), seen_properties)
         for svc in found:
             svc["export"] = exp["object_name"]
             services.append(svc)
@@ -527,6 +544,15 @@ def parse_timetable_definition(path, max_services=5000):
         "services_without_calls": len(empty_expected) + len(empty_ok),
         "empty_stock_or_light_engine": len(empty_ok),
         "unexpectedly_empty": len(empty_expected),
+        # What the asset actually contains, so an unrecognised layout can be
+        # read off the result instead of guessed at. Only included when
+        # nothing was found - it is diagnostic, not routine output.
+        "top_level_properties": (seen_properties[:60] if not named else None),
+        "array_properties": ([p for p in seen_properties
+                              if p["type"] == "ArrayProperty"][:20]
+                             if not named else None),
+        "service_array_names_tried": (list(SERVICE_ARRAY_NAMES) if not named
+                                      else None),
         "verdict": (
             f"{len(out)} services with {named} named stops, read straight from "
             "the timetable definition - no driving, no inference. "
@@ -534,8 +560,9 @@ def parse_timetable_definition(path, max_services=5000):
             f"light engine or continuation legs; {len(empty_expected)} are "
             "unexpectedly empty."
             if named else
-            f"{len(out)} services parsed but no stop carries a station name. "
-            "Check package.exports: this may not be the RouteTimetableDefinition, "
-            "or the property names differ in this build."
+            f"{len(out)} services parsed and no stop carries a station name. "
+            "The arrays actually present in this asset are listed in "
+            "array_properties - if one of them is the service list, its name "
+            "needs adding to SERVICE_ARRAY_NAMES."
         ),
     }

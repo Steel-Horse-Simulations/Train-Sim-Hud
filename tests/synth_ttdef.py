@@ -166,6 +166,45 @@ def service(nm, name, headcode, stops, simulated=False):
     return bytes(body)
 
 
+def write_package(base, nm, export_body):
+    """Writes a .uasset header + .uexp payload around an export body.
+
+    Split out of build() so a test can construct an asset with a DIFFERENT
+    internal layout - an unrecognised service array name, say - without
+    duplicating the header maths.
+    """
+    name_blob = bytearray()
+    for s in nm.names:
+        name_blob += fstr(s)
+        name_blob += b"\x00" * 4
+    head = bytearray()
+    head += struct.pack("<I", UASSET_MAGIC)
+    head += struct.pack("<i", -4)
+    head += struct.pack("<iii", 0, 0, 0)
+    head_size_pos = len(head); head += struct.pack("<i", 0)
+    head += fstr("/Game/Timetable"); head += struct.pack("<i", 0)
+    name_off_pos = len(head); head += struct.pack("<ii", len(nm.names), 0)
+    head += struct.pack("<ii", 0, 0)
+    exp_off_pos = len(head); head += struct.pack("<ii", 1, 0)
+    head += struct.pack("<ii", 0, 0); head += b"\x00" * 32
+    name_offset = len(head); head += name_blob
+    export_offset = len(head); total_header = export_offset + 100
+    exp = bytearray()
+    exp += struct.pack("<i", 0); exp += struct.pack("<ii", 0, 0)
+    exp += struct.pack("<i", 0); exp += nm.fname(os.path.basename(base))
+    exp += struct.pack("<i", 0); exp += struct.pack("<q", len(export_body))
+    exp += struct.pack("<q", total_header); exp += b"\x00" * 60
+    head += exp
+    struct.pack_into("<i", head, head_size_pos, total_header)
+    struct.pack_into("<ii", head, name_off_pos, len(nm.names), name_offset)
+    struct.pack_into("<ii", head, exp_off_pos, 1, export_offset)
+    with open(base + ".uasset", "wb") as f:
+        f.write(bytes(head))
+    with open(base + ".uexp", "wb") as f:
+        f.write(bytes(export_body))
+    return base
+
+
 def build(out="/tmp/synth_ttdef"):
     os.makedirs(out, exist_ok=True)
     base = os.path.join(out, "FCE_Timetable_TT")

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.0.2**
+**App version at end of session: 8.0.3**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -44,6 +44,29 @@ Three faults the real run exposed, all fixed:
 
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
+
+## What changed in v8.0.3 - diagnose an unrecognised timetable layout
+
+NorthLondonLine still fails: `NL_Timetable_378.uasset -> no_named_stops`, and
+only ONE candidate exists so there is nothing to fall through to.
+
+The service array name is a GUESS - the parser only accepted `Services` or
+`ServiceDefinitions`, taken from the Fife Circle asset. If this route names it
+something else, the parse returns nothing and says nothing useful.
+
+The parser now records every top-level property it walks past and, when it
+finds no named stops, returns `array_properties`, `top_level_properties` and
+`service_array_names_tried`. The Routes page carries the array names into the
+failure line: `NL_Timetable_378.uasset -> no_named_stops (contains: ...)`.
+
+SERVICE_ARRAY_NAMES is now a named constant - add to it when a real one turns
+up.
+
+**Next: re-run NorthLondonLine and read the "contains:" list.** If one of
+those arrays is the service list, its name goes in the constant and the route
+parses. If the list is empty or obviously not a timetable, that asset is a
+loco-DLC timetable fragment rather than the route index, and the route's real
+timetable is in another pak.
 
 ## What changed in v8.0.2 - RivieraLine: pick the RIGHT timetable asset
 
