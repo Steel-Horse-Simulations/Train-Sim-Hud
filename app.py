@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "8.0.3"
+APP_VERSION = "8.1.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -2043,6 +2043,111 @@ def drive_match():
     need a person's eye."""
     return jsonify(timetable_db.match_sightings_to_stations(
         request.args.get("route_key") or "unknown"))
+
+
+def _clock_seconds():
+    now = datetime.now()
+    return now.hour * 3600 + now.minute * 60 + now.second
+
+
+def _to_secs(t):
+    if not t:
+        return None
+    try:
+        h, m, s = (int(x) for x in t.split(":"))
+        return h * 3600 + m * 60 + s
+    except Exception:
+        return None
+
+
+@app.route("/api/timetable/live", methods=["GET"])
+def timetable_live():
+    """The stop list for the service being driven, with progress marked.
+
+    Joins three things that until now lived apart: the headcode the game
+    reports live, the timetable read out of the pak files, and the clock.
+
+    Query: ?service=1L86 &route=FifeCircle to override the live lookup, which
+    is what the picker uses when the game is not running."""
+    want = (request.args.get("service") or "").strip()
+    route_key = (request.args.get("route") or "").strip() or None
+    service_name = (request.args.get("name") or "").strip() or None
+    live = {}
+    live_error = None
+
+    if not want and not service_name:
+        try:
+            body, status = api_get("get/DriverAid.PlayerInfo")
+            if status == 200 and isinstance(body, dict):
+                vals = body.get("Values") or body
+                want = (vals.get("currentServiceName") or "").strip()
+            else:
+                live_error = "game_not_reachable"
+        except Exception:
+            live_error = "game_not_reachable"
+
+    clock = _clock_seconds()
+    svc = timetable_db.find_service(headcode=want or None, route_key=route_key,
+                                    near_time=clock, service_name=service_name)
+    if not svc:
+        return jsonify({
+            "found": False,
+            "headcode": want or None,
+            "live_error": live_error,
+            "detail": ("No stored timetable for this service. Scan the route "
+                       "on the Routes page first."),
+        })
+
+    # Mark progress. A call is PASSED once its departure is behind the clock;
+    # the next one is the first that is not. Times past midnight are stored
+    # wrapped, so a service running into the small hours is compared with the
+    # day boundary added back rather than appearing to run backwards.
+    calls = svc.get("calls") or []
+    prev = -1
+    next_index = None
+    out_calls = []
+    for i, c in enumerate(calls):
+        arr, dep = _to_secs(c.get("arrival")), _to_secs(c.get("departure"))
+        base = arr if arr is not None else dep
+        if base is not None and base < prev:
+            arr = arr + 86400 if arr is not None else None
+            dep = dep + 86400 if dep is not None else None
+            base = arr if arr is not None else dep
+        if base is not None:
+            prev = base
+        ref = dep if dep is not None else arr
+        passed = ref is not None and ref < clock
+        if not passed and next_index is None:
+            next_index = i
+        out_calls.append({
+            **c,
+            "passed": passed,
+            "seconds": ref,
+            "minutes_away": round((ref - clock) / 60) if ref is not None else None,
+        })
+
+    return jsonify({
+        "found": True,
+        "headcode": svc.get("headcode"),
+        "service_name": svc.get("service_name"),
+        "role": svc.get("role"),
+        "route_key": svc.get("route_key"),
+        "first_time": svc.get("first_time"),
+        "last_time": svc.get("last_time"),
+        "call_count": len(out_calls),
+        "next_index": next_index,
+        "alternatives": svc.get("alternatives"),
+        "live_error": live_error,
+        "clock": f"{clock // 3600:02d}:{(clock % 3600) // 60:02d}:{clock % 60:02d}",
+        "calls": out_calls,
+    })
+
+
+@app.route("/api/timetable/services", methods=["GET"])
+def timetable_services():
+    """Stored services, for picking one when the game is not running."""
+    return jsonify(timetable_db.list_services(
+        route_key=request.args.get("route") or None))
 
 
 @app.route("/api/timetable/extracted", methods=["GET"])

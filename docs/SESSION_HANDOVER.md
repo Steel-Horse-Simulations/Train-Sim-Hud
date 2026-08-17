@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.0.3**
+**App version at end of session: 8.1.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -44,6 +44,35 @@ Three faults the real run exposed, all fixed:
 
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
+
+## What changed in v8.1.0 - THE TIMETABLE HUD
+
+`pages/timetable.html` replaces the placeholder (a colour test). Live stop
+list: passed calls dimmed, the next one highlighted, minutes to each
+remaining call, platform numbers, clock.
+
+`/api/timetable/live` joins three things that lived apart until now: the
+headcode the game reports, the timetable read from the paks, and the clock.
+`/api/timetable/services` feeds the picker.
+
+**A headcode is NOT unique** - a player leg and its AI continuation share
+one, and 221 of 429 Fife Circle headcodes recur. `find_service()` therefore
+scores candidates: a service whose booked times bracket the clock wins, a
+player leg beats a continuation, and a service with no calls is pushed last.
+
+Details worth keeping:
+  - the page keeps the LAST GOOD timetable on screen when a poll fails or
+    between services, rather than blanking a stop list someone is reading;
+  - a hand-picked service pins until "back to live", so the page works for
+    planning with the game shut;
+  - the picker offers only services with calls - empty stock and continuation
+    legs are real records with nothing to show;
+  - picker handlers are attached after each render, not inline, since the
+    markup is regenerated;
+  - polls every 5s: the booked timetable does not change, only our position
+    through it.
+
+Still deliberately NOT sharing code or theme with the Dashboard HUDs.
 
 ## What changed in v8.0.3 - diagnose an unrecognised timetable layout
 

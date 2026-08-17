@@ -262,6 +262,85 @@ def run_routes(m):
     return ok
 
 
+def run_timetable_hud(m):
+    """The Timetable HUD: match the live service, mark progress, disambiguate.
+
+    A headcode is NOT unique - TSW splits a working across a player leg and
+    an AI continuation that share one, and 221 of 429 headcodes on the Fife
+    Circle file appear more than once. So the lookup has to pick using the
+    clock, and prefer the leg actually being driven.
+    """
+    import datetime
+    print("\n--- timetable HUD ---")
+    ok = True
+    now = datetime.datetime.now()
+    base = now.hour * 3600 + now.minute * 60
+
+    def hms(x):
+        x %= 86400
+        return f"{x // 3600:02d}:{(x % 3600) // 60:02d}:{x % 60:02d}"
+
+    stops, t = [], base - 1800
+    for i, st in enumerate(["Leven", "Cameron Bridge", "Kirkcaldy",
+                            "Haymarket", "Edinburgh Waverly"]):
+        arr = None if i == 0 else hms(t)
+        t += 60
+        dep = None if i == 4 else hms(t)
+        t += 600
+        stops.append({"station": st, "platform": str(i + 1),
+                      "arrival": arr, "departure": dep})
+
+    m.timetable_db.save_definition_timetable("HudRoute", "H.uasset", [
+        {"headcode": "2K85", "name": "P2K85", "role": "player_leg",
+         "first_time": stops[0]["departure"], "last_time": stops[-1]["arrival"],
+         "stops": stops},
+        # same headcode, an AI leg at a different time - must NOT be chosen
+        {"headcode": "2K85", "name": "2K85_B", "role": "ai_continuation",
+         "first_time": "03:00:00", "last_time": "03:30:00",
+         "stops": [{"station": "Depot", "arrival": "03:00:00",
+                    "departure": "03:30:00"}]},
+    ])
+
+    c = m.app.test_client()
+    d = c.get("/api/timetable/live?service=2K85").get_json()
+    print(f"  picked {d.get('service_name')} (role {d.get('role')}), "
+          f"{d.get('call_count')} stops, next index {d.get('next_index')}")
+    if not d.get("found"):
+        print("  FAIL: did not find the service"); return False
+    if d["service_name"] != "P2K85":
+        print("  FAIL: chose the AI leg over the player leg"); ok = False
+    if d["alternatives"] != 1:
+        print("  FAIL: the duplicate headcode was not reported"); ok = False
+
+    calls = d["calls"]
+    passed = [x for x in calls if x["passed"]]
+    print(f"  {len(passed)} passed, next is {calls[d['next_index']]['station_name']}")
+    if not passed:
+        print("  FAIL: nothing marked passed on a service already running"); ok = False
+    if d["next_index"] is None or calls[d["next_index"]]["passed"]:
+        print("  FAIL: next stop is wrong"); ok = False
+    # progress must be monotonic - no passed stop after an unpassed one
+    seen_unpassed = False
+    for x in calls:
+        if not x["passed"]:
+            seen_unpassed = True
+        elif seen_unpassed:
+            print("  FAIL: a passed stop follows an unpassed one"); ok = False
+            break
+
+    if c.get("/pages/timetable.html").status_code != 200:
+        print("  FAIL: the HUD page is missing"); ok = False
+    unknown = c.get("/api/timetable/live?service=9Z99").get_json()
+    if unknown.get("found"):
+        print("  FAIL: invented a service"); ok = False
+    else:
+        print("  unknown service reports not found, with a reason")
+    svcs = c.get("/api/timetable/services").get_json()
+    if not svcs.get("routes"):
+        print("  FAIL: the picker has no routes"); ok = False
+    return ok
+
+
 def run_version_declared(m):
     """APP_VERSION must match what the docs claim.
 
@@ -302,7 +381,7 @@ if __name__ == "__main__":
     m.timetable_db.init_db()
     results = [run_backup_restore(m), run_timetable_banking(m),
                run_drive_recorder(m), run_routes(m),
-               run_version_declared(m)]
+               run_timetable_hud(m), run_version_declared(m)]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)
 

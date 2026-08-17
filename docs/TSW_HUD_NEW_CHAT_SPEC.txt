@@ -4,7 +4,7 @@ TSW HUD — NEW CHAT HANDOFF SPECIFICATION
 This document is a complete specification for recreating the TSW Hud project in
 a new chat session. Read every section before writing a single line of code.
 
-VERSION THIS SPEC DESCRIBES: 8.0.3
+VERSION THIS SPEC DESCRIBES: 8.1.0
 
 ================================================================================
 SECTION 1: WHAT THIS PROJECT IS
@@ -93,6 +93,9 @@ TSW Hud/
     │                         one Group, e.g. Class 801/802/805 → "Class 8xx".
     ├── operators.html        Operators and their liveries (colour per livery)
     ├── routes.html           Routes: scan paks for timetables, read them
+    ├── timetable.html        Timetable HUD - live stop list for the service
+    │                         being driven. Own theme, shares NO code with
+    │                         the Dashboard HUDs (deliberate).
     └── timetable.html        Colour-theme placeholder (earmarked for a
                               different timetable feature, not built yet)
 
@@ -572,6 +575,9 @@ PAK / GAME FILES (Discovery page, offline timetable extraction):
                   unpack,clear_extracted}
   GET  /api/timetable/stations   → station names + headcodes stored locally
   GET  /api/timetable/extracted  → services + calls extracted from the paks
+  GET  /api/timetable/live       → stop list for the live service, with
+                                   passed/next marked
+  GET  /api/timetable/services   → stored services, for the picker
   GET  /api/routes               → routes found by scanning paks
   POST /api/routes/scan          → scan every pak for timetables
   POST /api/routes/extract       → read one route, or every unread one

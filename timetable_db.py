@@ -987,3 +987,100 @@ def mark_route_extracted(route_key, services, calls):
         conn.commit()
     finally:
         conn.close()
+
+
+def find_service(headcode=None, route_key=None, near_time=None,
+                 service_name=None):
+    """Finds a stored service, best match first.
+
+    A headcode is NOT unique. TSW splits a working across a player leg and an
+    AI continuation that share one, and a headcode can recur across the day -
+    on the Fife Circle file 221 of 429 headcodes appear more than once. So a
+    live headcode alone cannot pick a service, and `near_time` breaks the tie
+    by choosing the one whose booked times bracket the clock.
+
+    A player leg is preferred over a continuation when both fit: it is the
+    one being driven.
+    """
+    init_extracted_tables()
+    conn = _connect()
+    try:
+        sql = ("SELECT s.*, "
+               "(SELECT COUNT(*) FROM extracted_calls c WHERE c.service_id=s.id) "
+               "AS n_calls FROM extracted_services s WHERE 1=1")
+        params = []
+        if service_name:
+            sql += " AND s.service_name = ?"
+            params.append(service_name)
+        if headcode:
+            sql += " AND s.headcode = ?"
+            params.append(headcode)
+        if route_key:
+            sql += " AND s.route_key = ?"
+            params.append(route_key)
+        rows = [dict(r) for r in conn.execute(sql, params)]
+        if not rows:
+            return None
+
+        def to_secs(t):
+            if not t:
+                return None
+            try:
+                h, m, s = (int(x) for x in t.split(":"))
+                return h * 3600 + m * 60 + s
+            except Exception:
+                return None
+
+        def score(row):
+            # Lower is better.
+            s = 0
+            if row.get("role") == "ai_continuation":
+                s += 100                     # the player is not driving this
+            if not row.get("n_calls"):
+                s += 500                     # nothing to show
+            if near_time is not None:
+                first, last = to_secs(row.get("first_time")), to_secs(row.get("last_time"))
+                if first is not None and last is not None:
+                    if first <= near_time <= last:
+                        return s              # running now - the best answer
+                    # otherwise prefer the closest start
+                    s += min(abs(near_time - first), abs(near_time - last)) // 60
+                else:
+                    s += 300
+            return s
+
+        rows.sort(key=score)
+        best = rows[0]
+        best["calls"] = [dict(c) for c in conn.execute(
+            "SELECT * FROM extracted_calls WHERE service_id=? ORDER BY call_order",
+            (best["id"],))]
+        best["alternatives"] = len(rows) - 1
+        return best
+    finally:
+        conn.close()
+
+
+def list_services(route_key=None, limit=400, with_calls=False):
+    """Services for a route, for the picker when the game is not running."""
+    init_extracted_tables()
+    conn = _connect()
+    try:
+        sql = ("SELECT s.*, (SELECT COUNT(*) FROM extracted_calls c "
+               "WHERE c.service_id=s.id) AS n_calls FROM extracted_services s")
+        params = []
+        if route_key:
+            sql += " WHERE s.route_key = ?"
+            params.append(route_key)
+        sql += " ORDER BY s.first_time IS NULL, s.first_time LIMIT ?"
+        params.append(limit)
+        rows = [dict(r) for r in conn.execute(sql, params)]
+        if with_calls:
+            for r in rows:
+                r["calls"] = [dict(c) for c in conn.execute(
+                    "SELECT * FROM extracted_calls WHERE service_id=? "
+                    "ORDER BY call_order", (r["id"],))]
+        routes = [r[0] for r in conn.execute(
+            "SELECT DISTINCT route_key FROM extracted_services ORDER BY route_key")]
+        return {"services": rows, "service_count": len(rows), "routes": routes}
+    finally:
+        conn.close()

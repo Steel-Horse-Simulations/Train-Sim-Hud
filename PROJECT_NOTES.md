@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.0.3
+## Current version: 8.1.0
 
 ## Shipped features (working, tested against real data)
 
@@ -1636,3 +1636,50 @@ names live in `SERVICE_ARRAY_NAMES`, so adding a real one is a one-line change.
 A guessed name is not a bug in itself - the format is undocumented and the
 guess was drawn from a real asset. Failing without saying what it looked for
 or what was there IS the bug, and that is what is fixed.
+
+
+## SHIPPED in v8.1.0 - the Timetable HUD
+
+The point of all the pak decoding. `pages/timetable.html` - which was a
+colour test - is now the real thing.
+
+Shows the service being driven as a stop list: passed calls dimmed, the next
+one highlighted with a purple edge, minutes to each remaining call, platform
+numbers, and a clock. It reads like a departure board.
+
+### Matching the live service
+
+`/api/timetable/live` takes `currentServiceName` from `DriverAid.PlayerInfo`
+and finds the stored service. That is harder than it sounds: **a headcode is
+not unique.** TSW splits a working across a player leg and an AI
+continuation sharing one, and 221 of 429 headcodes on the Fife Circle file
+appear more than once.
+
+`find_service()` scores candidates rather than taking the first:
+  - a service whose booked times BRACKET the clock wins outright;
+  - otherwise the closest start time;
+  - a player leg beats an AI continuation - it is the one being driven;
+  - a service with no calls is pushed to the back.
+
+### Progress
+
+A call is passed once its departure is behind the clock; the next is the
+first that is not. Times past midnight are stored wrapped, so the day
+boundary is added back while walking the list - otherwise a service running
+into the small hours appears to go backwards and every stop reads as passed.
+
+### Behaviour under failure
+
+  - The last good timetable STAYS on screen when a poll fails or between
+    services. Blanking a stop list someone is reading is worse than showing
+    one a few seconds old.
+  - A hand-picked service pins until "back to live", so the page is usable
+    for planning with the game shut.
+  - The picker offers only services WITH calls: empty stock and continuation
+    legs are real records with nothing to show on a stop list.
+  - Picker handlers are attached after each render rather than inline,
+    because the markup is regenerated - inline handlers on regenerated
+    markup is how the Known Trains page lost its buttons before.
+
+Polls every 5 seconds. The booked timetable does not change; only our
+position through it does, so anything faster is load on the game for nothing.
