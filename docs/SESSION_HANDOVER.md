@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.1.5**
+**App version at end of session: 8.1.6**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -74,6 +74,24 @@ Measured on a Pixel 5 viewport: 22px -> 10px top gap, page height == viewport,
 both header items clear the overlay by 4px.
 
 Also: ?name=P2K24 or ?service=2K24 pins a service from the URL.
+
+## What changed in v8.1.6 - wrong ROUTE for the right headcode
+
+2K24 on the Fife Circle showed an East Coast Main Line service. A headcode is
+NOT unique across routes and the lookup searched them all, picking on time.
+
+find_service() now takes `live_stations` from DriverAid.TrackData - the
+stations the game says are ahead - and scores overlap heavily. Station names
+are compared on letters and digits only, because the API and the paks do not
+spell alike ("Edinburgh Waverly" vs "Edinburgh Waverley", live names carrying
+platforms).
+
+Falls back to the time match when TrackData is unavailable. The route is now
+shown first in the page header so a bad match is visible at a glance.
+
+Test bug found: the route checks left the mock reporting a service, so the
+hold-expiry check after them failed on a bug that was not there. Fixture now
+resets state between checks.
 
 ## What changed in v8.1.5 - nothing showing while in a service
 

@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.1.5
+## Current version: 8.1.6
 
 ## Shipped features (working, tested against real data)
 
@@ -1820,3 +1820,36 @@ position this bug left things in.
 
 Confirmed from the real extraction: all 733 headcodes present follow
 number-letter-number-number, so the stored side was already correct.
+
+
+## FIXED in v8.1.6 - wrong ROUTE for the right headcode
+
+Driving 2K24 on the Fife Circle, the HUD showed an East Coast Main Line
+service. The headcode was read correctly; the route was not.
+
+**A headcode is not unique across routes.** 2K24 exists on both. The lookup
+searched every stored route and returned whichever scored best on time, and
+with two equally plausible candidates that is a coin toss.
+
+`DriverAid.TrackData` already reports the stations ahead, so it settles it
+without asking the user anything: a service that calls at those stations is
+on this route, one that does not is not. `find_service()` now takes
+`live_stations` and scores overlap heavily - each shared station is worth
+more than any timing difference, and a service sharing NONE is pushed right
+down.
+
+Comparison is on letters and digits only. The live API and the pak files do
+not spell alike: the asset carries DTG's own "Edinburgh Waverly" beside
+"Edinburgh Waverley", and live names can carry a platform. Matching on raw
+text would fail on a space or a missing 'e'.
+
+If TrackData is unavailable the lookup falls back to the time-based match
+rather than rejecting everything - a slightly wrong service beats a blank
+page, and the route is now shown in the header so a bad match is obvious.
+
+### A test bug this exposed
+
+The new route checks left the mock game reporting a service, so the
+hold-expiry check that follows saw "still found" and failed - on a bug that
+was not there. Test ORDER matters when the fixture carries state between
+checks, and the fixture now resets it explicitly.

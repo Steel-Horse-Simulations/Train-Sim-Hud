@@ -245,6 +245,10 @@ function render(d) {
   document.getElementById('headcode').textContent =
     d.headcode || d.service_name || '\u2014';
   const parts = [];
+  // The route is shown FIRST. A headcode is not unique across routes -
+  // 2K24 exists on both the Fife Circle and the East Coast Main Line - so
+  // the route is what tells you at a glance whether the right service was
+  // matched.
   if (d.route_key) parts.push(esc(d.route_key));
   if (d.first_time) parts.push(hhmm(d.first_time) + ' \u2192 ' + hhmm(d.last_time));
   parts.push(d.call_count + ' stops');

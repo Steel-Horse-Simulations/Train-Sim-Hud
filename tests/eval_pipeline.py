@@ -412,6 +412,50 @@ def run_timetable_hud(m):
         else:
             print("  a mismatch reports the codes that are stored")
 
+        # A HEADCODE IS NOT UNIQUE ACROSS ROUTES. 2K24 exists on the Fife
+        # Circle AND the East Coast Main Line; searching every route showed
+        # an ECML service to someone driving in Fife. The stations the game
+        # says are ahead decide it.
+        m.timetable_db.save_definition_timetable("ECML_test", "E.uasset", [
+            {"headcode": "2K85", "name": "P2K85E", "role": "player_leg",
+             "first_time": stops[0]["departure"], "last_time": stops[-1]["arrival"],
+             "stops": [{"station": n, "arrival": stops[i]["arrival"],
+                        "departure": stops[i]["departure"]}
+                       for i, n in enumerate(["Doncaster", "Retford", "Newark",
+                                              "Peterborough", "Stevenage"])]}])
+        live = {"names": ["Kirkcaldy", "Haymarket"]}
+        real_stations = m._live_station_names
+
+        def fake_stations(limit=12):
+            return live["names"]
+
+        m._live_station_names = fake_stations
+        m.timetable_live.__globals__["_live_station_names"] = fake_stations
+        try:
+            state["mode"] = "2K85"
+            m._LAST_HEADCODE.update({"code": None, "at": 0.0})
+            fife = c.get("/api/timetable/live").get_json()
+            print(f"  stations ahead say Fife -> route {fife.get('route_key')}")
+            if fife.get("route_key") == "ECML_test":
+                print("  FAIL: picked the wrong route for the headcode"); ok = False
+
+            live["names"] = ["Doncaster", "Retford"]
+            m._LAST_HEADCODE.update({"code": None, "at": 0.0})
+            ecml = c.get("/api/timetable/live").get_json()
+            print(f"  stations ahead say ECML -> route {ecml.get('route_key')}")
+            if ecml.get("route_key") != "ECML_test":
+                print("  FAIL: did not follow the stations to the other route")
+                ok = False
+        finally:
+            m._live_station_names = real_stations
+            m.timetable_live.__globals__["_live_station_names"] = real_stations
+
+        # The expiry check below needs the game to report NOTHING. The route
+        # tests above leave it reporting a service, and without this the
+        # expiry test reads "still found" and fails on a bug that is not
+        # there.
+        state["mode"] = "drop"
+
         # ...but the hold must EXPIRE rather than persist for the journey
         m._LAST_HEADCODE["at"] -= 1000
         expired = c.get("/api/timetable/live").get_json()

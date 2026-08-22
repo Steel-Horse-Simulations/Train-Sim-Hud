@@ -989,8 +989,19 @@ def mark_route_extracted(route_key, services, calls):
         conn.close()
 
 
+def _norm_station(name):
+    """A station name reduced for comparison.
+
+    The live API and the pak files do not spell things identically - the
+    asset carries DTG's own "Edinburgh Waverly" alongside "Edinburgh
+    Waverley", and live names may carry a platform. Comparing on letters
+    and digits alone avoids failing on a space or an 'e'.
+    """
+    return "".join(c for c in (name or "").lower() if c.isalnum())
+
+
 def find_service(headcode=None, route_key=None, near_time=None,
-                 service_name=None):
+                 service_name=None, live_stations=None):
     """Finds a stored service, best match first.
 
     A headcode is NOT unique. TSW splits a working across a player leg and an
@@ -1066,9 +1077,31 @@ def find_service(headcode=None, route_key=None, near_time=None,
             except Exception:
                 return None
 
+        # Which stations each candidate calls at, for the route check below.
+        if live_stations:
+            for row in rows:
+                names = {c[0] for c in conn.execute(
+                    "SELECT station_name FROM extracted_calls WHERE service_id=?",
+                    (row["id"],)) if c[0]}
+                row["_station_overlap"] = len(
+                    {_norm_station(n) for n in names}
+                    & {_norm_station(n) for n in live_stations})
+
         def score(row):
             # Lower is better.
             s = 0
+            # A HEADCODE IS NOT UNIQUE ACROSS ROUTES. 2K24 exists on both the
+            # Fife Circle and the East Coast Main Line, and searching every
+            # route returned whichever scored best on time - showing an ECML
+            # service to someone driving in Fife. The stations the game says
+            # are ahead settle it: a service that calls at them is on this
+            # route, and one that does not is not.
+            if live_stations:
+                overlap = row.get("_station_overlap", 0)
+                if overlap:
+                    s -= overlap * 50        # strong evidence, so weighted high
+                else:
+                    s += 400                 # calls at none of them - wrong route
             if row.get("role") == "ai_continuation":
                 s += 100                     # the player is not driving this
             if not row.get("n_calls"):

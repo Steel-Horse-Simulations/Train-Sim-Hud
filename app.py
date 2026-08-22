@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "8.1.5"
+APP_VERSION = "8.1.6"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -2060,6 +2060,31 @@ def _to_secs(t):
         return None
 
 
+def _live_station_names(limit=12):
+    """Station names the game reports ahead on this route.
+
+    Used to tell two services apart when they share a headcode across
+    different routes. A miss returns None rather than an empty list, so the
+    caller can tell "no route evidence" from "this route has no stations",
+    and fall back to the time-based match instead of rejecting everything.
+    """
+    try:
+        body, status = api_get("get/DriverAid.TrackData", use_cache=True)
+        if status != 200 or not isinstance(body, dict):
+            return None
+        values = body.get("Values") or {}
+        names = []
+        for key in ("stations", "markers"):
+            for entry in (values.get(key) or []):
+                if isinstance(entry, dict):
+                    n = (entry.get("stationName") or "").strip()
+                    if n:
+                        names.append(n)
+        return names[:limit] or None
+    except Exception:
+        return None
+
+
 def _normalise_headcode(raw):
     """The bare British headcode from whatever the game reports.
 
@@ -2174,8 +2199,13 @@ def timetable_live():
     # live value is free text and may carry a prefix, spacing or a suffix.
     # Pulling the code out of both ends means they still meet.
     lookup = _normalise_headcode(want)
+    # The stations the game says lie ahead identify the ROUTE. Without them a
+    # headcode alone picked whichever route scored best on time - an East
+    # Coast Main Line service while driving the Fife Circle.
+    live_stations = _live_station_names() if not service_name else None
     svc = timetable_db.find_service(headcode=lookup or None, route_key=route_key,
-                                    near_time=clock, service_name=service_name)
+                                    near_time=clock, service_name=service_name,
+                                    live_stations=live_stations)
     if not svc:
         # Say what the game reported. "Nothing is showing" with no clue what
         # was asked for is impossible to act on - and the live value may not
@@ -2185,6 +2215,7 @@ def timetable_live():
             "headcode": want or None,
             "live_service_name": want or None,
             "normalised": lookup,
+            "live_stations": live_stations,
             "stored_headcodes": _stored_headcode_sample(),
             "live_error": live_error,
             "detail": (f"The game reports '{want}' but no stored timetable "
@@ -2230,6 +2261,7 @@ def timetable_live():
         "loose_match": bool(svc.get("loose_match")),
         "role": svc.get("role"),
         "route_key": svc.get("route_key"),
+        "matched_by_stations": bool(live_stations),
         "first_time": svc.get("first_time"),
         "last_time": svc.get("last_time"),
         "call_count": len(out_calls),
