@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- viewport-fit=cover lets the page draw INTO the notch area. Without
+     it a phone reserves a blank band across the top in full screen,
+     which is dead space on a HUD. Safe-area insets below then keep
+     content clear of the camera cutout itself. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>TSW Hud - Timetable</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -17,16 +21,33 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; min-height: 100vh;
+    margin: 0;
+    /* 100dvh, not 100vh: on a phone 100vh is the height with the browser
+       chrome VISIBLE, so it overshoots in full screen and leaves the page
+       scrollable by exactly the toolbar's height. */
+    min-height: 100dvh;
     background: radial-gradient(ellipse at 50% 0%, #16161a 0%, #0a0a0b 60%);
     font-family: 'Barlow', sans-serif; color: var(--text);
   }
-  .wrap { max-width: 560px; margin: 0 auto; padding: 22px 12px 40px; }
+  .wrap {
+    max-width: 560px; margin: 0 auto;
+    /* Top padding follows the device's own safe area rather than a fixed
+       22px: a phone in full screen needs only enough to clear the camera
+       cutout, and a desktop window needs none of it. */
+    padding: max(10px, env(safe-area-inset-top)) 12px 40px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
 
   .hud-controls-overlay {
     position: fixed; top: 0; left: 0; right: 0;
     display: flex; align-items: center; justify-content: space-between;
-    gap: 8px; padding: 12px 16px;
+    gap: 8px;
+    /* The controls overlay sits ON the notch band, so it takes the inset
+       instead of the page - it only appears on tap, and the stop list
+       underneath keeps the full height. */
+    padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             12px max(16px, env(safe-area-inset-left));
     background: linear-gradient(180deg, rgba(0,0,0,0.55), transparent);
     opacity: 0; pointer-events: none; transition: opacity .25s ease; z-index: 20;
   }
@@ -44,7 +65,11 @@
 
   header.service {
     display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
-    padding: 0 4px 12px; border-bottom: 1px solid var(--hairline); margin-bottom: 2px;
+    /* Clears the controls overlay, which is 44px tall and only appears on
+       tap. Without it the headcode sat directly under the TSW HUD link.
+       Applied here rather than to .wrap so the stop list itself is not
+       pushed down when the controls are hidden - which is most of the time. */
+    padding: 44px 4px 10px; border-bottom: 1px solid var(--hairline); margin-bottom: 2px;
   }
   .headcode {
     font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
@@ -55,6 +80,11 @@
   .clock {
     margin-left: auto; font-family: 'Barlow Condensed', sans-serif;
     font-size: 22px; font-variant-numeric: tabular-nums; color: var(--text-dim);
+    /* Nudged down clear of the controls overlay, which appears on tap and
+       spans the full width - a clock level with it sat under the Exit
+       button. margin, not padding: the clock is a flex child and padding
+       only grew its box without moving the text. */
+    margin-top: 0;
   }
 
   .call {
@@ -139,7 +169,10 @@ function exitApp() { fetch('/api/shutdown', { method: 'POST' }); }
 
 // A hand-picked service overrides the live lookup until cleared, so the page
 // is usable for planning when the game is not running.
-let pinned = null;
+// ?name=P2K24 or ?service=2K24 pins a service from the URL, so a phone can
+// be pointed straight at one without tapping through the picker.
+const params = new URLSearchParams(location.search);
+let pinned = params.get('name') || params.get('service') || null;
 let lastGood = null;
 let lastGoodAt = 0;
 let routesLoaded = false;

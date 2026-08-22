@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.1.2**
+**App version at end of session: 8.1.3**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -44,6 +44,22 @@ Three faults the real run exposed, all fixed:
 
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
+
+## What changed in v8.1.3 - phone full-screen gap
+
+Blank band at the top of the Timetable HUD in full screen on a phone. The
+viewport had no `viewport-fit=cover`, so the browser reserved space around
+the camera cutout instead of drawing into it.
+
+Fixed: viewport-fit=cover + env(safe-area-inset-*) for top/left/right;
+min-height 100dvh not 100vh (100vh is the height WITH browser chrome, so it
+overshoots in full screen); header takes 44px top padding to clear the
+controls overlay (headcode and clock were under the TSW HUD link and Exit).
+
+Measured on a Pixel 5 viewport: 22px -> 10px top gap, page height == viewport,
+both header items clear the overlay by 4px.
+
+Also: ?name=P2K24 or ?service=2K24 pins a service from the URL.
 
 ## What changed in v8.1.2 - the HUD stuck on one service
 

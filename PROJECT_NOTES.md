@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.1.2
+## Current version: 8.1.3
 
 ## Shipped features (working, tested against real data)
 
@@ -1748,3 +1748,29 @@ Two changes, one each side:
 The regression test drives the whole cycle - game down, service seen, poll
 dropped, service changed, hold expired - because "it never changed" is only
 visible over a sequence, not in a single call.
+
+
+## FIXED in v8.1.3 - Timetable HUD gap at the top on a phone
+
+A blank band across the top in full screen. The viewport lacked
+`viewport-fit=cover`, so the browser RESERVED space around the camera cutout
+rather than letting the page draw into it.
+
+  - `viewport-fit=cover` on the viewport meta, plus
+    `env(safe-area-inset-*)` for top, left and right - a phone gets just
+    enough to clear its cutout, a desktop window gets none.
+  - `min-height: 100dvh` rather than `100vh`. On a phone `100vh` is the
+    height with the browser chrome VISIBLE, so it overshoots in full screen
+    and leaves the page scrollable by exactly the toolbar's height.
+  - The header takes 44px of top padding to clear the controls overlay,
+    which appears on tap and spans the full width - the headcode and clock
+    were sitting under the TSW HUD link and the Exit button. Applied to the
+    header rather than `.wrap` so the stop list is not pushed down while the
+    controls are hidden, which is most of the time.
+
+Measured on a Pixel 5 viewport: top gap 22px -> 10px, page height exactly
+equals the viewport (no scroll overshoot), headcode and clock both clear the
+overlay by 4px.
+
+Also added: `?name=P2K24` or `?service=2K24` pins a service from the URL, so
+a phone can be pointed straight at one without tapping through the picker.
