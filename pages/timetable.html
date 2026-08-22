@@ -141,7 +141,15 @@ function exitApp() { fetch('/api/shutdown', { method: 'POST' }); }
 // is usable for planning when the game is not running.
 let pinned = null;
 let lastGood = null;
+let lastGoodAt = 0;
 let routesLoaded = false;
+
+// How long a stop list stays on screen after the game stops naming a
+// service. Long enough to ride out a dropped poll or the gap between two
+// workings; short enough that it cannot show one service for an entire
+// journey in another - which is exactly what happened when it was held
+// indefinitely.
+const STALE_AFTER_MS = 90000;
 
 function hhmm(t) { return t ? String(t).slice(0, 5) : ''; }
 
@@ -157,15 +165,21 @@ function render(d) {
   const notice = document.getElementById('notice');
 
   if (!d.found) {
-    // Keep the last good timetable on screen rather than blanking it. A
-    // dropped poll, or the gap between two services, is not a reason to
-    // throw away the stop list someone is reading.
-    if (lastGood) {
-      notice.innerHTML = `<div class="notice">Waiting for the game &mdash; showing
-        the last service.</div>` + pickerHtml();
+    // Keep the last good timetable briefly rather than blanking it - a
+    // dropped poll is not a reason to throw away the stop list someone is
+    // reading. But only briefly, and say so, because a held service that
+    // never expires reads as the CURRENT one.
+    const age = Date.now() - lastGoodAt;
+    if (lastGood && age < STALE_AFTER_MS) {
+      document.getElementById('serviceMeta').innerHTML =
+        `<span style="color:#e8b74a;">waiting for the game &mdash; `
+        + `showing ${esc(lastGood.headcode || '')} from `
+        + `${Math.round(age / 1000)}s ago</span>`;
+      notice.innerHTML = pickerHtml();
       wirePicker();
       return;
     }
+    lastGood = null;
     document.getElementById('headcode').textContent = '\u2014';
     document.getElementById('serviceMeta').textContent =
       d.live_error ? 'game not running' : 'no service';
@@ -177,6 +191,7 @@ function render(d) {
   }
 
   lastGood = d;
+  lastGoodAt = Date.now();
   document.getElementById('headcode').textContent =
     d.headcode || d.service_name || '\u2014';
   const parts = [];

@@ -1021,6 +1021,10 @@ def find_service(headcode=None, route_key=None, near_time=None,
         rows = [dict(r) for r in conn.execute(sql, params)]
         if not rows:
             return None
+        # A caller that supplied a headcode gets services with THAT headcode
+        # or nothing. Falling back to a near-time match across every service
+        # is how an unrelated working appeared while a real one was being
+        # driven.
 
         def to_secs(t):
             if not t:

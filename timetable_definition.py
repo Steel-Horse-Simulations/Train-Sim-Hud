@@ -266,6 +266,18 @@ def derive_headcode(name):
     return m.group(1) if m else None
 
 
+def _to_seconds(hms):
+    """Clock text back to seconds, for recomputing a dwell after two
+    LoadUnload records at one platform are merged."""
+    if not hms:
+        return None
+    try:
+        h, m, s = (int(x) for x in hms.split(":"))
+        return h * 3600 + m * 60 + s
+    except Exception:
+        return None
+
+
 def _build_stops(instructions):
     """Turns instructions into the stop list a passenger would recognise.
 
@@ -292,6 +304,7 @@ def _build_stops(instructions):
     for having one.
     """
     stops = []
+    pending_departure = 0
     i = 0
     n = len(instructions)
     while i < n:
@@ -303,26 +316,64 @@ def _build_stops(instructions):
             continue
 
         if itype != "GoTo":
-            # A leading LoadUnload with no GoTo before it means the service
-            # STARTS at a platform - a real call, with a departure and no
-            # arrival.
+            if itype == "LoadUnload" and stops:
+                # An unpaired LoadUnload AFTER calls have begun is extra
+                # station work at the stop just made - a second door release,
+                # or a longer stand. It is NOT another call.
+                #
+                # Treating it as one produced the trailing duplicate seen on
+                # the real file: P1L24_1 ended "Edinburgh Waverly 18:04,
+                # Edinburgh Waverly 18:09". Its times are folded into the
+                # call before it, which is what they describe: the earliest
+                # arrival and the latest departure at that platform.
+                last = stops[-1]
+                arr = ins["arrival_ticks"] or ins["sim_arrival_ticks"]
+                dep = ins["completion_ticks"] or ins["sim_completion_ticks"]
+                a_new, d_new = _hms(arr), _hms(dep)
+                if a_new and (not last["arrival"] or a_new < last["arrival"]):
+                    last["arrival"] = a_new
+                if d_new and (not last["departure"] or d_new > last["departure"]):
+                    last["departure"] = d_new
+                if last["arrival"] and last["departure"]:
+                    a = _to_seconds(last["arrival"])
+                    d = _to_seconds(last["departure"])
+                    last["dwell_seconds"] = max(0, d - a) if (a is not None and d is not None) else None
+                i += 1
+                continue
             if itype == "LoadUnload":
-                # A leading LoadUnload is the service STARTING at a platform,
-                # and it carries no destination of its own - the location
-                # comes from the GoTo that follows. Using the LoadUnload for
-                # both produced 382 nameless stops on the real file, one at
-                # the head of most services.
-                nxt2 = instructions[i + 1] if i + 1 < n else None
-                place_from = nxt2 if (nxt2 and not (ins.get("station") or
-                                                    ins.get("display_name"))) else ins
-                stops.append(_make_stop(place_from, ins, starts_here=True))
-            i += 1
-            continue
+                # A leading LoadUnload is the service standing at its
+                # starting platform. It carries a booked departure but NO
+                # destination of its own.
+                #
+                # Borrowing the name from the following GoTo - which the
+                # first version did - names it after the NEXT station
+                # instead, because a GoTo is where the train is going, not
+                # where it is. On the real file that produced 331 services
+                # with a duplicated station: P1L86 read "Kirkcaldy 18:01,
+                # Kirkcaldy 18:10" when it starts at Kirkcaldy and its first
+                # call is also Kirkcaldy... no. It starts SOMEWHERE ELSE and
+                # the 18:10 Kirkcaldy is the real first call.
+                #
+                # There is nothing in the record that names the origin, so
+                # it is not invented. The departure is attached to the first
+                # real call instead, which is where a reader would look for
+                # it, and the origin is reported as unknown.
+                pending_departure = (ins["completion_ticks"]
+                                     or ins["sim_completion_ticks"])
+                i += 1
+                continue
 
         nxt = instructions[i + 1] if i + 1 < n else None
         nxt_type = (nxt.get("type") or "").split("::")[-1] if nxt else None
         if nxt_type == "LoadUnload":
-            stops.append(_make_stop(ins, nxt))
+            stop = _make_stop(ins, nxt)
+            if pending_departure and not stops:
+                # The booked departure from the origin belongs on the first
+                # call, which is where anyone reading a stop list expects to
+                # find "this service leaves at".
+                stop["origin_departure"] = _hms(pending_departure)
+                pending_departure = 0
+            stops.append(stop)
             i += 2                       # the pair is one call
             continue
 

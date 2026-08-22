@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.1.0**
+**App version at end of session: 8.1.2**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -44,6 +44,51 @@ Three faults the real run exposed, all fixed:
 
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
+
+## What changed in v8.1.2 - the HUD stuck on one service
+
+"It never changed to 2K24, it never changed from 1L24." P2K24 IS stored with
+14 stops, so the lookup was fine - the live headcode was never arriving.
+
+`DriverAid.PlayerInfo` is the path most prone to dropping. The journey
+reader's own docstring says it "only ever returned a dropped connection
+during scanning". One failed read produced found=false, the page held the
+last good timetable, and - because that hold never expired - it showed one
+service for an entire journey in another.
+
+Server: `_live_headcode()` retries once and holds the last code for 45s, then
+gives up. Client: the held stop list expires after 90s and, while held, the
+header says so in amber with its age - a held service that never expires
+reads as the CURRENT one.
+
+Also fixed in 8.1.1 (same release, three bugs): duplicate first station (the
+origin borrowed the following GoTo's name - 331 of 820 services affected),
+duplicate last station (an unpaired trailing LoadUnload is extra work at the
+stop just made, now folded in), and the wrong service being guessed when no
+headcode was available.
+
+## What changed in v8.1.1 - three HUD bugs, all mine
+
+Reported: wrong service (1L24) shown mid-journey AND before the game started,
+Kirkcaldy twice at the top, Edinburgh Waverly twice at the bottom.
+
+**Duplicate at the TOP.** A leading LoadUnload is the train standing at its
+origin and carries NO destination. v7.61.1 borrowed the name from the
+following GoTo - but a GoTo is where the train is GOING, so the origin got
+named after the first call. 331 of 820 services had a repeat. Nothing in the
+record names the origin, so it is no longer invented: the booked departure is
+attached to the first real call as `origin_departure`.
+
+**Duplicate at the BOTTOM.** An unpaired LoadUnload AFTER calls have begun is
+extra station work at the stop just made, not another call. Its times are now
+folded into the previous call (earliest arrival, latest departure, dwell
+recomputed).
+
+**Wrong service.** With no headcode, find_service was called with
+headcode=None and matched ANY service, returning whichever sat nearest the
+clock - hence a service showing with the game shut, and swapping away from
+the real one on a dropped poll. No headcode now means "no service", and a
+supplied headcode must match exactly.
 
 ## What changed in v8.1.0 - THE TIMETABLE HUD
 

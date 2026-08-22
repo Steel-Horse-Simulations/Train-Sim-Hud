@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "8.1.0"
+APP_VERSION = "8.1.2"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -2060,6 +2060,46 @@ def _to_secs(t):
         return None
 
 
+_LAST_HEADCODE = {"code": None, "at": 0.0}
+HEADCODE_HOLD_SECONDS = 45.0
+
+
+def _live_headcode():
+    """The headcode of the service being driven, with a short hold.
+
+    Returns (headcode, error). PlayerInfo drops often, so a single failure
+    returns the LAST KNOWN code for a short while rather than nothing - but
+    only for a short while, because holding it forever is how the HUD came
+    to show one service for an entire journey in another.
+
+    Retried once on a drop, since a retry costs a few milliseconds and a
+    wrong service costs the whole page.
+    """
+    code, err = None, None
+    for attempt in range(2):
+        try:
+            body, status = api_get("get/DriverAid.PlayerInfo", use_cache=False)
+            if status == 200 and isinstance(body, dict):
+                vals = body.get("Values") or body
+                code = (vals.get("currentServiceName") or "").strip()
+                err = None
+                break
+            err = "game_not_reachable"
+        except Exception:
+            err = "game_not_reachable"
+
+    now = time.time()
+    if code:
+        _LAST_HEADCODE.update({"code": code, "at": now})
+        return code, None
+    # No code this time. Hold the last one briefly - between services, or
+    # across a dropped poll - then let it go.
+    if (_LAST_HEADCODE["code"]
+            and (now - _LAST_HEADCODE["at"]) < HEADCODE_HOLD_SECONDS):
+        return _LAST_HEADCODE["code"], None
+    return None, err or "no_service_name"
+
+
 @app.route("/api/timetable/live", methods=["GET"])
 def timetable_live():
     """The stop list for the service being driven, with progress marked.
@@ -2076,17 +2116,29 @@ def timetable_live():
     live_error = None
 
     if not want and not service_name:
-        try:
-            body, status = api_get("get/DriverAid.PlayerInfo")
-            if status == 200 and isinstance(body, dict):
-                vals = body.get("Values") or body
-                want = (vals.get("currentServiceName") or "").strip()
-            else:
-                live_error = "game_not_reachable"
-        except Exception:
-            live_error = "game_not_reachable"
+        # PlayerInfo is the path most prone to dropping - the journey
+        # reader's own notes record that it "only ever returned a dropped
+        # connection during scanning". One failed read must not leave the
+        # HUD showing a stale service indefinitely, which is exactly what
+        # happened: it stuck on whatever it had and never moved.
+        want, live_error = _live_headcode()
 
     clock = _clock_seconds()
+
+    # Without a headcode there is NOTHING to identify. Searching anyway
+    # matched whichever service happened to sit nearest the clock, so the
+    # page showed 1L24 with the game shut and swapped to an unrelated
+    # service whenever a poll dropped mid-journey. A missing headcode is
+    # "no service", not "guess one".
+    if not want and not service_name:
+        return jsonify({
+            "found": False,
+            "headcode": None,
+            "live_error": live_error or "no_service_name",
+            "detail": ("The game is not reporting a service. Start a service, "
+                       "or pick one below."),
+        })
+
     svc = timetable_db.find_service(headcode=want or None, route_key=route_key,
                                     near_time=clock, service_name=service_name)
     if not svc:

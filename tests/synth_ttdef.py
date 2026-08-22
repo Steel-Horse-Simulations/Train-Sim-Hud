@@ -251,6 +251,20 @@ def build(out="/tmp/synth_ttdef"):
         stops.append((st, None, t, True))
     specs.append(("6S42", stops, False))
 
+    # A service whose final platform carries a SECOND LoadUnload - extra
+    # station work at the same stop, not another call. On the real file this
+    # produced "Edinburgh Waverly 18:04, Edinburgh Waverly 18:09".
+    t = 14 * 3600
+    stops = []
+    for i, st in enumerate(route[:3]):
+        arr = None if i == 0 else t
+        t += 60
+        dep = t
+        t += 480
+        stops.append((st, arr, dep, True))
+    specs.append(("1D55", stops, False))
+    extra_tail = ("1D55", route[2], t + 300, t + 360)
+
     # A service crossing MIDNIGHT. Timespans keep counting past 24h, so a
     # call at 00:10 is stored as 24:10 - and rejecting anything past a day
     # silently dropped the last stops of the real late-night Leven services.
@@ -288,6 +302,10 @@ def build(out="/tmp/synth_ttdef"):
         services_bin += service(nm, svc_name, headcode, stops, simulated=sim)
         truth.append({
             "service_name": svc_name,
+            # A first stop with a departure and no arrival is the ORIGIN,
+            # written as a LoadUnload with no destination - the file does not
+            # name where a service begins.
+            "has_origin": bool(stops and stops[0][1] is None and stops[0][2]),
             "headcode": headcode,
             "stops": [s[0] for s in stops],
             "calls": [s[0] for s in stops if s[3]],
@@ -297,7 +315,7 @@ def build(out="/tmp/synth_ttdef"):
     # the AI continuation of 1L86
     services_bin += service(nm, "1L86_B", "1L86",
                             [(route[2], 6*3600+900, 6*3600+1000, True)], simulated=False)
-    truth.append({"service_name": "1L86_B", "headcode": "1L86",
+    truth.append({"service_name": "1L86_B", "headcode": "1L86", "has_origin": False,
                   "stops": [route[2]], "calls": [route[2]], "simulated": False})
     specs.append(("1L86", [(route[2], None, None, True)], False))
 

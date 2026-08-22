@@ -328,6 +328,76 @@ def run_timetable_hud(m):
             print("  FAIL: a passed stop follows an unpassed one"); ok = False
             break
 
+    # NO HEADCODE means NO SERVICE. Searching without one matched whichever
+    # service sat nearest the clock, so the HUD showed an unrelated working
+    # with the game shut, and swapped away from the real one whenever a poll
+    # dropped mid-journey.
+    blind = c.get("/api/timetable/live").get_json()
+    print(f"  with no service name: found={blind.get('found')} "
+          f"({blind.get('live_error')})")
+    if blind.get("found"):
+        print("  FAIL: guessed a service with nothing to identify it"); ok = False
+
+    # A supplied headcode must match exactly or return nothing - never fall
+    # back to a near-time match on some other service.
+    wrong = c.get("/api/timetable/live?service=9Z99").get_json()
+    if wrong.get("found"):
+        print("  FAIL: an unknown headcode matched a different service"); ok = False
+
+    # No station may appear twice in a row: an unpaired LoadUnload is either
+    # the origin (unnamed) or extra work at the stop just made.
+    for svc_name in ("P2K85",):
+        v = c.get("/api/timetable/live?name=" + svc_name).get_json()
+        names = [x["station_name"] for x in (v.get("calls") or [])]
+        if any(a == b for a, b in zip(names, names[1:])):
+            print(f"  FAIL: {svc_name} repeats a station: {names}"); ok = False
+    print("  no consecutive repeated stations")
+
+    # THE HEADCODE MUST FOLLOW THE GAME. PlayerInfo drops often - the
+    # journey reader's own notes say it "only ever returned a dropped
+    # connection during scanning" - and a single failure used to leave the
+    # HUD showing one service for an entire journey in another.
+    state = {"mode": "drop"}
+    real_get = m.api_get
+
+    def fake_get(path, timeout=None, retries=1, use_cache=True):
+        if "PlayerInfo" in path:
+            if state["mode"] == "drop":
+                return {"error": "connection_failed"}, 502
+            return {"Values": {"currentServiceName": state["mode"]}}, 200
+        return {}, 502
+
+    m.api_get = fake_get
+    m._live_headcode.__globals__["api_get"] = fake_get
+    try:
+        m._LAST_HEADCODE.update({"code": None, "at": 0.0})
+        if c.get("/api/timetable/live").get_json().get("found"):
+            print("  FAIL: found a service with the game down"); ok = False
+
+        state["mode"] = "2K85"
+        first = c.get("/api/timetable/live").get_json()
+        print(f"  live headcode: {first.get('headcode')}")
+        if first.get("headcode") != "2K85":
+            print("  FAIL: did not read the live headcode"); ok = False
+
+        state["mode"] = "drop"
+        held = c.get("/api/timetable/live").get_json()
+        if held.get("headcode") != "2K85":
+            print("  FAIL: a single dropped poll lost the service"); ok = False
+        else:
+            print("  one dropped poll: service held")
+
+        # ...but the hold must EXPIRE rather than persist for the journey
+        m._LAST_HEADCODE["at"] -= 1000
+        expired = c.get("/api/timetable/live").get_json()
+        if expired.get("found"):
+            print("  FAIL: the held service never expires"); ok = False
+        else:
+            print("  hold expires rather than sticking")
+    finally:
+        m.api_get = real_get
+        m._live_headcode.__globals__["api_get"] = real_get
+
     if c.get("/pages/timetable.html").status_code != 200:
         print("  FAIL: the HUD page is missing"); ok = False
     unknown = c.get("/api/timetable/live?service=9Z99").get_json()

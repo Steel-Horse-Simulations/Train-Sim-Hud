@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.1.0
+## Current version: 8.1.2
 
 ## Shipped features (working, tested against real data)
 
@@ -1683,3 +1683,68 @@ into the small hours appears to go backwards and every stop reads as passed.
 
 Polls every 5 seconds. The booked timetable does not change; only our
 position through it does, so anything faster is load on the game for nothing.
+
+
+## FIXED in v8.1.1 - three Timetable HUD bugs
+
+### Kirkcaldy twice at the top
+
+A leading `LoadUnload` is the train standing at its ORIGIN. It carries a
+booked departure and NO destination. v7.61.1 fixed the resulting nameless
+stop by borrowing the name from the following `GoTo` - but a GoTo is where
+the train is GOING, so the origin was named after the first call.
+
+**331 of 820 services** carried a duplicate as a result.
+
+Nothing in the record names the origin, so it is no longer invented. The
+booked departure is attached to the first real call as `origin_departure`,
+which is where a reader looks for "this service leaves at".
+
+### Edinburgh Waverly twice at the bottom
+
+An unpaired `LoadUnload` after calls have begun is extra station work at the
+stop just made - a second door release, a longer stand - not another call.
+Its times are folded into the preceding call: earliest arrival, latest
+departure, dwell recomputed.
+
+### The wrong service, even with the game shut
+
+`/api/timetable/live` called `find_service(headcode=None)` when the game
+reported nothing, and that matched ANY service, returning whichever sat
+nearest the clock. Hence a service appearing before the game started, and
+swapping away from the real one whenever a poll dropped mid-journey.
+
+No headcode now means "no service", with a reason. A supplied headcode must
+match exactly - never a near-time fallback onto some other working.
+
+A pattern worth noting across all three: each was a lookup that preferred
+ANY answer to no answer. A stop list that admits it does not know is more
+useful than one that quietly shows the wrong train.
+
+
+## FIXED in v8.1.2 - the HUD stuck showing one service
+
+Reported: driving 2K24, the HUD never left 1L24.
+
+`P2K24` is stored with 14 stops, so the lookup was never the problem. The
+live HEADCODE was not arriving.
+
+`DriverAid.PlayerInfo` is the least reliable path in this API - the journey
+reader's own docstring records that it "only ever returned a dropped
+connection during scanning". A single failed read returned found=false, the
+page kept the last good timetable on screen, and that hold NEVER EXPIRED. So
+one dropped poll pinned the display to a service for the rest of a journey.
+
+Two changes, one each side:
+
+  - `_live_headcode()` retries once, then holds the last known code for 45
+    seconds before giving up. A retry costs milliseconds; a wrong service
+    costs the whole page.
+  - the page expires its held stop list after 90 seconds, and while holding
+    it says so in amber with the age: "waiting for the game - showing 1L24
+    from 24s ago". A held service that never announces itself reads as the
+    current one, which is the actual harm.
+
+The regression test drives the whole cycle - game down, service seen, poll
+dropped, service changed, hold expired - because "it never changed" is only
+visible over a sequence, not in a single call.
