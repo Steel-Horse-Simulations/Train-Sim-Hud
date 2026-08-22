@@ -34,7 +34,9 @@
     /* Top padding follows the device's own safe area rather than a fixed
        22px: a phone in full screen needs only enough to clear the camera
        cutout, and a desktop window needs none of it. */
-    padding: max(10px, env(safe-area-inset-top)) 12px 40px;
+    /* Only the device's own inset - no arbitrary minimum. On a phone this
+       is the cutout clearance and nothing more; on a desktop it is zero. */
+    padding: env(safe-area-inset-top) 12px 40px;
     padding-left: max(12px, env(safe-area-inset-left));
     padding-right: max(12px, env(safe-area-inset-right));
   }
@@ -65,11 +67,12 @@
 
   header.service {
     display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
-    /* Clears the controls overlay, which is 44px tall and only appears on
-       tap. Without it the headcode sat directly under the TSW HUD link.
-       Applied here rather than to .wrap so the stop list itself is not
-       pushed down when the controls are hidden - which is most of the time. */
-    padding: 44px 4px 10px; border-bottom: 1px solid var(--hairline); margin-bottom: 2px;
+    /* NO top padding. 44px was added to clear the controls overlay and made
+       the gap worse than the one it was meant to fix - the overlay only
+       appears on tap and fades again, so reserving permanent space for it
+       costs a stop off the bottom of the list on every phone, all the time,
+       to tidy something visible for two seconds. */
+    padding: 0 4px 10px; border-bottom: 1px solid var(--hairline); margin-bottom: 2px;
   }
   .headcode {
     font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
@@ -80,12 +83,14 @@
   .clock {
     margin-left: auto; font-family: 'Barlow Condensed', sans-serif;
     font-size: 22px; font-variant-numeric: tabular-nums; color: var(--text-dim);
-    /* Nudged down clear of the controls overlay, which appears on tap and
-       spans the full width - a clock level with it sat under the Exit
-       button. margin, not padding: the clock is a flex child and padding
-       only grew its box without moving the text. */
-    margin-top: 0;
   }
+
+  /* The header does NOT move for the controls overlay. Two attempts to make
+     room for it both made the reported gap worse - a fixed 44px, then 40px
+     while visible, which fires on load because the controls show briefly at
+     startup. The overlay is translucent, appears on tap and fades; a couple
+     of seconds of overlap costs nothing, while permanent space costs a stop
+     off the bottom of every phone screen. */
 
   .call {
     display: grid; grid-template-columns: 78px 1fr auto;

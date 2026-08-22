@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.1.3**
+**App version at end of session: 8.1.4**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -44,6 +44,20 @@ Three faults the real run exposed, all fixed:
 
 **Next: ribbon GUID + offset -> lat/long** from the route definition asset's
 geometry, putting every stop on the map without driving.
+
+## What changed in v8.1.4 - revert the gap 8.1.3 added
+
+8.1.3's 44px header padding (to clear the controls overlay) was BIGGER than
+the gap it was meant to fix. A follow-up that applied it only while controls
+were visible still fired on load. Both gone - headcode now measures at y=0 on
+a Pixel 5 viewport.
+
+Kept: viewport-fit=cover, safe-area insets, 100dvh.
+
+UNRESOLVED: the white band around the camera cutout in the photo is not the
+page (page background is dark and starts at 0). Likely browser UI / Android
+status bar, which CSS cannot paint over - try the browser's full-screen or
+add-to-home-screen mode.
 
 ## What changed in v8.1.3 - phone full-screen gap
 

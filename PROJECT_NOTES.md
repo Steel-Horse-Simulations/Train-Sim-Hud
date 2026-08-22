@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.1.3
+## Current version: 8.1.4
 
 ## Shipped features (working, tested against real data)
 
@@ -1774,3 +1774,28 @@ overlay by 4px.
 
 Also added: `?name=P2K24` or `?service=2K24` pins a service from the URL, so
 a phone can be pointed straight at one without tapping through the picker.
+
+## v8.1.4 - undo the gap that 8.1.3 ADDED
+
+8.1.3 tried to clear the controls overlay with 44px of header padding. That
+is a bigger gap than the one being complained about, permanently, on every
+phone. A second attempt applied it only while the controls were visible -
+which fires on load, because the controls show briefly at startup, so the
+gap was still there when the photo was taken.
+
+Both removed. The header now sits at the very top: measured `headcode top: 0`
+on a Pixel 5 viewport, against 40px in 8.1.3 and 22px before any of this.
+
+The overlay is translucent, appears on tap and fades. A couple of seconds of
+overlap costs nothing; permanent space costs a stop off the bottom of the
+list forever.
+
+Kept from 8.1.3, because those parts were right: `viewport-fit=cover`,
+`env(safe-area-inset-*)`, and `100dvh` instead of `100vh`.
+
+STILL UNRESOLVED: the photo shows a white band across the very top of the
+screen, around the camera cutout. That is not the page - the page's own
+background is dark and now starts at y=0. It is most likely the browser's own
+UI or the Android status bar, which a web page cannot paint over. If it
+persists, the thing to try is the browser's own full-screen or "add to home
+screen" mode rather than another CSS change here.
