@@ -1013,12 +1013,43 @@ def find_service(headcode=None, route_key=None, near_time=None,
             sql += " AND s.service_name = ?"
             params.append(service_name)
         if headcode:
-            sql += " AND s.headcode = ?"
-            params.append(headcode)
+            # Match the headcode OR the service name, and tolerate the forms
+            # the game actually reports. `currentServiceName` is not
+            # guaranteed to be a bare code: TSW stores the player leg as
+            # `P2K24` and continuations as `2K24_B`, and the live value can
+            # be either. An exact headcode match found nothing at all while
+            # a perfectly good service sat in the table.
+            code = headcode.strip()
+            bare = code[1:] if (len(code) > 4 and code[0].upper() == "P"
+                                and code[1].isdigit()) else code
+            sql += (" AND (s.headcode = ? COLLATE NOCASE"
+                    " OR s.service_name = ? COLLATE NOCASE"
+                    " OR s.headcode = ? COLLATE NOCASE"
+                    " OR s.service_name = ? COLLATE NOCASE)")
+            params += [code, code, bare, "P" + bare]
         if route_key:
             sql += " AND s.route_key = ?"
             params.append(route_key)
         rows = [dict(r) for r in conn.execute(sql, params)]
+
+        if not rows and headcode:
+            # Last resort: the live value CONTAINS a stored code, e.g. a
+            # display string like "2K24 Edinburgh - Leven". Reported to the
+            # caller so a loose match is never mistaken for a clean one.
+            like = f"%{headcode.strip()}%"
+            rows = [dict(r) for r in conn.execute(
+                sql.replace(
+                    " AND (s.headcode = ? COLLATE NOCASE"
+                    " OR s.service_name = ? COLLATE NOCASE"
+                    " OR s.headcode = ? COLLATE NOCASE"
+                    " OR s.service_name = ? COLLATE NOCASE)",
+                    " AND (? LIKE '%' || s.headcode || '%'"
+                    " OR s.headcode LIKE ?)"),
+                [p for p in params
+                 if p not in (headcode.strip(), bare, "P" + bare)]
+                + [headcode.strip(), like])]
+            for r in rows:
+                r["loose_match"] = True
         if not rows:
             return None
         # A caller that supplied a headcode gets services with THAT headcode

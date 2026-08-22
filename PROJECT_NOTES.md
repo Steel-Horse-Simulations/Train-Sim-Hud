@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.1.4
+## Current version: 8.1.5
 
 ## Shipped features (working, tested against real data)
 
@@ -1799,3 +1799,24 @@ background is dark and now starts at y=0. It is most likely the browser's own
 UI or the Android status bar, which a web page cannot paint over. If it
 persists, the thing to try is the browser's own full-screen or "add to home
 screen" mode rather than another CSS change here.
+
+
+## FIXED in v8.1.5 - nothing showing while in a service
+
+The lookup compared the game's live value against stored headcodes as plain
+strings. Stored codes are DERIVED FROM SERVICE NAMES - `P2K24` and `1L86_B`
+give `2K24` and `1L86` - so they are always the bare four characters. The
+live value is free text and need not be.
+
+`_normalise_headcode()` now pulls the British headcode
+(digit-letter-digit-digit) out of whatever the game reports, so `P2K24`,
+`2K24`, ` 2k24 ` and `2K24_End` all find the stored `2K24`.
+
+Just as importantly, a MISMATCH is now diagnosable. The page shows the value
+the game reported, what it normalised to, and a sample of the headcodes that
+ARE stored with their routes. "Nothing is showing" gave no way to tell a
+missing extraction from a code in a different form - which is exactly the
+position this bug left things in.
+
+Confirmed from the real extraction: all 733 headcodes present follow
+number-letter-number-number, so the stored side was already correct.

@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.1.4**
+**App version at end of session: 8.1.5**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -74,6 +74,18 @@ Measured on a Pixel 5 viewport: 22px -> 10px top gap, page height == viewport,
 both header items clear the overlay by 4px.
 
 Also: ?name=P2K24 or ?service=2K24 pins a service from the URL.
+
+## What changed in v8.1.5 - nothing showing while in a service
+
+Stored headcodes are derived from service NAMES (P2K24 -> 2K24), so they are
+the bare four characters; the live value from the game is free text. They were
+compared as plain strings.
+
+`_normalise_headcode()` extracts the British headcode (digit-letter-digit-
+digit) from whatever arrives, so P2K24 / 2K24 / " 2k24 " / 2K24_End all match.
+
+A mismatch now REPORTS itself: the page shows what the game said, what it
+normalised to, and a sample of stored headcodes with their routes.
 
 ## What changed in v8.1.2 - the HUD stuck on one service
 

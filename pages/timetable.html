@@ -218,12 +218,24 @@ function render(d) {
       return;
     }
     lastGood = null;
-    document.getElementById('headcode').textContent = '\u2014';
+    // Show WHAT the game reported and what is stored. "Nothing is showing"
+    // gives no way to tell a missing extraction from a headcode that does
+    // not match the stored form.
+    document.getElementById('headcode').textContent =
+      d.live_service_name || '\u2014';
     document.getElementById('serviceMeta').textContent =
-      d.live_error ? 'game not running' : 'no service';
+      d.live_error === 'game_not_reachable' ? 'game not running'
+      : d.live_service_name ? 'no stored timetable for this service'
+      : 'no service';
     callsBox.innerHTML = '';
+    const sh = d.stored_headcodes;
     notice.innerHTML = `<div class="notice">${esc(d.detail
-      || 'No timetable for this service yet.')}</div>` + pickerHtml();
+      || 'No timetable for this service yet.')}`
+      + (sh && sh.sample && sh.sample.length
+          ? `<div style="margin-top:8px;font-size:12.5px;">Stored:
+             ${sh.stored_services} services on ${esc((sh.routes || []).join(', '))}
+             &mdash; e.g. ${sh.sample.map(esc).join(', ')}</div>` : '')
+      + `</div>` + pickerHtml();
     wirePicker();
     return;
   }

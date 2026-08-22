@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "8.1.4"
+APP_VERSION = "8.1.5"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -2060,6 +2060,36 @@ def _to_secs(t):
         return None
 
 
+def _normalise_headcode(raw):
+    """The bare British headcode from whatever the game reports.
+
+    A headcode is digit-letter-digit-digit - 2K24, 1L86. Stored codes are
+    derived from service NAMES ("P2K24", "1L86_B") so they are always the
+    bare four characters, while the live value is free text and may not be.
+    Extracting the code from both ends means a live "P2K24" or "2K24 " still
+    finds the stored "2K24".
+    """
+    if not raw:
+        return None
+    m = re.search(r"(?<![0-9])(\d[A-Za-z]\d{2})(?![0-9])", str(raw))
+    return m.group(1).upper() if m else (str(raw).strip() or None)
+
+
+def _stored_headcode_sample(limit=12):
+    """A few stored headcodes, so a mismatch can be seen rather than guessed
+    at: "nothing is showing" gives no way to tell a missing extraction from a
+    code that simply does not match the stored form."""
+    try:
+        known = timetable_db.list_services()
+        codes = sorted({s.get("headcode") for s in known.get("services", [])
+                        if s.get("headcode")})
+        return {"stored_services": len(known.get("services", [])),
+                "routes": known.get("routes"),
+                "sample": codes[:limit]}
+    except Exception:
+        return None
+
+
 _LAST_HEADCODE = {"code": None, "at": 0.0}
 HEADCODE_HOLD_SECONDS = 45.0
 
@@ -2139,15 +2169,29 @@ def timetable_live():
                        "or pick one below."),
         })
 
-    svc = timetable_db.find_service(headcode=want or None, route_key=route_key,
+    # Normalise before looking up. Stored codes come from service NAMES
+    # ("P2K24", "1L86_B") so they are always the bare four characters; the
+    # live value is free text and may carry a prefix, spacing or a suffix.
+    # Pulling the code out of both ends means they still meet.
+    lookup = _normalise_headcode(want)
+    svc = timetable_db.find_service(headcode=lookup or None, route_key=route_key,
                                     near_time=clock, service_name=service_name)
     if not svc:
+        # Say what the game reported. "Nothing is showing" with no clue what
+        # was asked for is impossible to act on - and the live value may not
+        # be a bare headcode at all.
         return jsonify({
             "found": False,
             "headcode": want or None,
+            "live_service_name": want or None,
+            "normalised": lookup,
+            "stored_headcodes": _stored_headcode_sample(),
             "live_error": live_error,
-            "detail": ("No stored timetable for this service. Scan the route "
-                       "on the Routes page first."),
+            "detail": (f"The game reports '{want}' but no stored timetable "
+                       "matches it. Scan this route on the Routes page, or "
+                       "pick a service below to check what is stored."
+                       if want else
+                       "The game is not reporting a service."),
         })
 
     # Mark progress. A call is PASSED once its departure is behind the clock;
@@ -2182,6 +2226,8 @@ def timetable_live():
         "found": True,
         "headcode": svc.get("headcode"),
         "service_name": svc.get("service_name"),
+        "live_service_name": want or None,
+        "loose_match": bool(svc.get("loose_match")),
         "role": svc.get("role"),
         "route_key": svc.get("route_key"),
         "first_time": svc.get("first_time"),

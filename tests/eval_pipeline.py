@@ -387,6 +387,31 @@ def run_timetable_hud(m):
         else:
             print("  one dropped poll: service held")
 
+        # The live value is FREE TEXT. Stored codes come from service names
+        # ("P2K24", "1L86_B") so they are the bare four characters, and a
+        # live "P2K24" or "2k24 " must still find them. A headcode is always
+        # digit-letter-digit-digit.
+        for spelling in ("2K85", "P2K85", " 2k85 ", "2K85_End"):
+            state["mode"] = spelling
+            m._LAST_HEADCODE.update({"code": None, "at": 0.0})
+            v = c.get("/api/timetable/live").get_json()
+            if not v.get("found"):
+                print(f"  FAIL: live headcode {spelling!r} did not match the "
+                      "stored service"); ok = False
+        print("  live headcode matches in every spelling tried")
+
+        # An unmatched code must say what it looked for AND what is stored -
+        # "nothing is showing" cannot be acted on.
+        state["mode"] = "9Z99"
+        m._LAST_HEADCODE.update({"code": None, "at": 0.0})
+        miss = c.get("/api/timetable/live").get_json()
+        if miss.get("found"):
+            print("  FAIL: matched a service that is not stored"); ok = False
+        if not (miss.get("stored_headcodes") or {}).get("sample"):
+            print("  FAIL: a mismatch does not report what IS stored"); ok = False
+        else:
+            print("  a mismatch reports the codes that are stored")
+
         # ...but the hold must EXPIRE rather than persist for the journey
         m._LAST_HEADCODE["at"] -= 1000
         expired = c.get("/api/timetable/live").get_json()
