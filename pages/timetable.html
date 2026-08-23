@@ -283,6 +283,13 @@ function render(d) {
   parts.push(d.call_count + ' stops');
   if (d.role === 'ai_continuation') parts.push('AI leg');
   if (pinned) parts.push('picked by hand');
+  if (d.pinned_route) parts.push('route pinned');
+  // Say so when the game's clock could not be read. A stop list marked
+  // against the wrong clock looks like bad data rather than a missing
+  // connection.
+  if (d.clock_source === 'real') {
+    parts.push('<span style="color:#e8b74a;">game clock unavailable</span>');
+  }
   document.getElementById('serviceMeta').innerHTML = parts.join(' \u00b7 ');
 
   callsBox.innerHTML = (d.calls || []).map((c, i) => {
@@ -306,10 +313,15 @@ function render(d) {
 }
 
 function pickerHtml() {
+  // The route selector PINS the route. Route detection needs
+  // DriverAid.TrackData, which does not always answer, and a headcode that
+  // exists on two routes then picks the wrong one. Pinning does not depend
+  // on the game answering at all.
   return `<div class="picker">
-    <select id="routeSel"><option value="">route&hellip;</option></select>
+    <select id="routeSel"><option value="">route: auto&hellip;</option></select>
     <select id="svcSel"><option value="">service&hellip;</option></select>
     ${pinned ? '<button id="unpinBtn">back to live</button>' : ''}
+    <button id="diagBtn" title="Show what the game is actually returning">why?</button>
   </div>`;
 }
 
@@ -321,7 +333,41 @@ function wirePicker() {
   const svcSel = document.getElementById('svcSel');
   const unpin = document.getElementById('unpinBtn');
   if (unpin) unpin.onclick = () => { pinned = null; poll(); };
-  if (routeSel) routeSel.onchange = () => loadServices(routeSel.value);
+  const diag = document.getElementById('diagBtn');
+  // The two paths that decide the route and the clock fail QUIETLY, each
+  // falling back to something plausible. This shows what they actually
+  // returned, so a wrong route or a real-time clock can be explained
+  // instead of guessed at.
+  if (diag) diag.onclick = async () => {
+    const box = document.getElementById('notice');
+    try {
+      const d = await (await fetch('/api/timetable/diagnose')).json();
+      const rows = ['player_info', 'time_of_day', 'track_data'].map(k =>
+        `<div style="margin-bottom:6px;"><strong>${k}</strong>
+          <span class="dim">status ${esc((d[k] || {}).status)}</span>
+          <div style="font-size:11px;word-break:break-all;color:var(--text-dim);">
+            ${esc(((d[k] || {}).body || (d[k] || {}).error || '').slice(0, 300))}</div>
+        </div>`).join('');
+      box.innerHTML = `<div class="notice" style="font-family:'Barlow Condensed',sans-serif;">
+        <div style="margin-bottom:8px;">What the game is returning
+          <span class="dim">(${esc(d.api_base || '')})</span></div>
+        ${rows}
+        <div style="font-size:12px;">headcode
+          ${esc((d.interpreted || {}).headcode)} &middot; game clock
+          ${esc((d.interpreted || {}).game_clock_seconds)} &middot; stations
+          ${esc(JSON.stringify((d.interpreted || {}).station_names))}</div>
+      </div>` + pickerHtml();
+      wirePicker();
+    } catch (e) { box.textContent = 'Diagnostic failed: ' + e.message; }
+  };
+  if (routeSel) routeSel.onchange = async () => {
+    await fetch('/api/timetable/route_pin', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ route: routeSel.value || '' })
+    });
+    loadServices(routeSel.value);
+    poll();
+  };
   if (svcSel) svcSel.onchange = () => {
     if (svcSel.value) { pinned = svcSel.value; poll(); }
   };
@@ -335,7 +381,7 @@ async function loadServices(route) {
     const routeSel = document.getElementById('routeSel');
     const svcSel = document.getElementById('svcSel');
     if (routeSel) {
-      routeSel.innerHTML = '<option value="">route&hellip;</option>'
+      routeSel.innerHTML = '<option value="">route: auto&hellip;</option>'
         + (d.routes || []).map(r =>
             `<option ${r === route ? 'selected' : ''}>${esc(r)}</option>`).join('');
     }

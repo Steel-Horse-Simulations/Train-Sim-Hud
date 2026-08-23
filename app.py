@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "8.3.0"
+APP_VERSION = "8.3.1"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -2206,7 +2206,12 @@ def timetable_live():
     Query: ?service=1L86 &route=FifeCircle to override the live lookup, which
     is what the picker uses when the game is not running."""
     want = (request.args.get("service") or "").strip()
-    route_key = (request.args.get("route") or "").strip() or None
+    # A route can be forced. Route detection depends on DriverAid.TrackData,
+    # which is not always answering - and when it does not, a headcode that
+    # exists on two routes picks the wrong one. Pinning the route is a
+    # guaranteed way out that does not depend on the game answering at all.
+    route_key = ((request.args.get("route") or "").strip()
+                 or CONFIG.get("timetable_route") or None)
     service_name = (request.args.get("name") or "").strip() or None
     live = {}
     live_error = None
@@ -2346,6 +2351,7 @@ def timetable_live():
         "role": svc.get("role"),
         "route_key": svc.get("route_key"),
         "matched_by_stations": bool(live_stations),
+        "pinned_route": CONFIG.get("timetable_route"),
         "next_from_game": bool(live_stations) and next_index is not None,
         "first_time": svc.get("first_time"),
         "last_time": svc.get("last_time"),
@@ -2380,6 +2386,41 @@ def _operator_colour_for(entry):
         return None
     except Exception:
         return None
+
+
+@app.route("/api/timetable/diagnose", methods=["GET"])
+def timetable_diagnose():
+    """Raw responses from the three live paths the Timetable HUD depends on.
+
+    Two of them fail QUIETLY by design - a missing clock falls back to the
+    device's, a missing station list falls back to matching on time - so when
+    both go wrong at once the page looks merely wrong rather than
+    disconnected. This shows what each path actually returned, so the cause
+    can be read rather than guessed at.
+    """
+    out = {}
+    for label, path in (("player_info", "get/DriverAid.PlayerInfo"),
+                        ("time_of_day", "get/TimeOfDay.data"),
+                        ("track_data", "get/DriverAid.TrackData")):
+        try:
+            body, status = api_get(path, use_cache=False)
+            # Trimmed: TrackData can be very long, and the shape is what
+            # matters here, not every marker on the route.
+            text = json.dumps(body)[:1200] if isinstance(body, (dict, list)) else str(body)[:1200]
+            out[label] = {"status": status, "body": text,
+                          "keys": sorted(body.get("Values", {}).keys())
+                                  if isinstance(body, dict)
+                                  and isinstance(body.get("Values"), dict) else None}
+        except Exception as e:
+            out[label] = {"error": str(e)}
+
+    out["interpreted"] = {
+        "headcode": _live_headcode()[0],
+        "game_clock_seconds": _game_clock_seconds(),
+        "station_names": _live_station_names(),
+    }
+    out["api_base"] = resolved_api_base()
+    return jsonify(out)
 
 
 @app.route("/api/timetable/board", methods=["GET"])
@@ -2451,6 +2492,23 @@ def timetable_board():
         "stations": timetable_db.stations_with_departures(route_key),
     })
     return jsonify(board)
+
+
+@app.route("/api/timetable/route_pin", methods=["POST"])
+def timetable_route_pin():
+    """Pins the Timetable HUD to one route, or clears the pin.
+
+    Saved to config rather than held in the page, so it survives a reload and
+    applies wherever the HUD is opened - the tablet as well as the desktop.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    route = (body.get("route") or "").strip()
+    if route:
+        CONFIG["timetable_route"] = route
+    else:
+        CONFIG.pop("timetable_route", None)
+    save_config(CONFIG)
+    return jsonify({"ok": True, "route": CONFIG.get("timetable_route")})
 
 
 @app.route("/api/timetable/services", methods=["GET"])

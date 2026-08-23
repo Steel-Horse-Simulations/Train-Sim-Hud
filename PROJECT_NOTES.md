@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.3.0
+## Current version: 8.3.1
 
 ## Shipped features (working, tested against real data)
 
@@ -1949,3 +1949,36 @@ made-up one - an invented colour implies knowledge the app does not have.
 A bug found while testing it: the query selected `code` when the column is
 `short_code`, and the resulting OperationalError was swallowed by a handler
 meaning "no colours", so every row silently drew uncoloured.
+
+
+## v8.3.1 - wrong route AND real-time clock: one cause, made visible
+
+Both symptoms are the same failure. The route comes from
+`DriverAid.TrackData` and the clock from `TimeOfDay.data`, and BOTH fall back
+quietly - to matching on time, and to the device clock. So when those two
+paths stop answering, the page looks confidently wrong instead of
+disconnected. `DriverAid.PlayerInfo` clearly still works, since the headcode
+arrives.
+
+I could not tell from here which of the two is failing or why, and guessing
+again would have been the fourth attempt. So:
+
+**`/api/timetable/diagnose`** returns the raw response and status from all
+three paths, plus what each was interpreted as. A **why?** button on the HUD
+shows it without needing DevTools.
+
+**The fallbacks now announce themselves.** The header says "game clock
+unavailable" in amber when the device clock is being used. A silent fallback
+that produces plausible output is worse than an error.
+
+**A route can be PINNED.** `/api/timetable/route_pin` saves the choice to
+config, so it survives a reload and applies on the tablet too. Route
+detection needs TrackData; pinning does not depend on the game answering at
+all, so it is a guaranteed way to get the right timetable regardless.
+
+### Next
+
+Press **why?** while driving and send the output. `time_of_day` and
+`track_data` will each show a status and body: a 502 means the path is
+dropping like PlayerInfo does, a 200 with an unexpected shape means the keys
+differ in this TSW build and the readers need adjusting.

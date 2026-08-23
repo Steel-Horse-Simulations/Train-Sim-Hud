@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.3.0**
+**App version at end of session: 8.3.1**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -74,6 +74,24 @@ Measured on a Pixel 5 viewport: 22px -> 10px top gap, page height == viewport,
 both header items clear the overlay by 4px.
 
 Also: ?name=P2K24 or ?service=2K24 pins a service from the URL.
+
+## What changed in v8.3.1 - diagnose the wrong route + real clock
+
+Both symptoms have ONE cause: DriverAid.TrackData (route) and TimeOfDay.data
+(clock) are not answering, and both fall back QUIETLY - to time-based
+matching and to the device clock. PlayerInfo still works, so the headcode
+arrives and the page looks confidently wrong rather than disconnected.
+
+Added rather than guessed a fourth time:
+  - /api/timetable/diagnose - raw status + body from all three paths plus how
+    each was interpreted; **why?** button on the HUD shows it.
+  - the header now says "game clock unavailable" in amber when falling back.
+  - a route can be PINNED (/api/timetable/route_pin, saved to config) which
+    does not depend on the game answering at all.
+
+**Next: press why? while driving and read time_of_day / track_data.** 502 =
+dropping like PlayerInfo; 200 with an odd shape = different keys in this TSW
+build.
 
 ## What changed in v8.3.0 - departure board on foot
 
