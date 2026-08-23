@@ -412,6 +412,109 @@ def run_timetable_hud(m):
         else:
             print("  a mismatch reports the codes that are stored")
 
+        # THE TIMETABLE IS IN GAME TIME. Judging progress against the
+        # computer's clock marks stops passed that have not happened, and is
+        # hours out whenever the service runs at a time of day that is not
+        # the current one - which on a 24-hour timetable is most of them.
+        booked = [
+            {"station": "Leven", "arrival": None, "departure": "06:00:00"},
+            {"station": "Cameron Bridge", "arrival": "06:15:00", "departure": "06:16:00"},
+            {"station": "Kirkcaldy", "arrival": "06:30:00", "departure": "06:31:00"},
+            {"station": "Haymarket", "arrival": "06:50:00", "departure": "06:51:00"},
+            {"station": "Edinburgh Waverly", "arrival": "07:00:00", "departure": None},
+        ]
+        m.timetable_db.save_definition_timetable("GameClock", "G.uasset", [
+            {"headcode": "3G01", "name": "P3G01", "role": "player_leg",
+             "first_time": "06:00:00", "last_time": "07:00:00", "stops": booked}])
+        game = {"iso": "2026-08-16T06:33:00"}
+        real_clock = m._game_clock_seconds
+
+        def fake_clock():
+            t = game["iso"].split("T")[1].split(":")
+            return int(t[0]) * 3600 + int(t[1]) * 60 + int(t[2])
+
+        m._game_clock_seconds = fake_clock
+        m._clock_seconds.__globals__["_game_clock_seconds"] = fake_clock
+        try:
+            state["mode"] = "3G01"
+            m._LAST_HEADCODE.update({"code": None, "at": 0.0})
+            g = c.get("/api/timetable/live").get_json()
+            print(f"  game clock {g.get('clock')} ({g.get('clock_source')}), "
+                  f"next {g['calls'][g['next_index']]['station_name']}")
+            if g.get("clock_source") != "game":
+                print("  FAIL: used the device clock, not the game's"); ok = False
+            if g["calls"][g["next_index"]]["station_name"] != "Haymarket":
+                print("  FAIL: progress not judged against game time"); ok = False
+            # and it must MOVE with the game, not with real time
+            game["iso"] = "2026-08-16T06:52:00"
+            g2 = c.get("/api/timetable/live").get_json()
+            if g2["calls"][g2["next_index"]]["station_name"] != "Edinburgh Waverly":
+                print("  FAIL: progress did not follow the game clock forward")
+                ok = False
+            else:
+                print("  progress follows the game clock")
+        finally:
+            m._game_clock_seconds = real_clock
+            m._clock_seconds.__globals__["_game_clock_seconds"] = real_clock
+
+        # PASSED means "no longer the next stop", not "booked time has gone".
+        # Judging both from the clock dimmed the stop being served the
+        # instant its booked departure ticked by - and when running late it
+        # greyed out stops the train had not reached at all.
+        late_stops = [
+            {"station": "Leven", "arrival": None, "departure": "06:00:00"},
+            {"station": "Cameron Bridge", "arrival": "06:15:00", "departure": "06:16:00"},
+            {"station": "Kirkcaldy", "arrival": "06:30:00", "departure": "06:31:00"},
+            {"station": "Haymarket", "arrival": "06:50:00", "departure": "06:51:00"},
+        ]
+        m.timetable_db.save_definition_timetable("LateRoute", "L.uasset", [
+            {"headcode": "4L01", "name": "P4L01", "role": "player_leg",
+             "first_time": "06:00:00", "last_time": "06:50:00",
+             "stops": late_stops}])
+        gclock = {"s": 6 * 3600 + 30 * 60 + 10}
+        ahead = {"names": ["Kirkcaldy", "Haymarket"]}
+        real_gc, real_ls = m._game_clock_seconds, m._live_station_names
+        m._game_clock_seconds = lambda: gclock["s"]
+        m._clock_seconds.__globals__["_game_clock_seconds"] = lambda: gclock["s"]
+        m._live_station_names = lambda limit=12: ahead["names"]
+        m.timetable_live.__globals__["_live_station_names"] = lambda limit=12: ahead["names"]
+        try:
+            state["mode"] = "4L01"
+            m._LAST_HEADCODE.update({"code": None, "at": 0.0})
+
+            # standing at Kirkcaldy, booked departure not yet reached
+            v = c.get("/api/timetable/live").get_json()
+            cur = v["calls"][v["next_index"]]["station_name"]
+            if cur != "Kirkcaldy" or v["calls"][2]["passed"]:
+                print(f"  FAIL: the current stop ({cur}) should not be passed")
+                ok = False
+
+            # still there, booked departure now BEHIND the clock
+            gclock["s"] = 6 * 3600 + 55 * 60
+            v = c.get("/api/timetable/live").get_json()
+            cur = v["calls"][v["next_index"]]["station_name"]
+            print(f"  25 min late, still at Kirkcaldy -> next {cur}")
+            if cur != "Kirkcaldy":
+                print("  FAIL: advanced past a stop the train had not left")
+                ok = False
+            if v["calls"][2]["passed"]:
+                print("  FAIL: marked the current stop passed"); ok = False
+
+            # once the game says the next station is Haymarket, it moves on
+            ahead["names"] = ["Haymarket"]
+            v = c.get("/api/timetable/live").get_json()
+            if v["calls"][v["next_index"]]["station_name"] != "Haymarket":
+                print("  FAIL: did not advance when the train left"); ok = False
+            elif not v["calls"][2]["passed"]:
+                print("  FAIL: the departed stop is not marked passed"); ok = False
+            else:
+                print("  advances only when the train actually leaves")
+        finally:
+            m._game_clock_seconds = real_gc
+            m._clock_seconds.__globals__["_game_clock_seconds"] = real_gc
+            m._live_station_names = real_ls
+            m.timetable_live.__globals__["_live_station_names"] = real_ls
+
         # A HEADCODE IS NOT UNIQUE ACROSS ROUTES. 2K24 exists on the Fife
         # Circle AND the East Coast Main Line; searching every route showed
         # an ECML service to someone driving in Fife. The stations the game
@@ -480,6 +583,84 @@ def run_timetable_hud(m):
     return ok
 
 
+def run_departure_board(m):
+    """The on-foot departure board.
+
+    Station detection is the hard part: the pak files give station NAMES and
+    ribbon offsets but no coordinates, so the only place a station's position
+    exists is `drive_sightings` - stations seen on a recorded drive. That is
+    a real limit, and the board has to offer a manual choice rather than
+    appear broken when it applies.
+    """
+    print("\n--- departure board (on foot) ---")
+    ok = True
+
+    def svc(hc, name, times, dest):
+        return {"headcode": hc, "name": name, "role": "player_leg",
+                "first_time": times[0], "last_time": times[3],
+                "stops": [
+                    {"station": "Leven", "arrival": None, "departure": times[0]},
+                    {"station": "Kirkcaldy", "arrival": times[1],
+                     "departure": times[2], "platform": "2"},
+                    {"station": dest, "arrival": times[3], "departure": None}]}
+
+    m.timetable_db.save_definition_timetable("BoardRoute", "B.uasset", [
+        svc("2B01", "P2B01", ["06:00:00", "06:30:00", "06:31:00", "07:00:00"],
+            "Edinburgh Waverly"),
+        svc("2B02", "P2B02", ["06:10:00", "06:42:00", "06:43:00", "07:15:00"],
+            "Haymarket"),
+        svc("2B03", "P2B03", ["23:00:00", "23:30:00", "23:31:00", "23:59:00"],
+            "Leven"),
+    ])
+    m.timetable_db.save_drive_sightings("BoardRoute", [
+        {"station_name": "Kirkcaldy", "times_seen": 5, "closest_distance_m": 8.0,
+         "latitude": 56.1128, "longitude": -3.1580}])
+
+    # the station is found from the player's position
+    near = m.timetable_db.find_nearest_station(56.1129, -3.1581)
+    print(f"  nearest station to the player: {near}")
+    if not near or near["station_name"] != "Kirkcaldy":
+        print("  FAIL: did not locate the station from the position"); ok = False
+    # ...but only when actually near it
+    if m.timetable_db.find_nearest_station(51.5, -0.12) is not None:
+        print("  FAIL: matched a station hundreds of miles away"); ok = False
+
+    # the board shows trains around the game clock, in time order
+    # Scoped to this route: earlier tests in this file store services calling
+    # at the same stations, and an unscoped board would mix them. That is
+    # correct behaviour for a real station served by several routes, but it
+    # makes the assertion below meaningless.
+    board = m.timetable_db.departures_at("Kirkcaldy", 6 * 3600 + 35 * 60,
+                                         route_key="BoardRoute")
+    deps = board["departures"]
+    print(f"  {len(deps)} trains: "
+          + ", ".join(f"{d['departure'][:5]} {d['destination']}" for d in deps))
+    if len(deps) != 2:
+        print("  FAIL: wrong number of trains in the window"); ok = False
+    if [d["seconds_away"] for d in deps] != sorted(d["seconds_away"] for d in deps):
+        print("  FAIL: board is not in time order"); ok = False
+    if deps and deps[0]["destination"] != "Edinburgh Waverly":
+        print("  FAIL: destination is not the service's last call"); ok = False
+
+    # a train hours away must not appear
+    if any(d["headcode"] == "2B03" for d in deps):
+        print("  FAIL: a train 16 hours away is on the board"); ok = False
+
+    # an unknown station must not invent departures
+    empty = m.timetable_db.departures_at("Nowhere", 6 * 3600)
+    if empty.get("departures"):
+        print("  FAIL: invented departures for an unknown station"); ok = False
+
+    # and the picker must offer real stations
+    names = [s["station_name"] for s in
+             m.timetable_db.stations_with_departures("BoardRoute")]
+    if "Kirkcaldy" not in names:
+        print("  FAIL: the station picker is empty"); ok = False
+    else:
+        print(f"  picker offers {len(names)} stations")
+    return ok
+
+
 def run_version_declared(m):
     """APP_VERSION must match what the docs claim.
 
@@ -520,7 +701,8 @@ if __name__ == "__main__":
     m.timetable_db.init_db()
     results = [run_backup_restore(m), run_timetable_banking(m),
                run_drive_recorder(m), run_routes(m),
-               run_timetable_hud(m), run_version_declared(m)]
+               run_timetable_hud(m), run_departure_board(m),
+               run_version_declared(m)]
     print("\n" + ("ALL PASS" if all(results) else "FAILURES PRESENT"))
     sys.exit(0 if all(results) else 1)
 

@@ -44,7 +44,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # an update actually took effect (editing app.py on disk does nothing until
 # the whole app is fully closed and relaunched - a page refresh alone does
 # not reload Python code).
-APP_VERSION = "8.1.6"
+APP_VERSION = "8.3.0"
 PAGES_DIR = os.path.join(APP_DIR, "pages")
 
 # Ordering rule for the Customisation tab: add new themes ABOVE 'slate'.
@@ -2045,9 +2045,50 @@ def drive_match():
         request.args.get("route_key") or "unknown"))
 
 
+def _game_clock_seconds():
+    """Seconds since midnight IN THE GAME, or None if it cannot be read.
+
+    The timetable is a list of GAME times, so progress has to be judged
+    against the game's clock. Using the computer's clock marked stops passed
+    that had not happened - and would be hours out whenever the service runs
+    at a time of day that is not the current one, which on a 24-hour
+    timetable is most of them.
+
+    `TimeOfDay.data` gives LocalTimeISO8601, e.g. "2025-07-28T14:32:00".
+    """
+    try:
+        body, status = api_get("get/TimeOfDay.data", use_cache=True)
+        if status != 200 or not isinstance(body, dict):
+            return None
+        values = body.get("Values") or body
+        iso = values.get("LocalTimeISO8601") or values.get("localTimeISO8601")
+        if not iso:
+            return None
+        t = str(iso).split("T")[-1]
+        parts = t.split(":")
+        if len(parts) < 2:
+            return None
+        h = int(parts[0])
+        m = int(parts[1])
+        sec = int(float(parts[2])) if len(parts) > 2 else 0
+        return (h * 3600 + m * 60 + sec) % 86400
+    except Exception:
+        return None
+
+
 def _clock_seconds():
+    """The clock progress is measured against: the GAME's where available,
+    otherwise this computer's.
+
+    Falling back keeps the picker usable with the game shut, and the caller
+    is told WHICH clock was used - a stop list marked against the wrong one
+    looks like a data fault rather than a missing connection.
+    """
+    game = _game_clock_seconds()
+    if game is not None:
+        return game, "game"
     now = datetime.now()
-    return now.hour * 3600 + now.minute * 60 + now.second
+    return now.hour * 3600 + now.minute * 60 + now.second, "real"
 
 
 def _to_secs(t):
@@ -2178,7 +2219,7 @@ def timetable_live():
         # happened: it stuck on whatever it had and never moved.
         want, live_error = _live_headcode()
 
-    clock = _clock_seconds()
+    clock, clock_source = _clock_seconds()
 
     # Without a headcode there is NOTHING to identify. Searching anyway
     # matched whichever service happened to sit nearest the clock, so the
@@ -2190,6 +2231,8 @@ def timetable_live():
             "found": False,
             "headcode": None,
             "live_error": live_error or "no_service_name",
+            "clock": f"{clock // 3600:02d}:{(clock % 3600) // 60:02d}:{clock % 60:02d}",
+            "clock_source": clock_source,
             "detail": ("The game is not reporting a service. Start a service, "
                        "or pick one below."),
         })
@@ -2214,6 +2257,8 @@ def timetable_live():
             "found": False,
             "headcode": want or None,
             "live_service_name": want or None,
+            "clock": f"{clock // 3600:02d}:{(clock % 3600) // 60:02d}:{clock % 60:02d}",
+            "clock_source": clock_source,
             "normalised": lookup,
             "live_stations": live_stations,
             "stored_headcodes": _stored_headcode_sample(),
@@ -2225,15 +2270,23 @@ def timetable_live():
                        "The game is not reporting a service."),
         })
 
-    # Mark progress. A call is PASSED once its departure is behind the clock;
-    # the next one is the first that is not. Times past midnight are stored
-    # wrapped, so a service running into the small hours is compared with the
-    # day boundary added back rather than appearing to run backwards.
+    # Mark progress in TWO passes.
+    #
+    # The current stop must stay current until the train actually leaves it,
+    # so PASSED is defined as "no longer the next stop" rather than "booked
+    # departure is behind the clock". Judging both in one pass dimmed the
+    # stop you were standing at the moment its booked time ticked by - which
+    # is precisely when it matters most, and worse when running late, since
+    # every remaining call would grey out one by one while the train had not
+    # moved.
+    #
+    # Times past midnight are stored wrapped, so a service running into the
+    # small hours gets the day boundary added back rather than appearing to
+    # run backwards.
     calls = svc.get("calls") or []
     prev = -1
-    next_index = None
-    out_calls = []
-    for i, c in enumerate(calls):
+    timed = []
+    for c in calls:
         arr, dep = _to_secs(c.get("arrival")), _to_secs(c.get("departure"))
         base = arr if arr is not None else dep
         if base is not None and base < prev:
@@ -2242,13 +2295,44 @@ def timetable_live():
             base = arr if arr is not None else dep
         if base is not None:
             prev = base
-        ref = dep if dep is not None else arr
-        passed = ref is not None and ref < clock
-        if not passed and next_index is None:
-            next_index = i
+        timed.append((arr, dep, dep if dep is not None else arr))
+
+    # Pass 1: which call is next.
+    #
+    # The GAME knows, and its answer beats the clock's. DriverAid.TrackData
+    # lists the stations ahead, nearest first, so the first of them IS the
+    # next stop - whether the train is early, late or sitting still. Judging
+    # by booked time alone advances past stops not yet reached whenever the
+    # service runs late, which is exactly when a driver is watching.
+    next_index = None
+    if live_stations:
+        target = timetable_db._norm_station(live_stations[0])
+        for i, c in enumerate(calls):
+            if timetable_db._norm_station(c.get("station_name")) == target:
+                next_index = i
+                break
+
+    # Fall back to the clock when the game is not telling us - the picker
+    # with the game shut, or a station the timetable spells differently.
+    if next_index is None:
+        for i, (_arr, _dep, ref) in enumerate(timed):
+            if ref is None or ref >= clock:
+                next_index = i
+                break
+
+    # Pass 2: everything BEFORE the next stop is passed. Nothing from
+    # next_index onward is, whatever its booked time says.
+    out_calls = []
+    for i, c in enumerate(calls):
+        _arr, _dep, ref = timed[i]
+        passed = next_index is not None and i < next_index
+        if next_index is None:
+            passed = True                    # the whole service is behind us
         out_calls.append({
             **c,
             "passed": passed,
+            "at_stop": i == next_index and ref is not None and ref >= clock
+                       and _arr is not None and _arr <= clock,
             "seconds": ref,
             "minutes_away": round((ref - clock) / 60) if ref is not None else None,
         })
@@ -2262,6 +2346,7 @@ def timetable_live():
         "role": svc.get("role"),
         "route_key": svc.get("route_key"),
         "matched_by_stations": bool(live_stations),
+        "next_from_game": bool(live_stations) and next_index is not None,
         "first_time": svc.get("first_time"),
         "last_time": svc.get("last_time"),
         "call_count": len(out_calls),
@@ -2269,8 +2354,103 @@ def timetable_live():
         "alternatives": svc.get("alternatives"),
         "live_error": live_error,
         "clock": f"{clock // 3600:02d}:{(clock % 3600) // 60:02d}:{clock % 60:02d}",
+        "clock_source": clock_source,
         "calls": out_calls,
     })
+
+
+def _operator_colour_for(entry):
+    """A colour for a departure board row, from the operator that runs it.
+
+    The extracted timetable does NOT name an operator - the field exists in
+    the definition asset but is empty on every one of the 820 Fife Circle
+    services. So the colour comes from the Known Trains catalogue instead,
+    matched on the route the service runs. That is coarser than
+    per-service, but it is real data rather than an invented mapping, and it
+    is the same colour the map and the Known Trains pills use, via the
+    shared `resolve_livery_colour`.
+
+    Returns None when nothing is known, and the board then draws a neutral
+    row rather than a made-up colour.
+    """
+    try:
+        return train_classes_db.resolve_livery_colour_for_route(
+            entry.get("route_key"))
+    except AttributeError:
+        return None
+    except Exception:
+        return None
+
+
+@app.route("/api/timetable/board", methods=["GET"])
+def timetable_board():
+    """A departure board for the station the player is standing in.
+
+    Shown when on foot rather than driving: there is no service to follow, so
+    the useful thing is what is arriving and leaving around you.
+
+    Station detection, in order of confidence:
+      1. `?station=` - an explicit choice, which always wins;
+      2. the nearest station the game reports ahead on the track;
+      3. the nearest RECORDED station to the player's position.
+
+    (3) only works for stations seen on a previous drive, because station
+    COORDINATES exist nowhere else - the pak files carry names and ribbon
+    offsets, and resolving an offset to a coordinate is not implemented. The
+    response says which method was used and offers a station list, so an
+    undetected station is a choice to make rather than a broken page.
+    """
+    clock, clock_source = _clock_seconds()
+    route_key = (request.args.get("route") or "").strip() or None
+    station = (request.args.get("station") or "").strip() or None
+    how = "chosen" if station else None
+
+    if not station:
+        names = _live_station_names(limit=1)
+        if names:
+            station, how = names[0], "track_data"
+
+    location = None
+    if not station:
+        try:
+            body, status = api_get("get/DriverAid.PlayerInfo", use_cache=True)
+            if status == 200 and isinstance(body, dict):
+                vals = body.get("Values") or body
+                geo = vals.get("geoLocation") or {}
+                location = {"latitude": geo.get("latitude"),
+                            "longitude": geo.get("longitude")}
+                near = timetable_db.find_nearest_station(
+                    location["latitude"], location["longitude"])
+                if near:
+                    station = near["station_name"]
+                    route_key = route_key or near["route_key"]
+                    how = "position"
+        except Exception:
+            pass
+
+    if not station:
+        return jsonify({
+            "found": False,
+            "clock": f"{clock // 3600:02d}:{(clock % 3600) // 60:02d}",
+            "clock_source": clock_source,
+            "location": location,
+            "stations": timetable_db.stations_with_departures(route_key),
+            "detail": ("Could not tell which station you are in. Station "
+                       "positions are only known for stations seen on a "
+                       "recorded drive - pick one below."),
+        })
+
+    board = timetable_db.departures_at(station, clock, route_key=route_key)
+    for entry in board.get("departures", []):
+        entry["colour"] = _operator_colour_for(entry)
+    board.update({
+        "found": True,
+        "detected_by": how,
+        "clock": f"{clock // 3600:02d}:{(clock % 3600) // 60:02d}",
+        "clock_source": clock_source,
+        "stations": timetable_db.stations_with_departures(route_key),
+    })
+    return jsonify(board)
 
 
 @app.route("/api/timetable/services", methods=["GET"])

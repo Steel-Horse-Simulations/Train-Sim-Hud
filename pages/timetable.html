@@ -119,6 +119,28 @@
   }
   .away.now { color: var(--accent-bright); }
 
+  /* Departure board rows borrow the Known Trains pill treatment: a solid
+     coloured left edge in the operator's colour over the same dark panel.
+     Everything else matches the stop list above. */
+  .dep {
+    display: grid; grid-template-columns: 62px 1fr auto;
+    gap: 12px; align-items: baseline;
+    padding: 11px 6px 11px 9px;
+    border-bottom: 1px solid var(--hairline);
+    border-left: 3px solid transparent;
+  }
+  .dep .time {
+    font-family: 'Barlow Condensed', sans-serif; font-size: 18px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dep .dest { font-size: 16.5px; font-weight: 500; }
+  .dep .sub { font-size: 12px; color: var(--dimmer); margin-top: 2px; }
+  .dep .in {
+    font-family: 'Barlow Condensed', sans-serif; font-size: 14px;
+    color: var(--text-dim); white-space: nowrap;
+  }
+  .dep.soon .in { color: var(--accent-bright); }
+
   .notice {
     padding: 16px 14px; color: var(--text-dim); font-size: 14px;
     border: 1px solid var(--hairline); border-radius: 10px; margin-top: 14px;
@@ -178,6 +200,11 @@ function exitApp() { fetch('/api/shutdown', { method: 'POST' }); }
 // be pointed straight at one without tapping through the picker.
 const params = new URLSearchParams(location.search);
 let pinned = params.get('name') || params.get('service') || null;
+// Board mode is entered automatically when there is no service to follow,
+// and left by choosing "back to my service". A station chosen by hand pins
+// until then, so the board does not jump elsewhere while it is being read.
+let boardMode = false;
+let pinnedStation = params.get('station') || null;
 let lastGood = null;
 let lastGoodAt = 0;
 let routesLoaded = false;
@@ -203,6 +230,7 @@ function render(d) {
   const notice = document.getElementById('notice');
 
   if (!d.found) {
+    setClockFrom(d);
     // Keep the last good timetable briefly rather than blanking it - a
     // dropped poll is not a reason to throw away the stop list someone is
     // reading. But only briefly, and say so, because a held service that
@@ -242,6 +270,7 @@ function render(d) {
 
   lastGood = d;
   lastGoodAt = Date.now();
+  setClockFrom(d);
   document.getElementById('headcode').textContent =
     d.headcode || d.service_name || '\u2014';
   const parts = [];
@@ -322,22 +351,145 @@ async function loadServices(route) {
   } catch (e) { /* picker is optional; the live view still works */ }
 }
 
+function renderBoard(d) {
+  const callsBox = document.getElementById('calls');
+  const notice = document.getElementById('notice');
+  document.getElementById('headcode').textContent = d.station || 'Departures';
+  const bits = [];
+  if (d.route_key) bits.push(esc(d.route_key));
+  bits.push((d.departures || []).length + ' trains');
+  if (d.detected_by === 'position') bits.push('found from where you are');
+  else if (d.detected_by === 'track_data') bits.push('nearest station');
+  document.getElementById('serviceMeta').innerHTML =
+    'departure board \u00b7 ' + bits.join(' \u00b7 ');
+
+  if (!(d.departures || []).length) {
+    callsBox.innerHTML = '';
+    notice.innerHTML = `<div class="notice">Nothing due at
+      ${esc(d.station || 'this station')} in the next few hours.</div>`
+      + stationPickerHtml(d);
+    wireStationPicker();
+    return;
+  }
+
+  callsBox.innerHTML = (d.departures || []).map(x => {
+    const soon = x.minutes_away != null && x.minutes_away >= 0 && x.minutes_away <= 5;
+    const when = x.minutes_away == null ? ''
+      : x.minutes_away < 0 ? 'gone'
+      : x.minutes_away === 0 ? 'now'
+      : x.minutes_away < 60 ? x.minutes_away + ' min'
+      : Math.floor(x.minutes_away / 60) + 'h ' + (x.minutes_away % 60) + 'm';
+    // No colour means NO colour. Inventing one would imply the app knows
+    // which operator runs this train when it does not.
+    const edge = x.colour ? `border-left-color:${esc(x.colour)};` : '';
+    return `
+      <div class="dep ${soon ? 'soon' : ''}" style="${edge}">
+        <div class="time">${esc(hhmm(x.departure) || hhmm(x.arrival))}</div>
+        <div>
+          <div class="dest">${esc(x.destination || '\u2014')}</div>
+          <div class="sub">${esc(x.headcode || '')}${x.platform
+            ? ' \u00b7 Platform ' + esc(x.platform) : ''}${x.origin
+            ? ' \u00b7 from ' + esc(x.origin) : ''}</div>
+        </div>
+        <div class="in">${esc(when)}</div>
+      </div>`;
+  }).join('');
+  notice.innerHTML = stationPickerHtml(d);
+  wireStationPicker();
+}
+
+function stationPickerHtml(d) {
+  const list = d.stations || [];
+  return `<div class="picker">
+    <select id="stationSel">
+      <option value="">station&hellip;</option>
+      ${list.map(s => `<option ${s.station_name === d.station ? 'selected' : ''}
+        >${esc(s.station_name)}</option>`).join('')}
+    </select>
+    <button id="backLiveBtn">back to my service</button>
+  </div>`;
+}
+
+function wireStationPicker() {
+  const sel = document.getElementById('stationSel');
+  const back = document.getElementById('backLiveBtn');
+  if (sel) sel.onchange = () => { pinnedStation = sel.value || null; poll(); };
+  if (back) back.onclick = () => { pinnedStation = null; boardMode = false;
+                                   lastGood = null; poll(); };
+}
+
 async function poll() {
   try {
+    // Board mode: standing in a station rather than driving. A station
+    // chosen by hand pins, so the board does not jump elsewhere while it is
+    // being read.
+    if (pinnedStation || boardMode) {
+      const b = await (await fetch('/api/timetable/board'
+        + (pinnedStation ? '?station=' + encodeURIComponent(pinnedStation) : ''))).json();
+      setClockFrom(b);
+      if (b.found || pinnedStation) { renderBoard(b); return; }
+      boardMode = false;          // could not place us; fall back and explain
+    }
+
     const url = pinned
       ? '/api/timetable/live?name=' + encodeURIComponent(pinned)
       : '/api/timetable/live';
-    render(await (await fetch(url)).json());
+    const d = await (await fetch(url)).json();
+
+    // Not in a timetabled service - on foot in a station, most likely. The
+    // useful thing then is what is arriving and leaving around us, so switch
+    // to the board automatically rather than showing an empty stop list.
+    if (!d.found && !pinned && !lastGood) {
+      const b = await (await fetch('/api/timetable/board')).json();
+      setClockFrom(b);
+      if (b.found && (b.departures || []).length) {
+        boardMode = true;
+        renderBoard(b);
+        return;
+      }
+    }
+    render(d);
   } catch (e) {
     // leave whatever is on screen
   }
 }
 
+// The clock shown is the GAME's, not this device's. A timetable is a list
+// of game times, so showing the real time invites reading the two against
+// each other and concluding the service is hours late.
+//
+// It is anchored to the last value the server sent and ticks locally between
+// polls, re-anchoring every poll. TSW can run time faster than real time, so
+// local ticking drifts - but only ever for the few seconds until the next
+// poll corrects it.
+let clockSeconds = null;
+let clockSource = null;
+
+function setClockFrom(d) {
+  if (!d || !d.clock) return;
+  const p = String(d.clock).split(':').map(Number);
+  if (p.length >= 2 && !p.some(isNaN)) {
+    clockSeconds = p[0] * 3600 + p[1] * 60 + (p[2] || 0);
+    clockSource = d.clock_source || null;
+  }
+}
+
 function tick() {
-  const now = new Date();
-  document.getElementById('clock').textContent =
-    String(now.getHours()).padStart(2, '0') + ':' +
-    String(now.getMinutes()).padStart(2, '0');
+  const el = document.getElementById('clock');
+  if (clockSeconds == null) {
+    // Nothing from the game yet. Show the device clock, clearly marked, so
+    // it is never mistaken for the in-game time.
+    const now = new Date();
+    el.innerHTML = String(now.getHours()).padStart(2, '0') + ':' +
+      String(now.getMinutes()).padStart(2, '0') +
+      ' <span style="font-size:11px;color:#6c6875;">real</span>';
+    return;
+  }
+  clockSeconds = (clockSeconds + 1) % 86400;
+  const h = Math.floor(clockSeconds / 3600), m = Math.floor((clockSeconds % 3600) / 60);
+  el.innerHTML = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0')
+    + (clockSource === 'real'
+        ? ' <span style="font-size:11px;color:#6c6875;">real</span>' : '');
 }
 
 initHudControls('hud-controls');

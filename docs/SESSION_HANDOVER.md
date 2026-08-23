@@ -1,6 +1,6 @@
 # TSW Hud — session handover
 
-**App version at end of session: 8.1.6**
+**App version at end of session: 8.3.0**
 
 Read `TSW_HUD_NEW_CHAT_SPEC.txt` first (the canonical spec), then this.
 `TIMETABLE_EXTRACTION_FINDINGS.md` has the full detail on the timetable
@@ -74,6 +74,55 @@ Measured on a Pixel 5 viewport: 22px -> 10px top gap, page height == viewport,
 both header items clear the overlay by 4px.
 
 Also: ?name=P2K24 or ?service=2K24 pins a service from the URL.
+
+## What changed in v8.3.0 - departure board on foot
+
+Timetable HUD switches to a DEPARTURE BOARD when there is no service to
+follow. Known Trains pill styling (coloured left edge per operator), same
+aesthetics otherwise. Shows time, destination, headcode, platform, origin,
+minutes away - from stored timetable + GAME clock.
+
+Station detection: explicit pick > DriverAid.TrackData nearest > nearest
+RECORDED station by position. The third only works for stations seen on a
+recorded drive, because the paks have no station COORDINATES - stated in the
+UI with a picker rather than failing silently.
+
+Operator colour: the timetable names NO operator (empty on all 820 services),
+so it falls back to the operator whose trains were driven on that route,
+matched conservatively. No match = NO colour, never an invented one.
+
+Bug found while testing: the operator query used `code` when the column is
+`short_code`; the OperationalError was swallowed as "no colours" so every row
+drew uncoloured.
+
+## What changed in v8.2.1 - passed = "no longer the next stop"
+
+Single-pass marking dimmed the stop being served the moment its booked
+departure passed. Now two passes: find the next call, then mark only what is
+before it.
+
+Also: the NEXT stop now comes from DriverAid.TrackData (stations ahead,
+nearest first) rather than booked times. A late service otherwise advances
+past stops the train has not reached. Clock is the fallback only, for the
+picker with the game shut.
+
+Verified 25 min late: Kirkcaldy stays next and undimmed until the game says
+the next station is Haymarket.
+
+## What changed in v8.2.0 - IN-GAME CLOCK
+
+The HUD showed the phone's time AND judged progress against it. A timetable
+is a list of GAME times, so a service booked 06:00-07:00 read as finished on
+any real afternoon.
+
+_game_clock_seconds() reads TimeOfDay.data -> LocalTimeISO8601. passed/next/
+minutes-away all use it. Response carries clock_source; the page anchors to
+the game clock and ticks locally between polls (TSW can run time faster than
+real, so drift is corrected every poll). Falls back to the device clock,
+LABELLED "real" beside the time.
+
+Verified: game 06:33 / computer 09:40 -> next stop Haymarket; game to 06:52
+-> next stop Edinburgh Waverley.
 
 ## What changed in v8.1.6 - wrong ROUTE for the right headcode
 

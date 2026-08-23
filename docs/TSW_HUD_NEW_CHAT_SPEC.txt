@@ -4,7 +4,7 @@ TSW HUD — NEW CHAT HANDOFF SPECIFICATION
 This document is a complete specification for recreating the TSW Hud project in
 a new chat session. Read every section before writing a single line of code.
 
-VERSION THIS SPEC DESCRIBES: 8.1.6
+VERSION THIS SPEC DESCRIBES: 8.3.0
 
 ================================================================================
 SECTION 1: WHAT THIS PROJECT IS
@@ -578,6 +578,8 @@ PAK / GAME FILES (Discovery page, offline timetable extraction):
   GET  /api/timetable/live       → stop list for the live service, with
                                    passed/next marked
   GET  /api/timetable/services   → stored services, for the picker
+  GET  /api/timetable/board      → departure board for the station you are
+                                   standing in (?station= to choose)
   GET  /api/routes               → routes found by scanning paks
   POST /api/routes/scan          → scan every pak for timetables
   POST /api/routes/extract       → read one route, or every unread one

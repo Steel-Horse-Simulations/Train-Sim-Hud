@@ -147,7 +147,7 @@ TSW Hud/
                                the real app.
 ```
 
-## Current version: 8.1.6
+## Current version: 8.3.0
 
 ## Shipped features (working, tested against real data)
 
@@ -1853,3 +1853,99 @@ The new route checks left the mock game reporting a service, so the
 hold-expiry check that follows saw "still found" and failed - on a bug that
 was not there. Test ORDER matters when the fixture carries state between
 checks, and the fixture now resets it explicitly.
+
+
+## FIXED in v8.2.0 - the HUD ran on the wrong clock
+
+The clock showed the phone's time. Worse, PROGRESS was judged against it -
+and a timetable is a list of GAME times.
+
+That marks stops passed that have not happened, and is hours out whenever
+the service runs at a time of day that is not the current one, which on a
+24-hour timetable is most of them. A service booked 06:00-07:00 read as
+entirely finished at any real-world afternoon.
+
+`TimeOfDay.data` gives `LocalTimeISO8601`, so `_game_clock_seconds()` reads
+the in-game clock and everything - passed, next, minutes away - is measured
+against it. Verified with the game at 06:33 and the computer at 09:40: the
+next stop is Haymarket, and moving the game to 06:52 moves it to Edinburgh
+Waverley.
+
+The response carries `clock_source`, and the page shows the game clock
+anchored to it, ticking locally between polls and re-anchoring on each one.
+TSW can run time faster than real, so local ticking drifts - but only for
+the few seconds until the next poll corrects it.
+
+When the game cannot be read it falls back to the device clock and LABELS it
+"real" beside the time. An unmarked wrong clock looks like a data fault; a
+marked one looks like what it is.
+
+
+## CHANGED in v8.2.1 - passed means "no longer the next stop"
+
+Requested: a stop should only dim once it is no longer the next one.
+
+It was computed in a single pass - `passed` if the booked departure was
+behind the clock, `next` the first that was not - so the stop being SERVED
+dimmed the instant its booked time ticked by, while the train was still
+standing there.
+
+Now two passes: decide the next call first, then mark everything before it
+passed and nothing from it onward.
+
+### And the game decides which is next, not the clock
+
+Working from booked times alone, a late service advances past stops the
+train has not reached - each one greying out on schedule while the train sits
+still. That is exactly when a driver is looking at the page.
+
+`DriverAid.TrackData` lists the stations ahead, nearest first, so the first
+of them IS the next stop whether early, late or stationary. The clock is now
+only the fallback, for the picker with the game shut or a station the
+timetable spells differently.
+
+Verified 25 minutes late: standing at Kirkcaldy with its booked departure
+long gone, Kirkcaldy stays next and unmarked; Haymarket and Waverley stay
+undimmed; and only when the game reports Haymarket as next does Kirkcaldy
+mark passed.
+
+
+## SHIPPED in v8.3.0 - departure board when on foot
+
+The Timetable HUD now switches to a DEPARTURE BOARD when there is no
+timetabled service to follow - standing in a station rather than driving.
+Rows use the Known Trains treatment: a solid coloured left edge in the
+operator's colour over the same dark panel, with everything else matching
+the stop list.
+
+Each row shows booked time, destination, headcode, platform, origin and
+minutes away, in time order, from the stored timetable and the GAME clock.
+
+### Which station you are in
+
+Three sources, in order of confidence:
+  1. an explicit choice from the picker - always wins;
+  2. the nearest station the game reports ahead (`DriverAid.TrackData`);
+  3. the nearest RECORDED station to the player's position.
+
+**(3) is a real limitation, stated rather than hidden.** The pak files carry
+station NAMES and ribbon offsets but no coordinates, and resolving a ribbon
+offset to a coordinate is not implemented - so the only place a station's
+position exists is `drive_sightings`, i.e. stations seen on a recorded drive.
+When detection fails the board says so and offers the station list, so it is
+a choice to make rather than a broken page.
+
+### The operator colour is honest about what it knows
+
+The extracted timetable does NOT name an operator: the field exists in the
+definition asset and is empty on all 820 Fife Circle services. So a colour
+per service cannot come from the pak data.
+
+`resolve_livery_colour_for_route()` falls back to the operator whose trains
+have been driven on that route, matched conservatively on the name or short
+code. **Where nothing matches, the row draws with no colour** rather than a
+made-up one - an invented colour implies knowledge the app does not have.
+
+A bug found while testing it: the query selected `code` when the column is
+`short_code`, and the resulting OperationalError was swallowed by a handler
+meaning "no colours", so every row silently drew uncoloured.

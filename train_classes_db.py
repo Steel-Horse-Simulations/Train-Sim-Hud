@@ -1447,3 +1447,40 @@ def import_everything(payload, replace=False):
                 "total_skipped": sum(skipped.values())}
     finally:
         conn.close()
+
+
+def resolve_livery_colour_for_route(route_key):
+    """A representative operator colour for a route.
+
+    The extracted timetable names no operator - the field is empty on every
+    service - so a departure board cannot colour per service from the pak
+    data alone. This falls back to the operator whose trains have actually
+    been driven on that route, which is real observed data rather than an
+    invented mapping.
+
+    Matching is on the route name appearing in the operator's name or code,
+    which is deliberately conservative: a wrong colour is worse than none,
+    because it implies knowledge the app does not have.
+    """
+    if not route_key:
+        return None
+    key = "".join(c for c in str(route_key).lower() if c.isalnum())
+    conn = _connect()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            # The column is short_code, not code. Selecting a column that
+            # does not exist raises OperationalError, which the handler below
+            # swallows as "no colours" - so this failed silently and every
+            # row drew uncoloured.
+            "SELECT name, short_code, colour FROM operators "
+            "WHERE colour IS NOT NULL")]
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    for r in rows:
+        for field in (r.get("name"), r.get("short_code")):
+            f = "".join(c for c in str(field or "").lower() if c.isalnum())
+            if f and (f in key or key in f):
+                return r.get("colour")
+    return None

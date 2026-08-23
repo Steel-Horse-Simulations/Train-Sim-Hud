@@ -1152,3 +1152,148 @@ def list_services(route_key=None, limit=400, with_calls=False):
         return {"services": rows, "service_count": len(rows), "routes": routes}
     finally:
         conn.close()
+
+
+def find_nearest_station(latitude, longitude, max_km=1.5):
+    """The recorded station nearest a position, or None.
+
+    Uses `drive_sightings`, which is the only place station COORDINATES
+    exist: the pak files give names and ribbon offsets but no lat/long, and
+    resolving a ribbon offset to a coordinate is not implemented. So a
+    station is only locatable here once it has been seen on a drive.
+
+    That is a real limit, not a bug to work around silently - the caller
+    reports it so the departure board can offer a manual choice rather than
+    appearing broken.
+    """
+    if latitude is None or longitude is None:
+        return None
+    conn = _connect()
+    try:
+        try:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT station_name, latitude, longitude, route_key "
+                "FROM drive_sightings WHERE latitude IS NOT NULL")]
+        except sqlite3.OperationalError:
+            return None
+    finally:
+        conn.close()
+    if not rows:
+        return None
+
+    import math
+    best, best_km = None, None
+    for r in rows:
+        # Equirectangular approximation - accurate to well under a metre at
+        # these separations, and a station is either a few hundred metres
+        # away or it is not the one you are standing in.
+        dlat = math.radians(r["latitude"] - latitude)
+        dlon = math.radians(r["longitude"] - longitude)
+        mlat = math.radians((r["latitude"] + latitude) / 2)
+        km = 6371.0 * math.hypot(dlat, dlon * math.cos(mlat))
+        if best_km is None or km < best_km:
+            best, best_km = r, km
+    if best_km is not None and best_km <= max_km:
+        return {"station_name": best["station_name"], "route_key": best["route_key"],
+                "distance_km": round(best_km, 3)}
+    return None
+
+
+def departures_at(station_name, clock_seconds, route_key=None,
+                  window_before=1800, window_after=10800, limit=40):
+    """Calls at a station within a time window, as a departure board.
+
+    Every stored service that calls there is included, not only driveable
+    ones: a board shows the trains a passenger would see. Each entry carries
+    the service's ORIGIN and DESTINATION - the first and last calls - since
+    "where is this train going" is the whole point of a board.
+
+    Times are compared as seconds since midnight in GAME time. A service
+    running past midnight has its later calls stored wrapped, so a window
+    reaching past 24:00 is checked against both the raw value and the value
+    plus a day.
+    """
+    if not station_name:
+        return {"error": "no_station"}
+    init_extracted_tables()
+    conn = _connect()
+    try:
+        target = _norm_station(station_name)
+        sql = ("SELECT c.*, s.headcode, s.service_name, s.role, s.route_key, "
+               "s.first_time, s.last_time, s.id AS svc_id "
+               "FROM extracted_calls c JOIN extracted_services s "
+               "ON s.id = c.service_id")
+        params = []
+        if route_key:
+            sql += " WHERE s.route_key = ?"
+            params.append(route_key)
+        rows = [dict(r) for r in conn.execute(sql, params)]
+
+        def secs(t):
+            if not t:
+                return None
+            try:
+                h, m, s = (int(x) for x in t.split(":"))
+                return h * 3600 + m * 60 + s
+            except Exception:
+                return None
+
+        out = []
+        for r in rows:
+            if _norm_station(r.get("station_name")) != target:
+                continue
+            ref = secs(r.get("departure")) or secs(r.get("arrival"))
+            if ref is None:
+                continue
+            delta = None
+            for candidate in (ref, ref + 86400, ref - 86400):
+                d = candidate - clock_seconds
+                if -window_before <= d <= window_after:
+                    delta = d
+                    break
+            if delta is None:
+                continue
+            calls = [dict(x) for x in conn.execute(
+                "SELECT station_name, call_order FROM extracted_calls "
+                "WHERE service_id=? ORDER BY call_order", (r["svc_id"],))]
+            names = [c["station_name"] for c in calls if c["station_name"]]
+            out.append({
+                "headcode": r.get("headcode"),
+                "service_name": r.get("service_name"),
+                "role": r.get("role"),
+                "route_key": r.get("route_key"),
+                "arrival": r.get("arrival"),
+                "departure": r.get("departure"),
+                "platform": r.get("platform"),
+                "origin": names[0] if names else None,
+                "destination": names[-1] if names else None,
+                "calls": len(names),
+                "minutes_away": round(delta / 60),
+                "seconds_away": delta,
+            })
+
+        out.sort(key=lambda x: x["seconds_away"])
+        return {"station": station_name, "route_key": route_key,
+                "departures": out[:limit], "count": len(out)}
+    finally:
+        conn.close()
+
+
+def stations_with_departures(route_key=None, limit=300):
+    """Station names that appear in the stored timetable, for the picker."""
+    init_extracted_tables()
+    conn = _connect()
+    try:
+        sql = ("SELECT DISTINCT c.station_name, s.route_key "
+               "FROM extracted_calls c JOIN extracted_services s "
+               "ON s.id = c.service_id WHERE c.station_name IS NOT NULL")
+        params = []
+        if route_key:
+            sql += " AND s.route_key = ?"
+            params.append(route_key)
+        sql += " ORDER BY c.station_name LIMIT ?"
+        params.append(limit)
+        return [{"station_name": r[0], "route_key": r[1]}
+                for r in conn.execute(sql, params)]
+    finally:
+        conn.close()
